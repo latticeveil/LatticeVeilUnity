@@ -1171,11 +1171,12 @@ namespace LatticeVeil.Launcher
                 }
                 vItemY += vItemHeight;
 
-                // Installed versions
+                // Installed versions (short tag + engine badge fits the narrow dropdown;
+                // the full manifest name + classification chip lives in the Version Manager)
                 foreach (var v in installedVersions)
                 {
                     var isSelected = !_selectedIsLatest && _selectedVersion != null && string.Equals(v.Tag, _selectedVersion.Tag, StringComparison.OrdinalIgnoreCase);
-                    var vText = isSelected ? $"> {v.ListLabel}" : $"   {v.ListLabel}";
+                    var vText = isSelected ? $"> {v.Tag}{v.EngineBadge}" : $"   {v.Tag}{v.EngineBadge}";
                     if (v.IsPrerelease) vText += " [pre]";
 
                     var vStyle = isSelected ? _dropdownActiveItemStyle : _dropdownItemStyle;
@@ -1699,6 +1700,50 @@ namespace LatticeVeil.Launcher
             }
         }
 
+        private GUIStyle _rowTitleStyle;
+        private GUIStyle _rowMetaStyle;
+        private GUIStyle _engineChipStyle;
+
+        private void EnsureVersionRowStyles()
+        {
+            if (_rowTitleStyle == null)
+            {
+                _rowTitleStyle = new GUIStyle(_labelStyle)
+                {
+                    fontSize = 13,
+                    fontStyle = FontStyle.Bold,
+                    wordWrap = false,
+                    clipping = TextClipping.Overflow
+                };
+                _rowTitleStyle.normal.textColor = new Color(0.95f, 0.95f, 0.95f);
+            }
+
+            if (_rowMetaStyle == null)
+            {
+                _rowMetaStyle = new GUIStyle(_labelStyle)
+                {
+                    fontSize = 11,
+                    wordWrap = false,
+                    clipping = TextClipping.Overflow
+                };
+                _rowMetaStyle.normal.textColor = new Color(0.65f, 0.65f, 0.65f);
+            }
+
+            if (_engineChipStyle == null)
+            {
+                _engineChipStyle = new GUIStyle(_labelStyle)
+                {
+                    fontSize = 10,
+                    fontStyle = FontStyle.Bold,
+                    wordWrap = false,
+                    alignment = TextAnchor.MiddleCenter,
+                    padding = new RectOffset(8, 8, 2, 2),
+                    margin = new RectOffset(0, 0, 0, 0)
+                };
+                _engineChipStyle.normal.textColor = new Color(1f, 0.78f, 0.3f);
+            }
+        }
+
         private void DrawVersionManagerRow(Rect rowRect, GameVersionInfo version)
         {
             var isSelected = _versionManagerSelected != null && string.Equals(version.Tag, _versionManagerSelected.Tag, StringComparison.OrdinalIgnoreCase);
@@ -1716,14 +1761,46 @@ namespace LatticeVeil.Launcher
                 _versionManagerNotesScroll = Vector2.zero;
             }
 
-            var titleText = $"{version.ListLabel}{(version.IsPrerelease ? " [pre]" : "")}";
-            GUI.Label(new Rect(rowRect.x + 12, rowRect.y + 5, rowRect.width - 130, 22), titleText, _sectionHeaderStyle);
+            EnsureVersionRowStyles();
 
-            var subText = string.IsNullOrWhiteSpace(version.DisplayName) ? version.SizeDisplay : version.DisplayName;
-            GUI.Label(new Rect(rowRect.x + 12, rowRect.y + 28, rowRect.width - 130, 20), subText, _labelStyle);
+            const float buttonZoneWidth = 118f;
+            var textWidth = rowRect.width - buttonZoneWidth - 24;
 
-            var statusText = version.IsInstalled ? $"INSTALLED  •  {version.SizeDisplay}" : $"{version.SizeDisplay}  •  {version.PublishedAt}";
-            GUI.Label(new Rect(rowRect.x + 12, rowRect.y + 46, rowRect.width - 130, 18), statusText, _labelStyle);
+            // Title — single line, clipped cleanly (never wraps into the next row).
+            var isLegacy = version.IsLegacyEngine;
+            var titleStyle = _rowTitleStyle;
+            var titleContent = new GUIContent(string.IsNullOrWhiteSpace(version.DisplayName) ? version.Tag : version.DisplayName);
+            var titleSize = titleStyle.CalcSize(titleContent);
+
+            // Engine classification chip sits inline after the title; reserve room for it.
+            var chipWidth = 0f;
+            if (isLegacy)
+            {
+                chipWidth = _engineChipStyle.CalcSize(new GUIContent("MONOGAME")).x + 2;
+            }
+
+            var titleRect = new Rect(rowRect.x + 12, rowRect.y + 5, Mathf.Min(titleSize.x, textWidth - (isLegacy ? chipWidth + 8 : 0)), 20);
+            GUI.Label(titleRect, titleContent, titleStyle);
+
+            if (isLegacy && chipWidth > 0)
+            {
+                var chipRect = new Rect(titleRect.x + titleRect.width + 8, rowRect.y + 6, chipWidth, 18);
+                var prevColor = GUI.color;
+                GUI.color = new Color(1f, 0.72f, 0.2f, 0.16f);
+                GUI.DrawTexture(chipRect, Texture2D.whiteTexture, ScaleMode.StretchToFill);
+                GUI.color = prevColor;
+                GUI.Label(chipRect, "MONOGAME", _engineChipStyle);
+            }
+
+            // Meta line: release tag (+ prerelease marker).
+            var tagText = version.Tag + (version.IsPrerelease ? "   [pre]" : "");
+            GUI.Label(new Rect(rowRect.x + 12, rowRect.y + 27, textWidth, 16), tagText, _rowMetaStyle);
+
+            // Status line.
+            var statusText = version.IsInstalled
+                ? $"INSTALLED  •  {version.SizeDisplay}"
+                : $"{version.SizeDisplay}  •  {version.PublishedAt}";
+            GUI.Label(new Rect(rowRect.x + 12, rowRect.y + 45, textWidth, 16), statusText, _rowMetaStyle);
 
             var wasEnabled = GUI.enabled;
             if (_isDownloadingVersion) GUI.enabled = false;

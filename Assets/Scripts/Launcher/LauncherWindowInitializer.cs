@@ -51,6 +51,11 @@ namespace LatticeVeil.Launcher
         private const int GCLP_HBRBACKGROUND = -10;
         private const int BLACK_BRUSH = 4;
 
+        // GWL_HWNDPARENT sets a window's OWNER. An owned window (like a dialog)
+        // belongs to its owner's app: Task Manager and the taskbar group it under
+        // the owner's single entry instead of creating a separate app.
+        private const int GWL_HWNDPARENT = -8;
+
         [DllImport("gdi32.dll")]
         private static extern IntPtr GetStockObject(int fnObject);
 
@@ -115,6 +120,26 @@ namespace LatticeVeil.Launcher
 
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        // Off-screen parking spot while the game runs (the launcher must keep a
+        // window to stay the Task Manager group head, and must NOT minimize —
+        // minimizing a window hides its owned windows, i.e. the game).
+        private const int ParkedX = -32000;
+        private const int ParkedY = -32000;
+        private static bool _parked;
+        private static RECT _parkedRect;
 
         [DllImport("user32.dll")]
         public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
@@ -300,6 +325,74 @@ namespace LatticeVeil.Launcher
             return SetWindowText(hWnd, title);
 #else
             return false;
+#endif
+        }
+
+        /// <summary>
+        /// Makes another top-level window (the game's) an OWNED window of the
+        /// launcher window. Owned windows belong to the owner's app: Task
+        /// Manager shows them inside the single "LatticeVeil" entry instead of
+        /// as a separate app collection. Best-effort; returns false on failure.
+        /// </summary>
+        public static bool SetWindowOwner(IntPtr childHwnd, IntPtr ownerHwnd)
+        {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (childHwnd == IntPtr.Zero || ownerHwnd == IntPtr.Zero || !IsWindow(childHwnd) || !IsWindow(ownerHwnd))
+                return false;
+            if (childHwnd == ownerHwnd)
+                return false;
+
+            SetWindowLong(childHwnd, GWL_HWNDPARENT, ownerHwnd);
+
+            // Verify the owner actually stuck (SetWindowLong returns the
+            // previous value, which can legitimately be zero on success).
+            IntPtr owner = GetWindowLong(childHwnd, GWL_HWNDPARENT);
+            return owner == ownerHwnd;
+#else
+            return false;
+#endif
+        }
+
+        /// <summary>
+        /// Parks the launcher window far off-screen instead of minimizing or
+        /// hiding it while the game runs. The window still exists and is still
+        /// "visible" (so it remains the Task Manager group head and the game's
+        /// owned window stays on screen), it's just not on any monitor.
+        /// </summary>
+        public static void ParkLauncherWindowOffScreen()
+        {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            IntPtr hWnd = GetWindowHandle();
+            if (hWnd == IntPtr.Zero)
+                return;
+
+            if (!_parked)
+            {
+                if (!GetWindowRect(hWnd, out _parkedRect))
+                    return;
+                _parked = true;
+            }
+
+            SetWindowPos(hWnd, IntPtr.Zero, ParkedX, ParkedY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+#endif
+        }
+
+        /// <summary>Brings the launcher window back from off-screen parking.</summary>
+        public static void UnparkLauncherWindow()
+        {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (!_parked)
+                return;
+            _parked = false;
+
+            IntPtr hWnd = GetWindowHandle();
+            if (hWnd == IntPtr.Zero)
+                return;
+
+            SetWindowPos(hWnd, IntPtr.Zero, _parkedRect.Left, _parkedRect.Top, 0, 0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+            UpdateWindow(hWnd);
+            SetForegroundWindow(hWnd);
 #endif
         }
 

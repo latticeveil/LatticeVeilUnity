@@ -36,11 +36,12 @@ namespace LatticeVeil.Launcher
         private Process _gameProcess;
         private bool _isLaunching;
 
-        // Single Task Manager collection: the launcher window ("LatticeVeil") is
-        // the group head and the game is retitled to match its engine and nested
-        // beneath it via GameProcessJob.
+        // Single Task Manager collection: the launcher window ("LatticeVeil") owns
+        // the game's window, so Task Manager and the taskbar nest the game inside
+        // the one "LatticeVeil.exe" entry instead of a separate app collection.
         private string _gameWindowTitle = null;
         private bool _gameWindowRenamed = false;
+        private bool _gameWindowOwned = false;
         private float _gameWindowRenameElapsed = 0f;
         private float _gameWindowRenameNextAttempt = 0f;
 
@@ -106,7 +107,7 @@ namespace LatticeVeil.Launcher
         private Vector2 _scrollPosition;
         private string _logContent = "";
         private bool _launcherVisible = true;
-        private bool _minimizedLauncherForGame = false;
+        private bool _parkedLauncherForGame = false;
         private bool _launchModeDropdownOpen = false;
         private bool _showSettingsModal = false;
         private bool _showSkinModal = false;
@@ -255,18 +256,25 @@ namespace LatticeVeil.Launcher
                 }
             }
 
-            // While the game runs, nudge its main window title until it sticks
-            // (the engine sets its own title during startup). This is what makes
-            // the sub-process entry read "LatticeVeilMonogame" / "LatticeVeil" in
-            // Task Manager instead of the raw exe name.
-            if (_gameProcess != null && !_gameProcess.HasExited && !_gameWindowRenamed && !string.IsNullOrEmpty(_gameWindowTitle))
+            // While the game runs, claim its main window and retitle it.
+            //  • Ownership: the launcher window becomes the game window's OWNER
+            //    (GWL_HWNDPARENT), so Task Manager and the taskbar nest the game
+            //    inside the single "LatticeVeil.exe" entry — no separate app
+            //    collection, whichever game version is installed.
+            //  • Title: the sub-entry reads "LatticeVeilMonogame" (MonoGame)
+            //    or "LatticeVeil" (Unity) instead of the raw exe name.
+            // The engine may recreate/retile its window during startup, so retry
+            // every 0.5 s until both stick (give up after a minute).
+            bool gameWindowNeedsWork = !_gameWindowRenamed || !_gameWindowOwned;
+            if (_gameProcess != null && !_gameProcess.HasExited && gameWindowNeedsWork && !string.IsNullOrEmpty(_gameWindowTitle))
             {
                 _gameWindowRenameElapsed += Time.deltaTime;
                 if (_gameWindowRenameElapsed >= _gameWindowRenameNextAttempt)
                 {
                     if (_gameWindowRenameElapsed > 60f)
                     {
-                        _gameWindowRenamed = true; // give up after a minute
+                        _gameWindowRenamed = true;
+                        _gameWindowOwned = true; // give up after a minute
                     }
                     else
                     {
@@ -275,10 +283,21 @@ namespace LatticeVeil.Launcher
                         {
                             _gameProcess.Refresh();
                             var hwnd = _gameProcess.MainWindowHandle;
-                            if (hwnd != IntPtr.Zero && LauncherWindowInitializer.SetExternalWindowTitle(hwnd, _gameWindowTitle))
+                            if (hwnd != IntPtr.Zero)
                             {
-                                _gameWindowRenamed = true;
-                                _log.Info($"Game window retitled to '{_gameWindowTitle}'.");
+                                if (!_gameWindowOwned &&
+                                    LauncherWindowInitializer.SetWindowOwner(hwnd, LauncherWindowInitializer.GetWindowHandle()))
+                                {
+                                    _gameWindowOwned = true;
+                                    _log.Info("Game window claimed under the launcher (Task Manager: one LatticeVeil entry).");
+                                }
+
+                                if (!_gameWindowRenamed &&
+                                    LauncherWindowInitializer.SetExternalWindowTitle(hwnd, _gameWindowTitle))
+                                {
+                                    _gameWindowRenamed = true;
+                                    _log.Info($"Game window retitled to '{_gameWindowTitle}'.");
+                                }
                             }
                         }
                         catch
@@ -297,10 +316,10 @@ namespace LatticeVeil.Launcher
                 _isLaunching = false;
 
                 // Return the user to the launcher once the game closes again.
-                if (_minimizedLauncherForGame)
+                if (_parkedLauncherForGame)
                 {
-                    _minimizedLauncherForGame = false;
-                    LauncherWindowInitializer.RestoreLauncherWindow();
+                    _parkedLauncherForGame = false;
+                    LauncherWindowInitializer.UnparkLauncherWindow();
                     _log.Info("Returned to launcher after game exit.");
                 }
             }
@@ -4070,6 +4089,7 @@ namespace LatticeVeil.Launcher
                     ? "LatticeVeilMonogame"
                     : "LatticeVeil";
                 _gameWindowRenamed = false;
+                _gameWindowOwned = false;
                 _gameWindowRenameElapsed = 0f;
                 _gameWindowRenameNextAttempt = 0.5f;
 
@@ -4077,19 +4097,18 @@ namespace LatticeVeil.Launcher
                 {
                     _log.Info("Game process started successfully.");
 
-                    // Minimize (not hide) the launcher while the game runs when
-                    // KeepLauncherOpen is false. A hidden window stops being an
-                    // "app" in Task Manager and the game would become a separate
-                    // collection head — a minimized window keeps the launcher as
-                    // the single "LatticeVeil" group head. The process stays
-                    // alive watching the game and restores the window
-                    // automatically once the game exits.
+                    // Park the launcher window far off-screen (instead of
+                    // minimizing or hiding) while the game runs when
+                    // KeepLauncherOpen is false. The window must keep existing:
+                    // it is the Task Manager group head, and minimizing/hiding it
+                    // would hide the game's owned window too. The process stays
+                    // alive watching the game and unparks automatically on exit.
                     if (!_settings.KeepLauncherOpen)
                     {
-                        _log.Info("KeepLauncherOpen is false; minimizing launcher until the game closes.");
-                        _minimizedLauncherForGame = true;
+                        _log.Info("KeepLauncherOpen is false; parking launcher window off-screen until the game closes.");
+                        _parkedLauncherForGame = true;
                         Application.runInBackground = true;
-                        LauncherWindowInitializer.MinimizeLauncherWindow();
+                        LauncherWindowInitializer.ParkLauncherWindowOffScreen();
                     }
                 }
                 else

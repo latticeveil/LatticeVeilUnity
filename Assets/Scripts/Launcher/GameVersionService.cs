@@ -21,8 +21,33 @@ namespace LatticeVeil.Launcher
         public string PublishedAt { get; set; } = "";
         public bool IsPrerelease { get; set; }
 
+        /// <summary>Release notes body from GitHub (markdown, may be empty).</summary>
+        public string Body { get; set; } = "";
+
         public bool IsInstalled { get; set; }
         public string InstallDirectory { get; set; } = "";
+
+        /// <summary>
+        /// Engine badge shown next to the version in UI lists. The legacy MonoGame
+        /// builds (the "first release" standalone client) are tagged [MONOGAME];
+        /// everything else is a native Unity build.
+        /// </summary>
+        public string EngineBadge =>
+            IsLegacyEngine ? " [MONOGAME]" : "";
+
+        public bool IsLegacyEngine
+        {
+            get
+            {
+                var haystack = $"{Tag} {DisplayName}";
+                return haystack.IndexOf("legacy", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                       haystack.IndexOf("monogame", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
+
+        /// <summary>Short single-line label for dropdowns/lists.</summary>
+        public string ListLabel =>
+            $"{Tag}{EngineBadge}";
 
         public string SizeDisplay =>
             AssetSizeBytes <= 0 ? "" :
@@ -85,6 +110,7 @@ namespace LatticeVeil.Launcher
                         AssetSizeBytes = asset.Item3,
                         PublishedAt = JsonLite.ExtractString(release, "published_at"),
                         IsPrerelease = JsonLite.ExtractBool(release, "prerelease"),
+                        Body = JsonLite.ExtractString(release, "body") ?? "",
                         IsInstalled = Core.Paths.TryResolveInstalledVersionExe(tag) != null,
                         InstallDirectory = Core.Paths.TryResolveInstalledVersionExe(tag) is { } exe
                             ? System.IO.Path.GetDirectoryName(exe)

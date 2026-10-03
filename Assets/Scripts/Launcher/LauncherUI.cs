@@ -73,6 +73,26 @@ namespace LatticeVeil.Launcher
         private double _downloadProgress = 0.0;
         private string _versionStatusMessage = "";
 
+        // Option-2 version system: dropdown lists installed versions + LATEST only;
+        // everything else (full library, notes, install/uninstall) lives in the Version Manager.
+        private bool _selectedIsLatest = false;
+        private bool _showVersionManagerModal = false;
+        private Rect _versionManagerRect = new Rect(240, 110, 820, 560);
+        private bool _draggingVersionManager = false;
+        private Vector2 _versionManagerListScroll = Vector2.zero;
+        private Vector2 _versionManagerNotesScroll = Vector2.zero;
+        private GameVersionInfo _versionManagerSelected = null;
+        private bool _showInstallPromptModal = false;
+        private bool _latestInstallPromptDecided = false;
+        private Vector2 _installPromptNotesScroll = Vector2.zero;
+        private bool _draggingInstallPromptModal = false;
+
+        // Drag offsets so every popup window can be moved independently.
+        private Vector2 _settingsModalOffset = Vector2.zero;
+        private bool _draggingSettingsModal = false;
+        private Vector2 _skinModalOffset = Vector2.zero;
+        private bool _draggingSkinModal = false;
+
         // UI state
         private string _offlineUsernameEdit = "";
         private Vector2 _scrollPosition;
@@ -440,14 +460,16 @@ namespace LatticeVeil.Launcher
                 switch (_versionChecker.State)
                 {
                     case VersionChecker.CheckState.UpToDate:
-                        // Release builds: use the full name from GitHub (e.g. "V1.0.0 - Veilwalkers: Unified")
+                        // The subtitle is the always-current "latest update" spot.
                         _versionSubtitleText = !string.IsNullOrWhiteSpace(_versionChecker.RemoteDisplayName)
-                            ? _versionChecker.RemoteDisplayName
+                            ? $"LATEST UPDATE: {_versionChecker.RemoteDisplayName}"
                             : defaultTitle;
                         break;
 
                     case VersionChecker.CheckState.OutOfDate:
-                        _versionSubtitleText = $"{defaultTitle}  (Update available: {_versionChecker.RemoteTag})";
+                        _versionSubtitleText = !string.IsNullOrWhiteSpace(_versionChecker.RemoteDisplayName)
+                            ? $"LATEST UPDATE: {_versionChecker.RemoteDisplayName}"
+                            : $"{defaultTitle}  (Update available: {_versionChecker.RemoteTag})";
                         _log?.Warn($"Version out of date: local={localVer}, latest={_versionChecker.RemoteTag}");
                         break;
 
@@ -746,7 +768,7 @@ namespace LatticeVeil.Launcher
             // Reveal window on first OnGUI paint
             LauncherWindowInitializer.ShowLauncherWindow();
 
-            bool modalOpen = _showSettingsModal || _showSkinModal;
+            bool modalOpen = _showSettingsModal || _showSkinModal || _showVersionManagerModal || _showInstallPromptModal;
 
             // Calculate layout filling the full window client area
             var launcherRect = new Rect(0, 0, Screen.width, Screen.height);
@@ -811,6 +833,12 @@ namespace LatticeVeil.Launcher
             if (GUI.Button(settingsBtnRect, settingsBtnContent, _wrenchControlStyle))
             {
                 _showSettingsModal = !_showSettingsModal;
+                if (_showSettingsModal)
+                {
+                    _showSkinModal = false;
+                    _showVersionManagerModal = false;
+                    _showInstallPromptModal = false;
+                }
             }
 
             var minBtnRect = new Rect(topBarRect.x + topBarRect.width - 98, topBarRect.y + 8, 44, 36);
@@ -956,6 +984,8 @@ namespace LatticeVeil.Launcher
             {
                 _showSkinModal = true;
                 _showSettingsModal = false;
+                _showVersionManagerModal = false;
+                _showInstallPromptModal = false;
                 RefreshSkinModalPreview();
                 _log.Info("Skin library opened.");
             }
@@ -1006,14 +1036,28 @@ namespace LatticeVeil.Launcher
                 OpenLogsFolder();
             }
 
-            // Game Version dropdown (above the Online/Offline dropdown)
+            // Game Version dropdown (above the Online/Offline dropdown).
+            // Option 2: shows ONLY installed versions plus a LATEST entry —
+            // the full library (all releases, notes, install/uninstall) lives
+            // in the movable Version Manager.
             var versionHeight = 30;
             var versionRect = new Rect(launchBtnX, bottomY - 64, launchBtnWidth, versionHeight);
 
+            var installedVersions = new System.Collections.Generic.List<GameVersionInfo>();
+            foreach (var v in _gameVersions)
+            {
+                if (v.IsInstalled) installedVersions.Add(v);
+            }
+            var latestVersion = GetLatestGameVersion();
+
+            // Items: LATEST + one per installed version + MANAGE VERSIONS...
+            var vItemHeight = 30;
+            var vPopupHeight = (1 + installedVersions.Count + 1) * vItemHeight + 6;
+            var versionPopupRect = new Rect(versionRect.x, versionRect.y - vPopupHeight, versionRect.width, vPopupHeight);
+
             if (Event.current.type == EventType.MouseDown && _versionDropdownOpen)
             {
-                var versionPopupProbe = new Rect(versionRect.x, versionRect.y - (System.Math.Max(1, _gameVersions.Count) * 30 + 6), versionRect.width, System.Math.Max(1, _gameVersions.Count) * 30 + 6);
-                if (!versionRect.Contains(Event.current.mousePosition) && !versionPopupProbe.Contains(Event.current.mousePosition))
+                if (!versionRect.Contains(Event.current.mousePosition) && !versionPopupRect.Contains(Event.current.mousePosition))
                 {
                     _versionDropdownOpen = false;
                 }
@@ -1021,8 +1065,9 @@ namespace LatticeVeil.Launcher
 
             string versionButtonText;
             if (_versionsLoading) versionButtonText = "Versions...";
-            else if (_selectedVersion != null) versionButtonText = _selectedVersion.Tag;
-            else versionButtonText = "No Version";
+            else if (_selectedIsLatest || _selectedVersion == null)
+                versionButtonText = latestVersion != null ? $"LATEST ({latestVersion.Tag})" : "LATEST";
+            else versionButtonText = _selectedVersion.ListLabel;
             var versionArrow = _versionDropdownOpen ? "^" : "v";
             if (GUI.Button(versionRect, $"{versionButtonText}  {versionArrow}", _dropdownStyle))
             {
@@ -1034,29 +1079,47 @@ namespace LatticeVeil.Launcher
                 }
             }
 
-            if (_versionDropdownOpen && _gameVersions.Count > 0)
+            if (_versionDropdownOpen)
             {
-                var vItemHeight = 30;
-                var vPopupHeight = _gameVersions.Count * vItemHeight + 6;
-                var vPopupRect = new Rect(versionRect.x, versionRect.y - vPopupHeight, versionRect.width, vPopupHeight);
-                GUI.Box(vPopupRect, "", _dropdownContainerStyle);
-                for (int i = 0; i < _gameVersions.Count; i++)
-                {
-                    var v = _gameVersions[i];
-                    var isSelected = _selectedVersion != null && string.Equals(v.Tag, _selectedVersion.Tag, StringComparison.OrdinalIgnoreCase);
-                    var vItemRect = new Rect(vPopupRect.x + 2, vPopupRect.y + 3 + (i * vItemHeight), vPopupRect.width - 4, vItemHeight);
+                GUI.Box(versionPopupRect, "", _dropdownContainerStyle);
+                var vItemY = versionPopupRect.y + 3;
 
-                    var stateText = v.IsInstalled ? "Installed" : v.SizeDisplay;
-                    var vText = isSelected ? $"> {v.Tag}  ({stateText})" : $"   {v.Tag}  ({stateText})";
+                // LATEST entry
+                var latestStatus = latestVersion == null ? "checking..." : (latestVersion.IsInstalled ? "installed" : latestVersion.SizeDisplay);
+                var latestSelected = _selectedIsLatest;
+                var latestText = latestSelected ? $"> LATEST  ({latestStatus})" : $"   LATEST  ({latestStatus})";
+                if (GUI.Button(new Rect(versionPopupRect.x + 2, vItemY, versionPopupRect.width - 4, vItemHeight), latestText, latestSelected ? _dropdownActiveItemStyle : _dropdownItemStyle))
+                {
+                    _selectedIsLatest = true;
+                    _selectedVersion = latestVersion;
+                    _versionDropdownOpen = false;
+                    _log?.Info($"Selected game version: LATEST ({latestVersion?.Tag ?? "unknown"})");
+                }
+                vItemY += vItemHeight;
+
+                // Installed versions
+                foreach (var v in installedVersions)
+                {
+                    var isSelected = !_selectedIsLatest && _selectedVersion != null && string.Equals(v.Tag, _selectedVersion.Tag, StringComparison.OrdinalIgnoreCase);
+                    var vText = isSelected ? $"> {v.ListLabel}" : $"   {v.ListLabel}";
                     if (v.IsPrerelease) vText += " [pre]";
 
                     var vStyle = isSelected ? _dropdownActiveItemStyle : _dropdownItemStyle;
-                    if (GUI.Button(vItemRect, vText, vStyle))
+                    if (GUI.Button(new Rect(versionPopupRect.x + 2, vItemY, versionPopupRect.width - 4, vItemHeight), vText, vStyle))
                     {
+                        _selectedIsLatest = false;
                         _selectedVersion = v;
                         _versionDropdownOpen = false;
-                        _log?.Info($"Selected game version: {v.Tag} ({(v.IsInstalled ? "installed" : "not installed")})");
+                        _log?.Info($"Selected game version: {v.Tag} (installed)");
                     }
+                    vItemY += vItemHeight;
+                }
+
+                // Version Manager
+                if (GUI.Button(new Rect(versionPopupRect.x + 2, vItemY, versionPopupRect.width - 4, vItemHeight), "   MANAGE VERSIONS...", _dropdownItemStyle))
+                {
+                    _versionDropdownOpen = false;
+                    OpenVersionManager();
                 }
             }
 
@@ -1186,8 +1249,16 @@ namespace LatticeVeil.Launcher
             // Restore GUI enabled before drawing modals
             GUI.enabled = true;
 
-            // Render Modals if open
-            if (_showSettingsModal)
+            // Render Modals if open (install prompt sits on top of everything)
+            if (_showInstallPromptModal)
+            {
+                DrawInstallPromptModal(launcherRect);
+            }
+            else if (_showVersionManagerModal)
+            {
+                DrawVersionManagerModal(launcherRect);
+            }
+            else if (_showSettingsModal)
             {
                 DrawSettingsModal(launcherRect);
             }
@@ -1195,6 +1266,330 @@ namespace LatticeVeil.Launcher
             {
                 DrawSkinModal(launcherRect);
             }
+        }
+
+        /// <summary>Shared drag handling for movable modal windows (header region only).
+        /// Returns the pointer delta while the window is being dragged.</summary>
+        private Vector2 GetModalDragDelta(Rect dragRect, ref bool dragging)
+        {
+            if (Event.current.type == EventType.MouseDown && dragRect.Contains(Event.current.mousePosition))
+            {
+                dragging = true;
+                Event.current.Use();
+            }
+            else if (Event.current.type == EventType.MouseDrag && dragging)
+            {
+                Event.current.Use();
+                return Event.current.delta;
+            }
+            else if (Event.current.type == EventType.MouseUp && dragging)
+            {
+                dragging = false;
+                Event.current.Use();
+            }
+            return Vector2.zero;
+        }
+
+        private void OpenVersionManager()
+        {
+            _showVersionManagerModal = true;
+            _showSettingsModal = false;
+            _showSkinModal = false;
+            _showInstallPromptModal = false;
+            _versionManagerSelected = GetLatestGameVersion();
+            _ = RefreshGameVersionsAsync();
+            _log?.Info("Version manager opened.");
+        }
+
+        private GameVersionInfo GetLatestGameVersion() =>
+            _gameVersions.Count > 0 ? _gameVersions[0] : null;
+
+        private void StartVersionDownload(GameVersionInfo version)
+        {
+            if (version == null || _isDownloadingVersion) return;
+            _selectedVersion = version;
+            _selectedIsLatest = false;
+            StartSelectedVersionDownload();
+        }
+
+        private void UninstallGameVersion(GameVersionInfo version)
+        {
+            if (version == null || string.IsNullOrWhiteSpace(version.Tag)) return;
+            try
+            {
+                var safeTag = version.Tag.Trim();
+                foreach (var c in System.IO.Path.GetInvalidFileNameChars())
+                    safeTag = safeTag.Replace(c, '_');
+                var dir = System.IO.Path.Combine(Core.Paths.VersionsDir, safeTag);
+                if (System.IO.Directory.Exists(dir))
+                {
+                    System.IO.Directory.Delete(dir, true);
+                    _log?.Info($"Uninstalled version {version.Tag} ({dir}).");
+                }
+                else
+                {
+                    _log?.Warn($"Uninstall requested but folder is missing: {dir}");
+                }
+
+                if (_selectedVersion != null && string.Equals(_selectedVersion.Tag, version.Tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    _selectedVersion = null;
+                    _selectedIsLatest = true;
+                }
+                if (_versionManagerSelected != null && string.Equals(_versionManagerSelected.Tag, version.Tag, StringComparison.OrdinalIgnoreCase))
+                    _versionManagerSelected = null;
+
+                _ = RefreshGameVersionsAsync();
+            }
+            catch (Exception ex)
+            {
+                _log?.Error($"Failed to uninstall {version.Tag}: {ex.Message}");
+                _versionStatusMessage = $"Uninstall failed: {ex.Message}";
+            }
+        }
+
+        /// <summary>
+        /// Decides what to do about the latest release after a version refresh:
+        /// auto-install when the setting is on, otherwise show the one-time
+        /// "WOULD YOU LIKE TO INSTALL THE LATEST LATTICEVEIL VERSION?" prompt.
+        /// </summary>
+        private void EvaluateLatestInstallPrompt()
+        {
+            if (_latestInstallPromptDecided) return;
+            _latestInstallPromptDecided = true;
+
+            var latest = GetLatestGameVersion();
+            if (latest == null || latest.IsInstalled) return;
+            if (_settings == null || !_settings.AutoUpdateChecksEnabled) return;
+
+            if (_settings.AutoInstallUpdatesEnabled)
+            {
+                _log?.Info($"Auto-install enabled: downloading {latest.Tag} automatically.");
+                StartVersionDownload(latest);
+            }
+            else
+            {
+                _showInstallPromptModal = true;
+            }
+        }
+
+        private string GetVersionNotes(GameVersionInfo version)
+        {
+            if (version == null) return "Select a version to read its update notes.";
+            if (!string.IsNullOrWhiteSpace(version.Body)) return version.Body;
+            return $"No update notes were published for {version.DisplayName}.";
+        }
+
+        /// <summary>
+        /// Startup prompt: "WOULD YOU LIKE TO INSTALL THE LATEST LATTICEVEIL VERSION?"
+        /// Shows the latest release with its update notes; INSTALL or SKIP.
+        /// </summary>
+        private void DrawInstallPromptModal(Rect screenRect)
+        {
+            GUI.Box(screenRect, "", _dimmerStyle);
+
+            const float modalWidth = 640f;
+            const float modalHeight = 480f;
+            var modalRect = new Rect((screenRect.width - modalWidth) * 0.5f, (screenRect.height - modalHeight) * 0.5f, modalWidth, modalHeight);
+
+            if (Event.current.type == EventType.MouseDown && screenRect.Contains(Event.current.mousePosition) && !modalRect.Contains(Event.current.mousePosition))
+            {
+                Event.current.Use();
+            }
+
+            GUI.Box(modalRect, "", _boxStyle);
+
+            var headerRect = new Rect(modalRect.x, modalRect.y, modalRect.width, 42);
+            if (_settingsHeaderTex != null) GUI.DrawTexture(headerRect, _settingsHeaderTex);
+            else GUI.Box(headerRect, "", _modalHeaderStyle);
+
+            var headerDragRect = new Rect(modalRect.x + 8, modalRect.y + 8, modalRect.width - 70, 30);
+            var dragDelta = GetModalDragDelta(headerDragRect, ref _draggingInstallPromptModal);
+            modalRect.x += dragDelta.x;
+            modalRect.y += dragDelta.y;
+
+            var latest = GetLatestGameVersion();
+
+            GUI.Label(new Rect(modalRect.x + 18, modalRect.y + 8, modalRect.width - 80, 28),
+                "WOULD YOU LIKE TO INSTALL THE LATEST LATTICEVEIL VERSION?", _modalHeaderTitleStyle);
+
+            var versionLine = latest != null
+                ? $"{latest.DisplayName}   ({latest.ListLabel}  •  {latest.SizeDisplay})"
+                : "Latest release: checking...";
+            GUI.Label(new Rect(modalRect.x + 18, modalRect.y + 52, modalRect.width - 36, 24), versionLine, _sectionHeaderStyle);
+
+            var notesRect = new Rect(modalRect.x + 18, modalRect.y + 82, modalRect.width - 36, modalRect.height - 172);
+            GUI.Box(notesRect, "", _panelBoxStyle);
+
+            var notesBody = GetVersionNotes(latest);
+            var notesContentHeight = Mathf.Max(notesRect.height - 16, notesBody.Length * 14f);
+            _installPromptNotesScroll = GUI.BeginScrollView(
+                new Rect(notesRect.x + 8, notesRect.y + 8, notesRect.width - 16, notesRect.height - 16),
+                _installPromptNotesScroll,
+                new Rect(0, 0, notesRect.width - 36, notesContentHeight), false, true);
+            GUI.Label(new Rect(0, 0, notesRect.width - 36, notesContentHeight), notesBody, _logStyle);
+            GUI.EndScrollView();
+
+            var btnY = modalRect.y + modalRect.height - 74;
+            var wasEnabled = GUI.enabled;
+            if (_isDownloadingVersion) GUI.enabled = false;
+
+            var installRect = new Rect(modalRect.x + 18, btnY, 200, 44);
+            if (GUI.Button(installRect, "INSTALL LATEST", _launchButtonStyle))
+            {
+                _showInstallPromptModal = false;
+                if (latest != null) StartVersionDownload(latest);
+            }
+
+            GUI.enabled = wasEnabled;
+
+            var skipRect = new Rect(modalRect.x + modalRect.width - 158, btnY, 140, 44);
+            if (GUI.Button(skipRect, "SKIP", _buttonStyle))
+            {
+                _showInstallPromptModal = false;
+                _log?.Info("Latest-version install prompt dismissed (skipped).");
+            }
+
+            var hintRect = new Rect(modalRect.x + 236, btnY + 12, modalRect.width - 236 - 158, 24);
+            GUI.Label(hintRect, "You can install it any time from MANAGE VERSIONS.", _labelStyle);
+        }
+
+        /// <summary>
+        /// Movable Version Manager overlay: every GitHub release with a zip asset,
+        /// its update notes, and install/reinstall/uninstall actions.
+        /// </summary>
+        private void DrawVersionManagerModal(Rect screenRect)
+        {
+            GUI.Box(screenRect, "", _dimmerStyle);
+
+            // Clamp the movable window inside the launcher window.
+            _versionManagerRect.x = Mathf.Clamp(_versionManagerRect.x, 0, Mathf.Max(0, screenRect.width - _versionManagerRect.width));
+            _versionManagerRect.y = Mathf.Clamp(_versionManagerRect.y, 0, Mathf.Max(0, screenRect.height - _versionManagerRect.height));
+
+            if (Event.current.type == EventType.MouseDown && screenRect.Contains(Event.current.mousePosition) && !_versionManagerRect.Contains(Event.current.mousePosition))
+            {
+                Event.current.Use();
+            }
+
+            var modalRect = _versionManagerRect;
+            GUI.Box(modalRect, "", _boxStyle);
+
+            // Movable header (excludes the close button hitbox)
+            var headerRect = new Rect(modalRect.x, modalRect.y, modalRect.width, 42);
+            if (_settingsHeaderTex != null) GUI.DrawTexture(headerRect, _settingsHeaderTex);
+            else GUI.Box(headerRect, "", _modalHeaderStyle);
+
+            var headerDragRect = new Rect(modalRect.x + 8, modalRect.y + 8, modalRect.width - 70, 30);
+            var dragDelta = GetModalDragDelta(headerDragRect, ref _draggingVersionManager);
+            _versionManagerRect.x += dragDelta.x;
+            _versionManagerRect.y += dragDelta.y;
+
+            GUI.Label(new Rect(modalRect.x + 18, modalRect.y + 10, 300, 24), "VERSION MANAGER", _modalHeaderTitleStyle);
+
+            var closeBtnRect = new Rect(modalRect.x + modalRect.width - 46, modalRect.y + 5, 38, 32);
+            if (GUI.Button(closeBtnRect, "X", _modalCloseBtnStyle))
+            {
+                _showVersionManagerModal = false;
+                Event.current.Use();
+                return;
+            }
+
+            var wasEnabled = GUI.enabled;
+
+            // Left: version list (all releases with a zip asset)
+            var listRect = new Rect(modalRect.x + 16, modalRect.y + 54, 380, modalRect.height - 122);
+            GUI.Box(listRect, "", _panelBoxStyle);
+            var rowHeight = 68f;
+            var listContent = new Rect(0, 0, listRect.width - 20, 8 + _gameVersions.Count * rowHeight);
+            _versionManagerListScroll = GUI.BeginScrollView(listRect, _versionManagerListScroll, listContent, false, true);
+
+            for (int i = 0; i < _gameVersions.Count; i++)
+            {
+                DrawVersionManagerRow(new Rect(4, 4 + i * rowHeight, listContent.width, rowHeight - 6), _gameVersions[i]);
+            }
+
+            if (_gameVersions.Count == 0)
+            {
+                GUI.Label(new Rect(8, 8, listContent.width - 8, 40), _versionsLoading ? "Checking releases..." : "No downloadable releases found.", _labelStyle);
+            }
+
+            GUI.EndScrollView();
+
+            // Right: update notes for the selected release
+            var notesRect = new Rect(modalRect.x + 412, modalRect.y + 54, modalRect.width - 428, modalRect.height - 122);
+            GUI.Box(notesRect, "", _panelBoxStyle);
+            GUI.Label(new Rect(notesRect.x + 12, notesRect.y + 8, notesRect.width - 24, 24), "UPDATE NOTES", _sectionHeaderStyle);
+
+            var notesBody = GetVersionNotes(_versionManagerSelected);
+            var notesContentHeight = Mathf.Max(notesRect.height - 70, notesBody.Length * 14f);
+            _versionManagerNotesScroll = GUI.BeginScrollView(
+                new Rect(notesRect.x + 8, notesRect.y + 36, notesRect.width - 16, notesRect.height - 46),
+                _versionManagerNotesScroll,
+                new Rect(0, 0, notesRect.width - 36, notesContentHeight), false, true);
+            GUI.Label(new Rect(0, 0, notesRect.width - 36, notesContentHeight), notesBody, _logStyle);
+            GUI.EndScrollView();
+
+            // Footer: refresh + status
+            GUI.enabled = wasEnabled;
+            var footerY = modalRect.y + modalRect.height - 58;
+            GUI.Label(new Rect(modalRect.x + 18, footerY + 10, modalRect.width - 200, 26),
+                _isDownloadingVersion ? $"Downloading {_selectedVersion?.Tag ?? ""}... {(int)(_downloadProgress * 100)}%" : _versionStatusMessage,
+                _statusTextStyle);
+
+            var refreshRect = new Rect(modalRect.x + modalRect.width - 150, footerY + 6, 132, 36);
+            if (GUI.Button(refreshRect, "REFRESH", _buttonStyle))
+            {
+                _ = RefreshGameVersionsAsync();
+            }
+        }
+
+        private void DrawVersionManagerRow(Rect rowRect, GameVersionInfo version)
+        {
+            var isSelected = _versionManagerSelected != null && string.Equals(version.Tag, _versionManagerSelected.Tag, StringComparison.OrdinalIgnoreCase);
+            GUI.Box(rowRect, "", isSelected ? _dropdownActiveItemStyle : _panelBoxStyle);
+
+            if (isSelected)
+            {
+                GUI.DrawTexture(new Rect(rowRect.x, rowRect.y, 3, rowRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            }
+
+            // Clicking anywhere on the row (except buttons) selects the release.
+            if (Event.current.type == EventType.MouseDown && rowRect.Contains(Event.current.mousePosition))
+            {
+                _versionManagerSelected = version;
+                _versionManagerNotesScroll = Vector2.zero;
+            }
+
+            var titleText = $"{version.ListLabel}{(version.IsPrerelease ? " [pre]" : "")}";
+            GUI.Label(new Rect(rowRect.x + 12, rowRect.y + 5, rowRect.width - 130, 22), titleText, _sectionHeaderStyle);
+
+            var subText = string.IsNullOrWhiteSpace(version.DisplayName) ? version.SizeDisplay : version.DisplayName;
+            GUI.Label(new Rect(rowRect.x + 12, rowRect.y + 28, rowRect.width - 130, 20), subText, _labelStyle);
+
+            var statusText = version.IsInstalled ? $"INSTALLED  •  {version.SizeDisplay}" : $"{version.SizeDisplay}  •  {version.PublishedAt}";
+            GUI.Label(new Rect(rowRect.x + 12, rowRect.y + 46, rowRect.width - 130, 18), statusText, _labelStyle);
+
+            var wasEnabled = GUI.enabled;
+            if (_isDownloadingVersion) GUI.enabled = false;
+
+            var installRect = new Rect(rowRect.x + rowRect.width - 112, rowRect.y + 6, 100, 26);
+            var installLabel = version.IsInstalled ? "REINSTALL" : "INSTALL";
+            if (GUI.Button(installRect, installLabel, _buttonStyle))
+            {
+                _versionManagerSelected = version;
+                StartVersionDownload(version);
+            }
+
+            if (version.IsInstalled)
+            {
+                var uninstallRect = new Rect(rowRect.x + rowRect.width - 112, rowRect.y + 38, 100, 24);
+                if (GUI.Button(uninstallRect, "UNINSTALL", _buttonStyle))
+                {
+                    UninstallGameVersion(version);
+                }
+            }
+
+            GUI.enabled = wasEnabled;
         }
 
         private void RefreshSkinModalPreview()
@@ -1237,7 +1632,7 @@ namespace LatticeVeil.Launcher
             // Modal rect centered - larger size
             float modalWidth = 680;
             float modalHeight = 520;
-            var modalRect = new Rect((screenRect.width - modalWidth) * 0.5f, (screenRect.height - modalHeight) * 0.5f, modalWidth, modalHeight);
+            var modalRect = new Rect((screenRect.width - modalWidth) * 0.5f + _settingsModalOffset.x, (screenRect.height - modalHeight) * 0.5f + _settingsModalOffset.y, modalWidth, modalHeight);
 
             // Eat clicks on dimmer to prevent click-through
             if (Event.current.type == EventType.MouseDown && screenRect.Contains(Event.current.mousePosition))
@@ -1265,6 +1660,13 @@ namespace LatticeVeil.Launcher
             // Header Title
             var headerTitleRect = new Rect(headerRect.x + 18, headerRect.y + 10, 240, 24);
             GUI.Label(headerTitleRect, "Launcher Settings", _modalHeaderTitleStyle);
+
+            // Movable header (excludes the close button hitbox)
+            var settingsHeaderDragRect = new Rect(modalRect.x + 8, modalRect.y + 8, modalRect.width - 70, 30);
+            var settingsDragDelta = GetModalDragDelta(settingsHeaderDragRect, ref _draggingSettingsModal);
+            _settingsModalOffset += settingsDragDelta;
+            modalRect.x += settingsDragDelta.x;
+            modalRect.y += settingsDragDelta.y;
 
             // Header Close Button (X) - distinct hitbox and event consumption
             var closeBtnRect = new Rect(headerRect.x + headerRect.width - 46, headerRect.y + 5, 38, 32);
@@ -1324,6 +1726,14 @@ namespace LatticeVeil.Launcher
                 }
 
                 rowY += rowHeight + 10;
+                var newAutoInstall = DrawSwitch(new Rect(contentX, rowY, contentWidth, rowHeight), _settings.AutoInstallUpdatesEnabled, "Automatic Update Install", "Download and install the latest game version automatically (no prompt)");
+                if (newAutoInstall != _settings.AutoInstallUpdatesEnabled)
+                {
+                    _settings.AutoInstallUpdatesEnabled = newAutoInstall;
+                    _settings.Save(_log);
+                }
+
+                rowY += rowHeight + 10;
                 var newAutoAssets = DrawSwitch(new Rect(contentX, rowY, contentWidth, rowHeight), _settings.AutoTextureDownloadsEnabled, "Automatic Texture Downloads", "Sync default textures on launch (disable to preserve manual asset edits)");
                 if (newAutoAssets != _settings.AutoTextureDownloadsEnabled)
                 {
@@ -1347,8 +1757,11 @@ namespace LatticeVeil.Launcher
             }
             else if (_settingsTabIndex == 1) // Updates Tab
             {
-                var autoUpdatesText = _settings.AutoUpdateChecksEnabled ? "Automatic Updates: Enabled" : "Automatic Updates: Disabled";
+                var autoUpdatesText = _settings.AutoUpdateChecksEnabled ? "Automatic Update Checks: Enabled" : "Automatic Update Checks: Disabled";
                 GUI.Label(new Rect(contentX, tabBodyY, contentWidth, 28), autoUpdatesText, _sectionHeaderStyle);
+                GUI.Label(new Rect(contentX, tabBodyY + 28, contentWidth, 24), _settings.AutoInstallUpdatesEnabled
+                    ? "Automatic Update Install: Enabled (latest version installs silently)"
+                    : "Automatic Update Install: Disabled (prompt on new release)", _labelStyle);
                 GUI.Label(new Rect(contentX, tabBodyY + 38, contentWidth, 28), $"Current Channel: {(Paths.IsDevBuild ? "DEV" : "Release")}", _labelStyle);
                 GUI.Label(new Rect(contentX, tabBodyY + 70, contentWidth, 28), $"Build Hash: {(_hashVerified ? "Verified Official" : "Unverified")}", _labelStyle);
                 GUI.Label(new Rect(contentX, tabBodyY + 102, contentWidth, 28), $"Texture Downloads: {(_settings.AutoTextureDownloadsEnabled ? "Automatic Sync" : "Manual / Preserved")}", _labelStyle);
@@ -2027,11 +2440,18 @@ namespace LatticeVeil.Launcher
 
             const float modalWidth = 860f;
             const float modalHeight = 540f;
-            var modalRect = new Rect((screenRect.width - modalWidth) * 0.5f, (screenRect.height - modalHeight) * 0.5f, modalWidth, modalHeight);
+            var modalRect = new Rect((screenRect.width - modalWidth) * 0.5f + _skinModalOffset.x, (screenRect.height - modalHeight) * 0.5f + _skinModalOffset.y, modalWidth, modalHeight);
             GUI.Box(modalRect, "", _boxStyle);
 
             var titleRect = new Rect(modalRect.x + 18, modalRect.y + 12, 260, 30);
             GUI.Label(titleRect, "SKIN", _titleStyle);
+
+            // Movable header (excludes the close button hitbox)
+            var skinHeaderDragRect = new Rect(modalRect.x + 8, modalRect.y + 8, modalRect.width - 70, 36);
+            var skinDragDelta = GetModalDragDelta(skinHeaderDragRect, ref _draggingSkinModal);
+            _skinModalOffset += skinDragDelta;
+            modalRect.x += skinDragDelta.x;
+            modalRect.y += skinDragDelta.y;
             var closeRect = new Rect(modalRect.x + modalRect.width - 48, modalRect.y + 8, 34, 30);
             if (GUI.Button(closeRect, "X", _modalCloseBtnStyle))
             {
@@ -3124,11 +3544,28 @@ namespace LatticeVeil.Launcher
                     _gameVersions = versions ?? new System.Collections.Generic.List<GameVersionInfo>();
                     _versionsLoading = false;
 
-                    // keep or pick a sensible default selection
+                    // keep or pick a sensible default selection (LATEST wins)
                     if (_selectedVersion == null && _gameVersions.Count > 0)
+                    {
                         _selectedVersion = _gameVersions[0];
+                        _selectedIsLatest = true;
+                    }
+                    else if (_selectedVersion != null)
+                    {
+                        // Refresh installed flags on the selected version
+                        foreach (var v in _gameVersions)
+                        {
+                            if (string.Equals(v.Tag, _selectedVersion.Tag, StringComparison.OrdinalIgnoreCase))
+                            {
+                                _selectedVersion = v;
+                                break;
+                            }
+                        }
+                    }
                     _versionStatusMessage = _gameVersions.Count == 0 ? "No versions found" : "";
                     _log?.Info($"Version list refreshed: {_gameVersions.Count} version(s).");
+
+                    EvaluateLatestInstallPrompt();
                 });
             }
             catch (Exception ex)

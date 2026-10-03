@@ -23,14 +23,6 @@ namespace LatticeVeil.Launcher
             // Set target frame rate
             Application.targetFrameRate = 60;
 
-            // Floating panel mode: the same exe relaunched with --panel=versions
-            // or --panel=skins shows that panel in its own real topmost window.
-            if (FloatingPanelProgram.TryRunFromArgs())
-            {
-                gameObject.AddComponent<FloatingPanelProgram>();
-                return;
-            }
-
             if (autoSetupUI)
             {
                 // Add the launcher UI component

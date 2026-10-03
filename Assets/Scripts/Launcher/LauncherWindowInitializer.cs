@@ -182,6 +182,10 @@ namespace LatticeVeil.Launcher
             ShowLauncherWindow();
         }
 
+        /// <summary>Public alias for the launcher's main native window handle
+        /// (owner for floating panel windows).</summary>
+        public static IntPtr MainWindowHandle => GetWindowHandle();
+
         public static IntPtr GetWindowHandle()
         {
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
@@ -319,41 +323,6 @@ namespace LatticeVeil.Launcher
             return SetWindowText(hWnd, title);
 #else
             return false;
-#endif
-        }
-
-        /// <summary>
-        /// Configures this player instance as a floating panel window: real
-        /// borderless always-on-top OS window (Version Manager / Skin library)
-        /// that floats over the launcher and every other application.
-        /// </summary>
-        public static void ConfigurePanelWindow(string title)
-        {
-#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-            IntPtr hWnd = GetWindowHandle();
-            if (hWnd == IntPtr.Zero)
-                return;
-
-            // Borderless popup (strip caption/frames), like the launcher itself.
-            long style = GetWindowLong(hWnd, GWL_STYLE).ToInt64();
-            style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_BORDER | WS_DLGFRAME);
-            style |= WS_POPUP;
-            SetWindowLong(hWnd, GWL_STYLE, new IntPtr(style));
-
-            // Always on top, and out of the taskbar/alt-tab (panels belong to
-            // the launcher, they are not standalone apps).
-            long exStyle = GetWindowLong(hWnd, GWL_EXSTYLE).ToInt64();
-            SetWindowLong(hWnd, GWL_EXSTYLE, new IntPtr(exStyle | WS_EX_TOPMOST | WS_EX_TOOLWINDOW));
-
-            SetWindowText(hWnd, title);
-
-            // Place top-right of the work area as the default spot; draggable
-            // anywhere by the user via the header strip.
-            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-            UpdateWindow(hWnd);
-#else
-            // Editor: nothing to configure.
 #endif
         }
 

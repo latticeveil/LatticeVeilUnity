@@ -1519,37 +1519,15 @@ namespace LatticeVeil.Launcher
         }
 
         /// <summary>
-        /// Spawns this exe as a floating panel process (real topmost OS window).
-        /// Returns false when the panel could not be started (caller falls back
-        /// to the in-window modal). The panel shares all on-disk state because
-        /// it is the same binary reading the same folders.
+        /// Opens the panel as a NATIVE window owned by this launcher's main
+        /// window — same process, no relaunch. The system stacks it above the
+        /// launcher and destroys it when the launcher closes. Returns false
+        /// when native windows are unavailable (editor), so the caller falls
+        /// back to the in-window modal.
         /// </summary>
         private bool TryOpenFloatingPanel(FloatingPanelKind kind)
         {
-            try
-            {
-                var exePath = Process.GetCurrentProcess().MainModule?.FileName;
-                if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath) || IsEditorOrHostProcess(exePath))
-                    return false;
-
-                var arg = kind == FloatingPanelKind.Versions ? "--panel=versions" : "--panel=skins";
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = exePath,
-                    Arguments = arg,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                startInfo.EnvironmentVariables["LATTICEVEIL_INSTALL_ROOT"] = Core.Paths.InstallRootDir;
-
-                var proc = Process.Start(startInfo);
-                return proc != null;
-            }
-            catch (Exception ex)
-            {
-                _log?.Warn($"Floating panel could not start, falling back to in-window modal: {ex.Message}");
-                return false;
-            }
+            return FloatingPanelHost.Open(kind, _log);
         }
 
         private void OpenVersionManager()

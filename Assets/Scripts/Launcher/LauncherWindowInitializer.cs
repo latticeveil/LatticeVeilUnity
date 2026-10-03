@@ -252,8 +252,8 @@ namespace LatticeVeil.Launcher
             IntPtr hWnd = GetWindowHandle();
             if (hWnd != IntPtr.Zero)
             {
-                // Set window title so Task Manager shows "LatticeVeil Launcher"
-                SetWindowText(hWnd, "LatticeVeil Launcher");
+                // Set window title so Task Manager shows "LatticeLauncher"
+                SetWindowText(hWnd, "LatticeLauncher");
                 ShowWindow(hWnd, SW_SHOW);
                 SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
                 UpdateWindow(hWnd);

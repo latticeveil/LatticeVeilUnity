@@ -10,6 +10,9 @@ namespace LatticeVeil.Launcher
     ///     (LatticeLauncher.exe > LatticeVeilMonoGame.exe / LatticeVeil.exe)
     ///   • kill-on-close means the game can never outlive the launcher
     ///     (no orphaned game processes when the launcher is closed).
+    ///   • the game is sandboxed: UI restrictions stop it from reading the
+    ///     clipboard, touching inherited handles, registering global atoms,
+    ///     or shutting down/restarting the system.
     /// </summary>
     internal static class GameProcessJob
     {
@@ -52,6 +55,9 @@ namespace LatticeVeil.Launcher
                         {
                             Marshal.FreeHGlobal(ptr);
                         }
+
+                        // Sandbox UI restrictions for every process in the job.
+                        ApplyUiRestrictions(_jobHandle);
                     }
 
                     if (!AssignProcessToJobObject(_jobHandle, process.Handle))
@@ -63,6 +69,35 @@ namespace LatticeVeil.Launcher
                 // Non-fatal: the game still runs normally, just without the
                 // launcher nesting / lifetime tie.
                 UnityEngine.Debug.LogWarning($"[GameProcessJob] Attach failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Applies the sandbox UI restrictions to the job. Best-effort: if the
+        /// system refuses them the game simply runs without that restriction.
+        /// </summary>
+        private static void ApplyUiRestrictions(IntPtr jobHandle)
+        {
+            var restrictions = (uint)(
+                JOB_OBJECT_UILIMIT_HANDLES |
+                JOB_OBJECT_UILIMIT_READCLIPBOARD |
+                JOB_OBJECT_UILIMIT_WRITECLIPBOARD |
+                JOB_OBJECT_UILIMIT_GLOBALATOMS |
+                JOB_OBJECT_UILIMIT_EXITWINDOWS);
+
+            var ptr = Marshal.AllocHGlobal(sizeof(uint));
+            try
+            {
+                Marshal.WriteInt32(ptr, unchecked((int)restrictions));
+                SetInformationJobObject(jobHandle, JobObjectBasicUIRestrictions, ptr, sizeof(uint));
+            }
+            catch
+            {
+                // Non-fatal: sandbox-lite is best effort.
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(ptr);
             }
         }
 
@@ -81,6 +116,13 @@ namespace LatticeVeil.Launcher
 
         private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
         private const int JobObjectExtendedLimitInformation = 9;
+        private const int JobObjectBasicUIRestrictions = 4;
+
+        private const uint JOB_OBJECT_UILIMIT_HANDLES = 0x00000001;
+        private const uint JOB_OBJECT_UILIMIT_READCLIPBOARD = 0x00000002;
+        private const uint JOB_OBJECT_UILIMIT_WRITECLIPBOARD = 0x00000004;
+        private const uint JOB_OBJECT_UILIMIT_GLOBALATOMS = 0x00000020;
+        private const uint JOB_OBJECT_UILIMIT_EXITWINDOWS = 0x00000080;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct JOBOBJECT_BASIC_LIMIT_INFORMATION

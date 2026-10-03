@@ -835,6 +835,11 @@ namespace LatticeVeil.Launcher
 
             bool modalOpen = _showSettingsModal || _showSkinModal || _showVersionManagerModal || _showInstallPromptModal;
 
+            // Hover tooltip state — anchored to the hovered control, not the cursor,
+            // so the tooltip can never stick to the mouse or linger after leaving.
+            string hoverTooltip = null;
+            Rect hoverTooltipAnchor = Rect.zero;
+
             // Calculate layout filling the full window client area
             var launcherRect = new Rect(0, 0, Screen.width, Screen.height);
 
@@ -1104,9 +1109,13 @@ namespace LatticeVeil.Launcher
             }
 
             // Game Folder (Windows 11 style folder icon + hover text)
-            var folderBtnContent = _folderIconTex != null
-                ? new GUIContent(_folderIconTex, "Open Game Folder")
-                : new GUIContent("...", "Open Game Folder");
+            if (!modalOpen && folderIconRect.Contains(Event.current.mousePosition))
+            {
+                hoverTooltip = "Open Game Folder";
+                hoverTooltipAnchor = folderIconRect;
+            }
+
+            var folderBtnContent = _folderIconTex != null ? new GUIContent(_folderIconTex) : new GUIContent("...");
             if (GUI.Button(folderIconRect, folderBtnContent, _wrenchControlStyle))
             {
                 OpenGameFolder();
@@ -1344,24 +1353,40 @@ namespace LatticeVeil.Launcher
                 DrawSkinModal(launcherRect);
             }
 
-            // Hover tooltip (set via GUIContent.tooltip on icon buttons)
-            var tooltip = GUI.tooltip;
-            if (!string.IsNullOrEmpty(tooltip))
+            // Hover tooltip — drawn beside the hovered control so it never sticks
+            // to the cursor, and sized from the text so nothing is clipped.
+            if (!modalOpen && !string.IsNullOrEmpty(hoverTooltip))
             {
                 if (_tooltipStyle == null)
                 {
                     _tooltipStyle = new GUIStyle(_labelStyle)
                     {
                         alignment = TextAnchor.MiddleLeft,
-                        padding = new RectOffset(10, 10, 5, 5)
+                        fontSize = 14,
+                        fontStyle = FontStyle.Bold,
+                        padding = new RectOffset(14, 14, 8, 8),
+                        wordWrap = false
                     };
+                    _tooltipStyle.normal.textColor = new Color(0.95f, 0.95f, 0.95f);
                 }
 
-                var tipContent = new GUIContent(tooltip);
+                var tipContent = new GUIContent(hoverTooltip);
                 var tipSize = _tooltipStyle.CalcSize(tipContent);
-                var tipRect = new Rect(Event.current.mousePosition.x + 16, Event.current.mousePosition.y + 20, tipSize.x, tipSize.y);
-                tipRect.x = Mathf.Clamp(tipRect.x, 2, Mathf.Max(2, Screen.width - tipRect.width - 2));
-                tipRect.y = Mathf.Clamp(tipRect.y, 2, Mathf.Max(2, Screen.height - tipRect.height - 2));
+                var tipRect = new Rect(
+                    hoverTooltipAnchor.x + hoverTooltipAnchor.width + 12,
+                    hoverTooltipAnchor.y + (hoverTooltipAnchor.height - tipSize.y) * 0.5f,
+                    tipSize.x + 2,
+                    tipSize.y + 2);
+
+                // Flip above the button when it would run off the right edge.
+                if (tipRect.x + tipRect.width > Screen.width - 4)
+                {
+                    tipRect.x = hoverTooltipAnchor.x + hoverTooltipAnchor.width * 0.5f - tipRect.width * 0.5f;
+                    tipRect.y = hoverTooltipAnchor.y - tipRect.height - 8;
+                }
+
+                tipRect.x = Mathf.Clamp(tipRect.x, 4, Mathf.Max(4, Screen.width - tipRect.width - 4));
+                tipRect.y = Mathf.Clamp(tipRect.y, 4, Mathf.Max(4, Screen.height - tipRect.height - 4));
 
                 GUI.enabled = true;
                 GUI.Box(tipRect, "", _boxStyle);

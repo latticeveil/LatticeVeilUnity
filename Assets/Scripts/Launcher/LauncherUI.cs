@@ -186,6 +186,8 @@ namespace LatticeVeil.Launcher
         private GUIStyle _topBarStyle;
         private GUIStyle _textFieldStyle;
         private GUIStyle _dropdownStyle;
+        private GUIStyle _dropdownArrowStyle;
+        private GUIStyle _tooltipStyle;
         private GUIStyle _dropdownItemStyle;
         private GUIStyle _dropdownActiveItemStyle;
         private GUIStyle _dropdownContainerStyle;
@@ -553,33 +555,57 @@ namespace LatticeVeil.Launcher
         }
 
         /// <summary>
-        /// Generates a clean 24×24 white folder icon (procedural, no asset file needed).
-        /// Used for the Game Folder button next to the version dropdown.
+        /// Generates a Windows 11 style folder icon (64×64, drawn at high res and
+        /// scaled down by the button for crisp edges): rounded dark-amber back panel
+        /// with a tab, and a bright yellow gradient front panel. No asset file needed.
         /// </summary>
         private static Texture2D CreateFolderIconTexture()
         {
-            const int S = 24;
+            const int S = 64;
             var tex = new Texture2D(S, S, TextureFormat.RGBA32, false);
             tex.filterMode = FilterMode.Bilinear;
             var pix = new Color[S * S];
 
             for (int i = 0; i < pix.Length; i++) pix[i] = Color.clear;
 
-            var white = new Color(0.95f, 0.95f, 0.95f, 1f);
+            // Signed-distance test for a rounded rectangle.
+            bool InRounded(float x, float y, float x0, float y0, float x1, float y1, float r)
+            {
+                var qx = Mathf.Max(x0 + r - x, x - (x1 - r), 0f);
+                var qy = Mathf.Max(y0 + r - y, y - (y1 - r), 0f);
+                return qx * qx + qy * qy <= r * r;
+            }
 
-            void Set(int x, int y) { if (x >= 0 && x < S && y >= 0 && y < S) pix[y * S + x] = white; }
+            var back = new Color(0.85f, 0.60f, 0.16f, 1f);      // dark amber (back panel + tab)
+            var frontTop = new Color(1.00f, 0.87f, 0.47f, 1f);  // bright yellow (front gradient top)
+            var frontBottom = new Color(0.95f, 0.66f, 0.20f, 1f); // amber (front gradient bottom)
 
-            // Folder tab (top-left)
-            for (int y = 4; y <= 7; y++)
-                for (int x = 3; x <= 10; x++) Set(x, y);
+            for (int y = 0; y < S; y++)
+            {
+                for (int x = 0; x < S; x++)
+                {
+                    var fx = x + 0.5f;
+                    var fy = y + 0.5f;
 
-            // Folder body
-            for (int y = 7; y <= 18; y++)
-                for (int x = 3; x <= 20; x++) Set(x, y);
+                    // Back panel + tab (peeking above/left of the front panel)
+                    if (InRounded(fx, fy, 5, 16, 59, 52, 6) || InRounded(fx, fy, 5, 10, 31, 24, 5))
+                    {
+                        pix[y * S + x] = back;
+                    }
 
-            // Slight perspective notch under the tab
-            for (int x = 10; x <= 13; x++)
-                for (int y = 5; y <= 6; y++) Set(x, y);
+                    // Front panel with a vertical gradient (Win11 look)
+                    if (InRounded(fx, fy, 5, 20, 59, 54, 6))
+                    {
+                        var t = Mathf.Clamp01((fy - 20f) / 34f);
+                        var c = Color.Lerp(frontTop, frontBottom, t);
+
+                        // Subtle lighter top edge highlight
+                        if (fy < 23f) c = Color.Lerp(c, new Color(1f, 0.94f, 0.62f, 1f), 0.55f);
+
+                        pix[y * S + x] = c;
+                    }
+                }
+            }
 
             tex.SetPixels(pix);
             tex.Apply();
@@ -1062,7 +1088,7 @@ namespace LatticeVeil.Launcher
             var versionClusterWidth = 250;
             var selectorRect = new Rect(versionClusterX, bottomY + 10, versionClusterWidth, 30);
             var versionRect = new Rect(versionClusterX, bottomY + 44, versionClusterWidth, 30);
-            var folderIconRect = new Rect(versionClusterX + versionClusterWidth + 10, bottomY + 27, 34, 34);
+            var folderIconRect = new Rect(versionClusterX + versionClusterWidth + 10, bottomY + 22, 44, 44);
 
             var installedVersions = new System.Collections.Generic.List<GameVersionInfo>();
             foreach (var v in _gameVersions)
@@ -1077,8 +1103,10 @@ namespace LatticeVeil.Launcher
                 OpenVersionManager();
             }
 
-            // Game Folder (white folder icon)
-            var folderBtnContent = _folderIconTex != null ? new GUIContent(_folderIconTex) : new GUIContent("...");
+            // Game Folder (Windows 11 style folder icon + hover text)
+            var folderBtnContent = _folderIconTex != null
+                ? new GUIContent(_folderIconTex, "Open Game Folder")
+                : new GUIContent("...", "Open Game Folder");
             if (GUI.Button(folderIconRect, folderBtnContent, _wrenchControlStyle))
             {
                 OpenGameFolder();
@@ -1104,8 +1132,7 @@ namespace LatticeVeil.Launcher
             else if (_selectedIsLatest || _selectedVersion == null)
                 versionButtonText = latestVersion != null ? $"LATEST ({latestVersion.Tag})" : "LATEST";
             else versionButtonText = _selectedVersion.ListLabel;
-            var versionArrow = _versionDropdownOpen ? "^" : "v";
-            if (GUI.Button(versionRect, $"{versionButtonText}  {versionArrow}", _dropdownStyle))
+            if (DrawDropdownButton(versionRect, versionButtonText, _versionDropdownOpen))
             {
                 _versionDropdownOpen = !_versionDropdownOpen;
                 if (_versionDropdownOpen)
@@ -1201,8 +1228,7 @@ namespace LatticeVeil.Launcher
                 }
             }
 
-            var dropdownArrow = _launchModeDropdownOpen ? "^" : "v";
-            if (GUI.Button(launchModeRect, $"{launchModes[selectedIndex]}  {dropdownArrow}", _dropdownStyle))
+            if (DrawDropdownButton(launchModeRect, launchModes[selectedIndex], _launchModeDropdownOpen))
             {
                 _launchModeDropdownOpen = !_launchModeDropdownOpen;
             }
@@ -1317,6 +1343,58 @@ namespace LatticeVeil.Launcher
             {
                 DrawSkinModal(launcherRect);
             }
+
+            // Hover tooltip (set via GUIContent.tooltip on icon buttons)
+            var tooltip = GUI.tooltip;
+            if (!string.IsNullOrEmpty(tooltip))
+            {
+                if (_tooltipStyle == null)
+                {
+                    _tooltipStyle = new GUIStyle(_labelStyle)
+                    {
+                        alignment = TextAnchor.MiddleLeft,
+                        padding = new RectOffset(10, 10, 5, 5)
+                    };
+                }
+
+                var tipContent = new GUIContent(tooltip);
+                var tipSize = _tooltipStyle.CalcSize(tipContent);
+                var tipRect = new Rect(Event.current.mousePosition.x + 16, Event.current.mousePosition.y + 20, tipSize.x, tipSize.y);
+                tipRect.x = Mathf.Clamp(tipRect.x, 2, Mathf.Max(2, Screen.width - tipRect.width - 2));
+                tipRect.y = Mathf.Clamp(tipRect.y, 2, Mathf.Max(2, Screen.height - tipRect.height - 2));
+
+                GUI.enabled = true;
+                GUI.Box(tipRect, "", _boxStyle);
+                GUI.Label(tipRect, tipContent, _tooltipStyle);
+            }
+        }
+
+        /// <summary>
+        /// Dropdown button with a context-menu style separator line between the
+        /// label and the arrow zone. Returns true when clicked.
+        /// </summary>
+        private bool DrawDropdownButton(Rect rect, string text, bool isOpen)
+        {
+            var clicked = GUI.Button(rect, text, _dropdownStyle);
+
+            // Light-dark vertical separator line before the arrow zone
+            const float arrowZoneWidth = 26f;
+            var prevColor = GUI.color;
+            GUI.color = new Color(0.62f, 0.62f, 0.62f, 0.5f);
+            GUI.DrawTexture(new Rect(rect.x + rect.width - arrowZoneWidth, rect.y + 5, 1, rect.height - 10), Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = prevColor;
+
+            if (_dropdownArrowStyle == null)
+            {
+                _dropdownArrowStyle = new GUIStyle(_dropdownStyle)
+                {
+                    alignment = TextAnchor.MiddleCenter
+                };
+            }
+
+            GUI.Label(new Rect(rect.x + rect.width - arrowZoneWidth, rect.y, arrowZoneWidth, rect.height), isOpen ? "^" : "v", _dropdownArrowStyle);
+
+            return clicked;
         }
 
         /// <summary>Shared drag handling for movable modal windows (header region only).

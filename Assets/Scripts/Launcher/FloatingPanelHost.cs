@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -18,23 +19,20 @@ namespace LatticeVeil.Launcher
     ///   - the system stacks the panel above its owner,
     ///   - closing the launcher automatically destroys the panel,
     ///   - the panel is centered over the launcher when opened.
-    /// Rendering: the panel content is drawn with IMGUI into a RenderTexture
-    /// from the launcher's own OnGUI loop, then the pixels are pushed into the
-    /// native window via StretchDIBits. Input (mouse move / click / wheel)
-    /// arrives through a real WndProc attached to the panel window.
+    /// Rendering: the panel is drawn with pure GDI into the window's device
+    /// context (double-buffered through a memory DC) from the launcher's own
+    /// frame loop — no dependency on Unity's render pipeline. Input (mouse
+    /// move / click / wheel) arrives through a real WndProc; the header strip
+    /// doubles as a native drag handle (HTCAPTION).
     /// </summary>
     public class FloatingPanelHost : MonoBehaviour
     {
         private static FloatingPanelHost _active;
-        private static bool _wndClassRegistered;
 
         private FloatingPanelKind _kind;
         private Core.Logger _log;
         private PanelContent _content;
         private IntPtr _hwnd = IntPtr.Zero;
-        private RenderTexture _rt;
-        private Texture2D _readTex;
-        private Color32[] _pixels;
         private int _w, _h;
         private bool _destroying;
 
@@ -103,15 +101,6 @@ namespace LatticeVeil.Launcher
 
             PanelWin32.ActiveHost = this;
 
-            _rt = new RenderTexture(_w, _h, 0, RenderTextureFormat.ARGB32)
-            {
-                antiAliasing = 1,
-                useMipMap = false,
-            };
-            _rt.Create();
-            _readTex = new Texture2D(_w, _h, TextureFormat.RGBA32, false, true);
-            _pixels = new Color32[_w * _h];
-
             // Center the panel over the launcher window.
             PanelWin32.CenterOverOwner(_hwnd, owner);
             PanelWin32.Show(_hwnd);
@@ -126,14 +115,12 @@ namespace LatticeVeil.Launcher
             ClosePanel();
         }
 
-        /// <summary>Tears down the native window and GPU resources.</summary>
+        /// <summary>Tears down the native window and GDI resources.</summary>
         public void ClosePanel()
         {
             if (_destroying) return;
             _destroying = true;
 
-            if (_rt != null) { _rt.Release(); Destroy(_rt); }
-            if (_readTex != null) Destroy(_readTex);
             _content?.Shutdown();
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
@@ -148,108 +135,44 @@ namespace LatticeVeil.Launcher
             if (_active == this) _active = null;
         }
 
-        // ------------------------- rendering -------------------------
+        // ------------------------- frame loop -------------------------
 
-        /// <summary>
-        /// Called from the launcher's own OnGUI loop (Repaint only). Draws the
-        /// panel into the render texture and pushes the pixels to the window.
-        /// </summary>
-        private void OnGUI()
+        private void Update()
         {
-            if (_hwnd == IntPtr.Zero || _rt == null) return;
-            if (Event.current == null || Event.current.type != EventType.Repaint) return;
-
-            PanelWin32.PollWindowSize(_hwnd, ref _w, ref _h, _rt, _readTex, ref _pixels);
-            if (_pixels == null || _pixels.Length != _w * _h)
-                _pixels = new Color32[_w * _h];
+            if (_hwnd == IntPtr.Zero) return;
 
             // Per-frame content tick (kick off async work etc.).
             _content.Tick();
 
-            // Real input harvested by the WndProc since the last frame.
-            PanelWin32.GetInput(out var mouse, out var clicked, out var wheelDelta);
+            PanelWin32.DrawFrame(this);
 
-            var prevActive = RenderTexture.active;
-            RenderTexture.active = _rt;
-            GL.Clear(false, true, new Color(0.05f, 0.05f, 0.06f, 1f));
-
-            // Map IMGUI's pixel space onto the render texture (top-left origin,
-            // y down) so all panel drawing lands 1:1 in the native window.
-            var prevMatrix = GUI.matrix;
-            GUI.matrix = Matrix4x4.Ortho(0, _w, _h, 0, -1, 1);
-
-            var ui = new PanelUI(mouse, clicked, wheelDelta);
-            GUI.BeginGroup(new Rect(0, 0, _w, _h));
-            _content.OnGUI(ui, new Rect(0, 0, _w, _h));
-            GUI.EndGroup();
-
-            GUI.matrix = prevMatrix;
-
-            // Blit the render texture into the native window.
-            _readTex.ReadPixels(new Rect(0, 0, _w, _h), 0, 0);
-            RenderTexture.active = prevActive;
-            _readTex.Apply(false);
-            _pixels = _readTex.GetPixels32();
-
-            // RGBA (Unity) -> BGRA (DIB), force opaque.
-            for (int i = 0; i < _pixels.Length; i++)
+            if (_content.ConsumeClose())
             {
-                var c = _pixels[i];
-                _pixels[i] = new Color32(c.b, c.g, c.r, 255);
+                ClosePanel();
+                Destroy(gameObject);
             }
-
-            var pin = GCHandle.Alloc(_pixels, GCHandleType.Pinned);
-            try
-            {
-                PanelWin32.PresentPixels(_hwnd, pin.AddrOfPinnedObject(), _w, _h);
-            }
-            finally
-            {
-                pin.Free();
-            }
-            PanelWin32.ConsumeWheel();
         }
 
         // ======================= tiny UI toolkit =======================
 
-        /// <summary>Input + draw helpers for panel content. IMGUI calls inside
-        /// the panel's render texture; hit-testing uses real Win32 input.</summary>
+        /// <summary>Input + GDI draw helpers for panel content. Hit-testing
+        /// uses real Win32 input harvested by the WndProc.</summary>
         public class PanelUI
         {
             public readonly Vector2 Mouse;
             public readonly bool Clicked;
             public readonly float WheelDelta;
+            internal IntPtr Hdc;
 
-            private Texture2D _flat;
-
-            public PanelUI(Vector2 mouse, bool clicked, float wheelDelta)
+            public PanelUI(Vector2 mouse, bool clicked, float wheelDelta, IntPtr hdc)
             {
                 Mouse = mouse;
                 Clicked = clicked;
                 WheelDelta = wheelDelta;
+                Hdc = hdc;
             }
 
-            private Texture2D Flat
-            {
-                get
-                {
-                    if (_flat == null)
-                    {
-                        _flat = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-                        _flat.SetPixel(0, 0, Color.white);
-                        _flat.Apply();
-                    }
-                    return _flat;
-                }
-            }
-
-            public void Fill(Rect r, Color c)
-            {
-                var prev = GUI.color;
-                GUI.color = c;
-                GUI.DrawTexture(r, Flat, ScaleMode.StretchToFill);
-                GUI.color = prev;
-            }
+            public void Fill(Rect r, Color c) => PanelWin32.FillRect(Hdc, r, c);
 
             public void Frame(Rect r, Color c)
             {
@@ -262,10 +185,8 @@ namespace LatticeVeil.Launcher
             public void Label(Rect r, string text, int size, Color color, bool bold = false,
                 TextAnchor anchor = TextAnchor.UpperLeft, bool wrap = false)
             {
-                EnsureStyle(ref _labelStyle, size, color, bold, anchor, wrap);
-                GUI.Label(r, text ?? "", _labelStyle);
+                PanelWin32.DrawTextString(Hdc, r, text ?? "", size, bold, color, anchor, wrap);
             }
-            private GUIStyle _labelStyle;
 
             /// <summary>Draws a button; returns true on click this frame.</summary>
             public bool Button(Rect r, string text, int size, Color bg, Color hoverBg, Color fg)
@@ -277,9 +198,12 @@ namespace LatticeVeil.Launcher
                 return Clicked && hover;
             }
 
+            /// <summary>Draws a PNG image scaled into the rect. Returns false when unavailable.</summary>
+            public bool Image(Rect r, string imagePath) => PanelWin32.DrawImage(Hdc, r, imagePath);
+
             /// <summary>
-            /// Clipped list viewport with wheel scrolling. Call inside it after
-            /// Begin; returns the offset rows should be drawn at (-scroll).
+            /// Clipped list viewport with wheel scrolling. Returns the offset
+            /// rows should be drawn at (-scroll). Pair with EndList.
             /// </summary>
             public Rect BeginList(Rect viewport, float contentHeight, ref Vector2 scroll)
             {
@@ -289,7 +213,8 @@ namespace LatticeVeil.Launcher
 
                 Fill(viewport, new Color(0.09f, 0.09f, 0.10f, 1f));
                 Frame(viewport, new Color(0.16f, 0.16f, 0.18f));
-                GUI.BeginGroup(viewport);
+
+                PanelWin32.PushClip(Hdc, viewport);
 
                 // Scrollbar indicator
                 if (contentHeight > viewport.height)
@@ -301,29 +226,7 @@ namespace LatticeVeil.Launcher
                 return new Rect(0, -scroll.y, viewport.width, contentHeight);
             }
 
-            public void EndList() => GUI.EndGroup();
-
-            private static void EnsureStyle(ref GUIStyle style, int size, Color color, bool bold,
-                TextAnchor anchor, bool wrap)
-            {
-                if (style != null)
-                {
-                    style.fontSize = size;
-                    style.normal.textColor = color;
-                    style.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
-                    style.alignment = anchor;
-                    style.wordWrap = wrap;
-                    return;
-                }
-                style = new GUIStyle(GUI.skin.label)
-                {
-                    fontSize = size,
-                    fontStyle = bold ? FontStyle.Bold : FontStyle.Normal,
-                    alignment = anchor,
-                    wordWrap = wrap,
-                };
-                style.normal.textColor = color;
-            }
+            public void EndList() => PanelWin32.PopClip(Hdc);
         }
 
         // ======================= panel content =======================
@@ -331,6 +234,7 @@ namespace LatticeVeil.Launcher
         public abstract class PanelContent
         {
             protected Core.Logger Log;
+            private bool _closeRequested;
 
             protected PanelContent(Core.Logger log) { Log = log; }
 
@@ -341,7 +245,10 @@ namespace LatticeVeil.Launcher
 
             public virtual void Shutdown() { }
 
-            // Shared styles/colors
+            public void RequestClose() => _closeRequested = true;
+            public bool ConsumeClose() { var v = _closeRequested; _closeRequested = false; return v; }
+
+            // Shared colors
             protected static readonly Color Bg = new Color(0.07f, 0.07f, 0.08f);
             protected static readonly Color HeaderBg = new Color(0.10f, 0.10f, 0.11f);
             protected static readonly Color Accent = new Color(1f, 0.82f, 0.45f);
@@ -363,10 +270,8 @@ namespace LatticeVeil.Launcher
                 // HTCLIENT so the click reaches us instead of the title drag.
                 var closeRect = new Rect(panelRect.width - 46, 5, 38, 32);
                 if (ui.Button(closeRect, "X", 13, BtnBg, BtnHover, Text))
-                    CloseRequested = true;
+                    RequestClose();
             }
-
-            protected bool CloseRequested;
         }
 
         // ------------------------- Versions -------------------------
@@ -375,6 +280,7 @@ namespace LatticeVeil.Launcher
         {
             private GameVersionService _versionService;
             private HttpClient _httpClient;
+            private readonly LegacyVersionInstaller _installer;
             private System.Collections.Generic.List<GameVersionInfo> _versions =
                 new System.Collections.Generic.List<GameVersionInfo>();
             private GameVersionInfo _selectedVersion;
@@ -386,8 +292,6 @@ namespace LatticeVeil.Launcher
             private string _statusMessage = "Checking releases...";
             private bool _refreshQueued;
             private int _pendingInstall = -1; // index into _versions
-
-            private readonly LegacyVersionInstaller _installer;
 
             public VersionsPanel(Core.Logger log) : base(log)
             {
@@ -446,7 +350,6 @@ namespace LatticeVeil.Launcher
             public override void OnGUI(PanelUI ui, Rect panelRect)
             {
                 DrawHeader(ui, panelRect, "VERSION MANAGER");
-                if (CloseRequested) return;
 
                 float bodyTop = HeaderH + 12;
                 float bodyH = panelRect.height - bodyTop - 56;
@@ -468,19 +371,23 @@ namespace LatticeVeil.Launcher
                 ui.Fill(notesRect, RowBg);
                 ui.Frame(notesRect, new Color(0.16f, 0.16f, 0.18f));
                 ui.Label(new Rect(notesRect.x + 12, notesRect.y + 8, notesRect.width - 24, 24), "UPDATE NOTES", 13, Accent, bold: true);
+
+                var notesViewport = new Rect(notesRect.x + 8, notesRect.y + 36, notesRect.width - 16, notesRect.height - 46);
                 var notes = _selectedVersion?.Body ?? "";
-                GUI.BeginGroup(new Rect(notesRect.x + 8, notesRect.y + 36, notesRect.width - 16, notesRect.height - 46));
-                float notesH = Mathf.Max(notesRect.height - 70, notes.Length * 14f);
-                _notesScroll.y = Mathf.Clamp(_notesScroll.y - (notesRect.Contains(ui.Mouse) ? ui.WheelDelta : 0),
-                    0, Mathf.Max(0, notesH - (notesRect.height - 46)));
-                ui.Label(new Rect(0, -_notesScroll.y, notesRect.width - 36, notesH), notes, 12, Dim, wrap: true);
-                GUI.EndGroup();
+                float notesH = Mathf.Max(notesViewport.height, notes.Length * 14f);
+                _notesScroll.y = Mathf.Clamp(_notesScroll.y - (notesViewport.Contains(ui.Mouse) ? ui.WheelDelta : 0),
+                    0, Mathf.Max(0, notesH - notesViewport.height));
+                ui.Fill(notesViewport, RowBg);
+                PanelWin32.PushClip(ui.Hdc, notesViewport);
+                ui.Label(new Rect(notesViewport.x, notesViewport.y - _notesScroll.y, notesViewport.width, notesH),
+                    notes, 12, Dim, wrap: true);
+                PanelWin32.PopClip(ui.Hdc);
 
                 // Footer
                 ui.Label(new Rect(18, panelRect.height - 40, panelRect.width - 200, 26),
                     _isDownloading
                         ? $"Downloading {_selectedVersion?.Tag ?? ""}... {(int)(_downloadProgress * 100)}%"
-                        : _statusMessage, 12, Dim, wrap: false);
+                        : _statusMessage, 12, Dim);
 
                 if (ui.Button(new Rect(panelRect.width - 150, panelRect.height - 50, 132, 34), "REFRESH", 12,
                     BtnBg, BtnHover, Text))
@@ -497,11 +404,10 @@ namespace LatticeVeil.Launcher
                 ui.Label(new Rect(row.x + 12, row.y + 8, row.width - 130, 22), version.ListLabel, 14, Text, bold: true);
                 bool installed = Core.Paths.TryResolveInstalledVersionExe(version.Tag) != null;
                 ui.Label(new Rect(row.x + 12, row.y + 32, row.width - 130, 18),
-                    $"{version.Tag}{(installed ? "  •  INSTALLED" : "")}", 11, Dim);
+                    $"{version.Tag}{(installed ? "  -  INSTALLED" : "")}", 11, Dim);
 
                 var actionRect = new Rect(row.x + row.width - 112, row.y + 18, 100, 30);
-                var prevBg = BtnBg; var prevHover = BtnHover;
-                if (ui.Button(actionRect, installed ? "UNINSTALL" : "INSTALL", 11, prevBg, prevHover, Text) && !_isDownloading)
+                if (ui.Button(actionRect, installed ? "UNINSTALL" : "INSTALL", 11, BtnBg, BtnHover, Text) && !_isDownloading)
                 {
                     if (installed) UninstallVersion(version);
                     else _pendingInstall = index;
@@ -589,7 +495,6 @@ namespace LatticeVeil.Launcher
             public override void OnGUI(PanelUI ui, Rect panelRect)
             {
                 DrawHeader(ui, panelRect, "SKIN LIBRARY");
-                if (CloseRequested) return;
 
                 _skinPaths = GetLocalSkinPaths();
                 var activeHash = ReadActiveSkinHashSafe();
@@ -617,10 +522,8 @@ namespace LatticeVeil.Launcher
                 ui.Fill(previewRect, RowBg);
                 ui.Frame(previewRect, new Color(0.16f, 0.16f, 0.18f));
 
-                var thumb = LoadSkinThumb(_selectedSkinPath);
-                if (thumb != null)
-                    GUI.DrawTexture(new Rect(previewRect.x + 16, previewRect.y + 16, previewRect.width - 32, previewRect.height - 120), thumb, ScaleMode.ScaleToFit);
-                else
+                var previewViewport = new Rect(previewRect.x + 16, previewRect.y + 16, previewRect.width - 32, previewRect.height - 84);
+                if (_selectedSkinPath == null || !ui.Image(previewViewport, _selectedSkinPath))
                     ui.Label(new Rect(previewRect.x + 16, previewRect.y + 16, previewRect.width - 32, 60),
                         "Select a skin from the list.", 12, Dim, wrap: true);
 
@@ -642,9 +545,8 @@ namespace LatticeVeil.Launcher
                 ui.Fill(row, hover ? RowHover : RowBg);
                 ui.Frame(row, new Color(0.18f, 0.18f, 0.20f));
 
-                var thumb = LoadSkinThumb(path);
-                if (thumb != null)
-                    GUI.DrawTexture(new Rect(row.x + 8, row.y + 8, 58, 58), thumb, ScaleMode.ScaleToFit);
+                if (path != null)
+                    ui.Image(new Rect(row.x + 8, row.y + 8, 58, 58), path);
 
                 ui.Label(new Rect(row.x + 74, row.y + 8, row.width - 190, 22), displayName, 14, Text, bold: true);
                 ui.Label(new Rect(row.x + 74, row.y + 32, row.width - 190, 18), isActive ? "ACTIVE" : "", 11, Accent);
@@ -696,23 +598,11 @@ namespace LatticeVeil.Launcher
                 }
                 catch { return string.Empty; }
             }
-
-            private static Texture2D LoadSkinThumb(string path)
-            {
-                if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
-                try
-                {
-                    var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                    tex.LoadImage(File.ReadAllBytes(path));
-                    return tex;
-                }
-                catch { return null; }
-            }
         }
 
         // ======================= Win32 plumbing =======================
 
-        /// <summary>All native window creation / input / presentation.</summary>
+        /// <summary>All native window creation, input, GDI drawing, GDI+ images.</summary>
         private static class PanelWin32
         {
             public static FloatingPanelHost ActiveHost;
@@ -725,7 +615,7 @@ namespace LatticeVeil.Launcher
 
             private const int WM_DESTROY = 0x0002;
             private const int WM_PAINT = 0x000F;
-            private const int WM_MOUSEMOVE = 0x0200;
+            private const int WM_ERASEBKGND = 0x0014;
             private const int WM_LBUTTONDOWN = 0x0201;
             private const int WM_LBUTTONUP = 0x0202;
             private const int WM_MOUSEWHEEL = 0x020A;
@@ -734,11 +624,18 @@ namespace LatticeVeil.Launcher
             private const int HTCLIENT = 1;
             private const int HTCAPTION = 2;
 
-            private const int SRCCOPY = 0x00CC0020;
-            private const int DIB_RGB_COLORS = 0;
+            private const uint SRCCOPY = 0x00CC0020;
+
+            // DrawText flags
+            private const uint DT_CENTER = 0x1;
+            private const uint DT_VCENTER = 0x4;
+            private const uint DT_SINGLELINE = 0x20;
+            private const uint DT_WORDBREAK = 0x10;
+            private const uint DT_EDITCONTROL = 0x2000;
+            private const uint DT_NOPREFIX = 0x800;
+            private const uint DT_END_ELLIPSIS = 0x8000;
 
             private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-
             private static WndProcDelegate _wndProc; // rooted so the delegate is not collected
 
             [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -754,29 +651,6 @@ namespace LatticeVeil.Launcher
                 public IntPtr hbrBackground;
                 [MarshalAs(UnmanagedType.LPWStr)] public string lpszMenuName;
                 [MarshalAs(UnmanagedType.LPWStr)] public string lpszClassName;
-            }
-
-            [StructLayout(LayoutKind.Sequential)]
-            private struct BITMAPINFOHEADER
-            {
-                public uint biSize;
-                public int biWidth;
-                public int biHeight; // positive = bottom-up (matches Unity's pixel order)
-                public ushort biPlanes;
-                public ushort biBitCount;
-                public uint biCompression;
-                public uint biSizeImage;
-                public int biXPelsPerMeter;
-                public int biYPelsPerMeter;
-                public uint biClrUsed;
-                public uint biClrImportant;
-            }
-
-            [StructLayout(LayoutKind.Sequential)]
-            private struct BITMAPINFO
-            {
-                public BITMAPINFOHEADER bmiHeader;
-                public uint bmiColors; // unused for 32bpp BI_RGB
             }
 
             [StructLayout(LayoutKind.Sequential)]
@@ -826,26 +700,118 @@ namespace LatticeVeil.Launcher
             [DllImport("user32.dll")]
             private static extern bool EndPaint(IntPtr hWnd, IntPtr lpPaint);
 
-            [DllImport("gdi32.dll", SetLastError = true)]
-            private static extern int StretchDIBits(IntPtr hdc, int XDest, int YDest, int nDestWidth, int nDestHeight,
-                int XSrc, int YSrc, int nSrcWidth, int nSrcHeight, IntPtr lpBits,
-                [In] ref BITMAPINFO lpBitsInfo, int iUsage, int dwRop);
-
             [DllImport("user32.dll")]
             private static extern IntPtr GetDC(IntPtr hWnd);
 
             [DllImport("user32.dll")]
             private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
 
+            // ---- GDI ----
+            [DllImport("gdi32.dll")]
+            private static extern IntPtr CreateSolidBrush(uint crColor);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool DeleteObject(IntPtr hObject);
+
+            [DllImport("gdi32.dll")]
+            private static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool FillRect(IntPtr hdc, ref RECT lprc, IntPtr hbr);
+
+            [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+            private static extern IntPtr CreateFontW(int cHeight, int cWidth, int cEscapement, int cOrientation,
+                int cWeight, uint bItalic, uint bUnderline, uint bStrikeOut, uint iCharSet, uint iOutPrecision,
+                uint iClipPrecision, uint iQuality, uint iPitchAndFamily, string pszFaceName);
+
+            [DllImport("gdi32.dll")]
+            private static extern uint SetTextColor(IntPtr hdc, uint crColor);
+
+            [DllImport("gdi32.dll")]
+            private static extern int SetBkMode(IntPtr hdc, int iBkMode);
+
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+            private static extern int DrawTextW(IntPtr hdc, string lpchText, int cchText, ref RECT lprc, uint format);
+
+            [DllImport("gdi32.dll")]
+            private static extern int SaveDC(IntPtr hdc);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool RestoreDC(IntPtr hdc, int nSavedDC);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool IntersectClipRect(IntPtr hdc, int left, int top, int right, int bottom);
+
+            [DllImport("gdi32.dll")]
+            private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+            [DllImport("gdi32.dll")]
+            private static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool DeleteDC(IntPtr hdc);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight,
+                IntPtr hdcSrc, int nXSrc, int nYSrc, uint dwRop);
+
+            // ---- GDI+ (PNG thumbnails) ----
+            [StructLayout(LayoutKind.Sequential)]
+            private struct GdiplusStartupInput
+            {
+                public int GdiplusVersion;
+                public IntPtr DebugEventCallback;
+                public int SuppressBackgroundThread;
+                public int SuppressExternalCodecs;
+            }
+
+            [DllImport("gdiplus.dll")]
+            private static extern int GdiplusStartup(out IntPtr token, ref GdiplusStartupInput input, IntPtr output);
+
+            [DllImport("gdiplus.dll", CharSet = CharSet.Unicode)]
+            private static extern int GdipCreateBitmapFromFile(string filename, out IntPtr bitmap);
+
+            [DllImport("gdiplus.dll")]
+            private static extern int GdipCreateFromHDC(IntPtr hdc, out IntPtr graphics);
+
+            [DllImport("gdiplus.dll")]
+            private static extern int GdipDrawImageRectI(IntPtr graphics, IntPtr image, int x, int y, int width, int height);
+
+            [DllImport("gdiplus.dll")]
+            private static extern int GdipSetInterpolationMode(IntPtr graphics, int mode);
+
+            [DllImport("gdiplus.dll")]
+            private static extern int GdipDeleteGraphics(IntPtr graphics);
+
+            [DllImport("gdiplus.dll")]
+            private static extern int GdipDisposeImage(IntPtr image);
+
+            // ---- state ----
             private static int _clickQueued; // 1 when a click is waiting to be consumed
             private static float _wheelAccum;
             private static Vector2 _lastMouse;
+
+            private static IntPtr _memDc = IntPtr.Zero;
+            private static IntPtr _memBmp = IntPtr.Zero;
+            private static IntPtr _oldBmp = IntPtr.Zero;
+            private static int _memW, _memH;
+
+            private static readonly Dictionary<long, IntPtr> BrushCache = new Dictionary<long, IntPtr>();
+            private static readonly Dictionary<long, IntPtr> FontCache = new Dictionary<long, IntPtr>();
+            private static readonly Dictionary<string, Tuple<IntPtr, DateTime>> ImageCache =
+                new Dictionary<string, Tuple<IntPtr, DateTime>>(StringComparer.OrdinalIgnoreCase);
+            private static IntPtr _gdiplusToken = IntPtr.Zero;
+            private static bool _gdiplusReady;
+
+            private static IntPtr _psBuffer = Marshal.AllocHGlobal(96);
+
+            // ---------------- window ----------------
 
             public static IntPtr CreatePanelWindow(IntPtr owner, out int w, out int h, int prefW, int prefH)
             {
                 w = prefW; h = prefH;
 
-                if (!_wndClassRegistered)
+                if (_wndProc == null)
                 {
                     _wndProc = WndProc;
                     var wc = new WNDCLASSW
@@ -857,7 +823,6 @@ namespace LatticeVeil.Launcher
                     };
                     if (RegisterClassW(ref wc) == 0)
                         return IntPtr.Zero;
-                    _wndClassRegistered = true;
                 }
 
                 var hwnd = CreateWindowExW(
@@ -880,6 +845,7 @@ namespace LatticeVeil.Launcher
             public static void DestroyPanelWindow(IntPtr hwnd)
             {
                 DestroyWindow(hwnd);
+                ReleaseBuffers();
             }
 
             public static void CenterOverOwner(IntPtr hwnd, IntPtr owner)
@@ -898,34 +864,7 @@ namespace LatticeVeil.Launcher
 
             public static void Show(IntPtr hwnd) => ShowWindow(hwnd, 5 /*SW_SHOW*/);
 
-            public static void PollWindowSize(IntPtr hwnd, ref int w, ref int h, RenderTexture rt, Texture2D tex, ref Color32[] pixels)
-            {
-                if (!GetClientRect(hwnd, out var cr)) return;
-                int cw = cr.Right - cr.Left, ch = cr.Bottom - cr.Top;
-                if (cw == w && ch == h) return;
-                if (cw <= 0 || ch <= 0) return;
-                w = cw; h = ch;
-                rt.Release();
-                rt.width = w; rt.height = h;
-                rt.Create();
-                tex.Reinitialize(w, h);
-                pixels = new Color32[w * h];
-            }
-
-            public static void PresentPixels(IntPtr hwnd, IntPtr pixelPtr, int w, int h)
-            {
-                var bmi = new BITMAPINFO();
-                bmi.bmiHeader.biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>();
-                bmi.bmiHeader.biWidth = w;
-                bmi.bmiHeader.biHeight = h; // bottom-up
-                bmi.bmiHeader.biPlanes = 1;
-                bmi.bmiHeader.biBitCount = 32;
-                bmi.bmiHeader.biCompression = 0; // BI_RGB
-
-                var hdc = GetDC(hwnd);
-                StretchDIBits(hdc, 0, 0, w, h, 0, 0, w, h, pixelPtr, ref bmi, DIB_RGB_COLORS, SRCCOPY);
-                ReleaseDC(hwnd, hdc);
-            }
+            // ---------------- input ----------------
 
             public static void GetInput(out Vector2 mouse, out bool clicked, out float wheelDelta)
             {
@@ -938,17 +877,190 @@ namespace LatticeVeil.Launcher
                 mouse = _lastMouse;
                 clicked = System.Threading.Interlocked.Exchange(ref _clickQueued, 0) == 1;
                 wheelDelta = _wheelAccum;
+                _wheelAccum = 0f;
             }
 
-            public static void ConsumeWheel() => _wheelAccum = 0f;
+            // ---------------- drawing ----------------
+
+            /// <summary>Draws the panel of the active host (double-buffered GDI).</summary>
+            public static void DrawFrame(FloatingPanelHost host)
+            {
+                if (host == null || host._hwnd == IntPtr.Zero) return;
+
+                if (!GetClientRect(host._hwnd, out var cr)) return;
+                int w = cr.Right - cr.Left, h = cr.Bottom - cr.Top;
+                if (w <= 0 || h <= 0) return;
+
+                EnsureBuffers(host._hwnd, w, h);
+
+                GetInput(out var mouse, out var clicked, out var wheelDelta);
+
+                // Clear to panel background (memory DC may hold stale bits).
+                FillRect(_memDc, ref cr, BrushFor(new Color(0.07f, 0.07f, 0.08f)));
+                SetBkMode(_memDc, 1 /*TRANSPARENT*/);
+
+                var ui = new PanelUI(mouse, clicked, wheelDelta, _memDc);
+                host._content.OnGUI(ui, new Rect(0, 0, w, h));
+
+                var hdc = GetDC(host._hwnd);
+                BitBlt(hdc, 0, 0, w, h, _memDc, 0, 0, SRCCOPY);
+                ReleaseDC(host._hwnd, hdc);
+            }
+
+            private static void EnsureBuffers(IntPtr hwnd, int w, int h)
+            {
+                if (_memDc != IntPtr.Zero && _memW == w && _memH == h) return;
+
+                ReleaseBuffers();
+
+                var windowDc = GetDC(hwnd);
+                _memDc = CreateCompatibleDC(windowDc);
+                _memBmp = CreateCompatibleBitmap(windowDc, w, h);
+                ReleaseDC(hwnd, windowDc);
+                _oldBmp = SelectObject(_memDc, _memBmp);
+                _memW = w; _memH = h;
+            }
+
+            private static void ReleaseBuffers()
+            {
+                if (_memBmp != IntPtr.Zero && _oldBmp != IntPtr.Zero)
+                    SelectObject(_memDc, _oldBmp);
+                if (_memBmp != IntPtr.Zero) { DeleteObject(_memBmp); _memBmp = IntPtr.Zero; }
+                if (_memDc != IntPtr.Zero) { DeleteDC(_memDc); _memDc = IntPtr.Zero; }
+                _memW = _memH = 0;
+            }
+
+            private static uint ColorRef(Color c)
+                => ((uint)Mathf.Clamp(Mathf.RoundToInt(c.r * 255f), 0, 255))
+                 | ((uint)Mathf.Clamp(Mathf.RoundToInt(c.g * 255f), 0, 255) << 8)
+                 | ((uint)Mathf.Clamp(Mathf.RoundToInt(c.b * 255f), 0, 255) << 16);
+
+            private static IntPtr BrushFor(Color c)
+            {
+                long key = ColorRef(c);
+                if (!BrushCache.TryGetValue(key, out var brush))
+                {
+                    brush = CreateSolidBrush((uint)key);
+                    BrushCache[key] = brush;
+                }
+                return brush;
+            }
+
+            public static void FillRect(IntPtr hdc, Rect r, Color c)
+            {
+                var rc = new RECT
+                {
+                    Left = (int)r.x,
+                    Top = (int)r.y,
+                    Right = (int)(r.x + r.width),
+                    Bottom = (int)(r.y + r.height),
+                };
+                FillRect(hdc, ref rc, BrushFor(c));
+            }
+
+            public static void DrawTextString(IntPtr hdc, Rect r, string text, int size, bool bold,
+                Color color, TextAnchor anchor, bool wrap)
+            {
+                if (string.IsNullOrEmpty(text)) return;
+
+                SelectObject(hdc, FontFor(size, bold));
+                SetTextColor(hdc, ColorRef(color));
+
+                uint flags = DT_NOPREFIX;
+                if (wrap) flags |= DT_WORDBREAK | DT_EDITCONTROL;
+                else flags |= DT_SINGLELINE | DT_END_ELLIPSIS;
+
+                if (anchor == TextAnchor.MiddleCenter || anchor == TextAnchor.UpperCenter || anchor == TextAnchor.LowerCenter)
+                    flags |= DT_CENTER;
+                if (anchor == TextAnchor.MiddleCenter || anchor == TextAnchor.MiddleLeft || anchor == TextAnchor.MiddleRight)
+                    flags |= DT_VCENTER;
+
+                var rc = new RECT
+                {
+                    Left = (int)r.x,
+                    Top = (int)r.y,
+                    Right = (int)(r.x + r.width),
+                    Bottom = (int)(r.y + r.height),
+                };
+                DrawTextW(hdc, text, text.Length, ref rc, flags);
+            }
+
+            private static IntPtr FontFor(int size, bool bold)
+            {
+                long key = ((long)size << 8) | (bold ? 1 : 0);
+                if (!FontCache.TryGetValue(key, out var font))
+                {
+                    font = CreateFontW(-size, 0, 0, 0, bold ? 700 : 400, 0, 0, 0,
+                        1 /*DEFAULT_CHARSET*/, 0, 0, 5 /*CLEARTYPE_QUALITY*/, 0, "Segoe UI");
+                    FontCache[key] = font;
+                }
+                return font;
+            }
+
+            public static void PushClip(IntPtr hdc, Rect r)
+            {
+                SaveDC(hdc);
+                IntersectClipRect(hdc, (int)r.x, (int)r.y, (int)(r.x + r.width), (int)(r.y + r.height));
+            }
+
+            public static void PopClip(IntPtr hdc) => RestoreDC(hdc, -1);
+
+            public static bool DrawImage(IntPtr hdc, Rect r, string path)
+            {
+                if (string.IsNullOrEmpty(path) || r.width < 2 || r.height < 2) return false;
+                if (!File.Exists(path)) { DropImage(path); return false; }
+                if (!EnsureGdiplus()) return false;
+
+                DateTime mtime;
+                try { mtime = File.GetLastWriteTimeUtc(path); } catch { return false; }
+
+                if (!ImageCache.TryGetValue(path, out var entry) || entry == null || entry.Item2 != mtime)
+                {
+                    if (entry != null) GdipDisposeImage(entry.Item1);
+                    if (GdipCreateBitmapFromFile(path, out var bmp) != 0 || bmp == IntPtr.Zero)
+                    {
+                        ImageCache.Remove(path);
+                        return false;
+                    }
+                    entry = Tuple.Create(bmp, mtime);
+                    ImageCache[path] = entry;
+                }
+
+                if (GdipCreateFromHDC(hdc, out var gfx) != 0) return false;
+                GdipSetInterpolationMode(gfx, 7 /*HighQualityBicubic*/);
+                GdipDrawImageRectI(gfx, entry.Item1, (int)r.x, (int)r.y, (int)r.width, (int)r.height);
+                GdipDeleteGraphics(gfx);
+                return true;
+            }
+
+            private static void DropImage(string path)
+            {
+                if (ImageCache.TryGetValue(path, out var entry) && entry != null)
+                    GdipDisposeImage(entry.Item1);
+                ImageCache.Remove(path);
+            }
+
+            public static void DisposeImages()
+            {
+                foreach (var entry in ImageCache.Values)
+                    if (entry != null) GdipDisposeImage(entry.Item1);
+                ImageCache.Clear();
+            }
+
+            private static bool EnsureGdiplus()
+            {
+                if (_gdiplusReady) return true;
+                var input = new GdiplusStartupInput { GdiplusVersion = 1 };
+                _gdiplusReady = GdiplusStartup(out _gdiplusToken, ref input, IntPtr.Zero) == 0;
+                return _gdiplusReady;
+            }
+
+            // ---------------- wndproc ----------------
 
             private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
             {
                 switch (msg)
                 {
-                    case WM_MOUSEMOVE:
-                        break;
-
                     case WM_LBUTTONDOWN:
                         System.Threading.Interlocked.Exchange(ref _clickQueued, 1);
                         return IntPtr.Zero;
@@ -969,7 +1081,7 @@ namespace LatticeVeil.Launcher
                         {
                             var lp = new POINT { X = (short)(lParam.ToInt64() & 0xFFFF), Y = (short)((lParam.ToInt64() >> 16) & 0xFFFF) };
                             ScreenToClient(hWnd, ref lp);
-                            if (lp.Y >= 0 && lp.Y < 42 && lp.X < 10000)
+                            if (lp.Y >= 0 && lp.Y < 42)
                             {
                                 var closeRect = new Rect(ActiveHost._w - 46, 5, 38, 32);
                                 if (!closeRect.Contains(new Vector2(lp.X, lp.Y)))
@@ -978,9 +1090,13 @@ namespace LatticeVeil.Launcher
                         }
                         return def;
 
+                    case WM_ERASEBKGND:
+                        return (IntPtr)1; // we paint everything ourselves
+
                     case WM_PAINT:
                         BeginPaint(hWnd, _psBuffer);
                         EndPaint(hWnd, _psBuffer);
+                        DrawFrame(ActiveHost); // immediate repaint on OS request
                         return IntPtr.Zero;
 
                     case WM_DESTROY:
@@ -990,8 +1106,6 @@ namespace LatticeVeil.Launcher
                 }
                 return DefWindowProcW(hWnd, msg, wParam, lParam);
             }
-
-            private static IntPtr _psBuffer = Marshal.AllocHGlobal(96);
         }
     }
 }

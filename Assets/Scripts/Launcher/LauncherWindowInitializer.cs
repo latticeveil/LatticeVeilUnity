@@ -128,13 +128,12 @@ namespace LatticeVeil.Launcher
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
-        // Off-screen parking spot while the game runs (the launcher must keep a
-        // window to stay the Task Manager group head, and must NOT minimize —
-        // minimizing a window hides its owned windows, i.e. the game).
-        private const int ParkedX = -32000;
-        private const int ParkedY = -32000;
-        private static bool _parked;
-        private static RECT _parkedRect;
+        // Extended style used to keep the hidden launcher out of the taskbar.
+        private const int GWL_EXSTYLE = -20;
+        private const long WS_EX_TOOLWINDOW = 0x00000080L;
+        private const long WS_EX_TOPMOST = 0x00000008L;
+        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private static bool _hiddenForGame;
 
         [DllImport("user32.dll")]
         public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
@@ -324,47 +323,85 @@ namespace LatticeVeil.Launcher
         }
 
         /// <summary>
-        /// Parks the launcher window far off-screen instead of minimizing or
-        /// hiding it while the game runs. The window still exists and is still
-        /// "visible" (so it remains the Task Manager group head and the game's
-        /// owned window stays on screen), it's just not on any monitor.
+        /// Configures this player instance as a floating panel window: real
+        /// borderless always-on-top OS window (Version Manager / Skin library)
+        /// that floats over the launcher and every other application.
         /// </summary>
-        public static void ParkLauncherWindowOffScreen()
+        public static void ConfigurePanelWindow(string title)
         {
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
             IntPtr hWnd = GetWindowHandle();
             if (hWnd == IntPtr.Zero)
                 return;
 
-            if (!_parked)
-            {
-                if (!GetWindowRect(hWnd, out _parkedRect))
-                    return;
-                _parked = true;
-            }
+            // Borderless popup (strip caption/frames), like the launcher itself.
+            long style = GetWindowLong(hWnd, GWL_STYLE).ToInt64();
+            style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_BORDER | WS_DLGFRAME);
+            style |= WS_POPUP;
+            SetWindowLong(hWnd, GWL_STYLE, new IntPtr(style));
 
-            SetWindowPos(hWnd, IntPtr.Zero, ParkedX, ParkedY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+            // Always on top, and out of the taskbar/alt-tab (panels belong to
+            // the launcher, they are not standalone apps).
+            long exStyle = GetWindowLong(hWnd, GWL_EXSTYLE).ToInt64();
+            SetWindowLong(hWnd, GWL_EXSTYLE, new IntPtr(exStyle | WS_EX_TOPMOST | WS_EX_TOOLWINDOW));
+
+            SetWindowText(hWnd, title);
+
+            // Place top-right of the work area as the default spot; draggable
+            // anywhere by the user via the header strip.
+            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+            UpdateWindow(hWnd);
+#else
+            // Editor: nothing to configure.
 #endif
         }
 
-        /// <summary>Brings the launcher window back from off-screen parking.</summary>
-        public static void UnparkLauncherWindow()
+        /// <summary>
+        /// Fully hides the launcher while the game runs: the window disappears
+        /// from the screen, the taskbar AND alt-tab (WS_EX_TOOLWINDOW keeps it
+        /// out of the taskbar even if something forces it visible again).
+        /// </summary>
+        public static void HideLauncherWindowCompletely()
         {
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-            if (!_parked)
+            IntPtr hWnd = GetWindowHandle();
+            if (hWnd == IntPtr.Zero)
                 return;
-            _parked = false;
+
+            // Add WS_EX_TOOLWINDOW (0x80) so the window can never reappear in
+            // the taskbar; hide after setting the style.
+            long exStyle = GetWindowLong(hWnd, GWL_EXSTYLE).ToInt64();
+            SetWindowLong(hWnd, GWL_EXSTYLE, new IntPtr(exStyle | WS_EX_TOOLWINDOW));
+
+            ShowWindow(hWnd, SW_HIDE);
+            _hiddenForGame = true;
+#endif
+        }
+
+        /// <summary>Brings the launcher back after the game closes (removes the taskbar-hiding style).</summary>
+        public static void RestoreLauncherAfterGame()
+        {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (!_hiddenForGame)
+                return;
+            _hiddenForGame = false;
 
             IntPtr hWnd = GetWindowHandle();
             if (hWnd == IntPtr.Zero)
                 return;
 
-            SetWindowPos(hWnd, IntPtr.Zero, _parkedRect.Left, _parkedRect.Top, 0, 0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+            long exStyle = GetWindowLong(hWnd, GWL_EXSTYLE).ToInt64();
+            SetWindowLong(hWnd, GWL_EXSTYLE, new IntPtr(exStyle & ~WS_EX_TOOLWINDOW));
+
+            ShowWindow(hWnd, SW_SHOW);
+            SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
             UpdateWindow(hWnd);
             SetForegroundWindow(hWnd);
 #endif
         }
+
+        /// <summary>Brings the launcher window back after the game closes.</summary>
 
         /// <summary>Brings the launcher window back after the game closes.</summary>
         public static void RestoreLauncherWindow()

@@ -190,6 +190,33 @@ namespace LatticeVeil.Launcher
         }
 
         /// <summary>
+        /// Instant Quit path: closes both job handles WITHOUT killing the game
+        /// first. The game was started inside the launcher's group job, so it
+        /// inherited that membership at creation and KEEPS running after the
+        /// launcher exits (only the job handles disappear). Callers must have
+        /// finished any work that depends on the game being tied to the launcher.
+        /// </summary>
+        public static void ReleaseForInstantQuit()
+        {
+            lock (_lock)
+            {
+                if (_sandboxJobHandle != IntPtr.Zero)
+                {
+                    CloseHandle(_sandboxJobHandle);
+                    _sandboxJobHandle = IntPtr.Zero;
+                }
+
+                if (_groupJobHandle != IntPtr.Zero)
+                {
+                    CloseHandle(_groupJobHandle);
+                    _groupJobHandle = IntPtr.Zero;
+                }
+
+                _launcherAssigned = false;
+            }
+        }
+
+        /// <summary>
         /// Closes both job handles. Kill-on-close ends any remaining job members
         /// (the game) — the launcher itself is already exiting at this point.
         /// </summary>

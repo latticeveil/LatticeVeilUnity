@@ -19,7 +19,10 @@ namespace LatticeVeil.Launcher
         /// Dedicated download client without a hard timeout — the launcher's shared
         /// 20s client would abort large game downloads mid-stream.
         /// </summary>
-        private static readonly HttpClient DownloadHttp = new HttpClient
+        /// <summary>Shared no-timeout download client (also used by floating panels).</summary>
+        public static HttpClient DownloadHttp => _downloadHttp;
+
+        private static readonly HttpClient _downloadHttp = new HttpClient
         {
             Timeout = Timeout.InfiniteTimeSpan
         };

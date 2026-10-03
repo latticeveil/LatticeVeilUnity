@@ -47,6 +47,10 @@ namespace LatticeVeil.Launcher
         private float _gameWindowRenameElapsed = 0f;
         private float _gameWindowRenameNextAttempt = 0f;
 
+        // Set when Instant Quit initiated the launcher shutdown, so OnDestroy
+        // leaves the running game alone instead of killing it.
+        private bool _instantQuitInProgress = false;
+
         // Veilnet authentication
         private string _veilnetUsername = "";
         private string _veilnetToken = "";
@@ -304,7 +308,7 @@ namespace LatticeVeil.Launcher
                 if (_parkedLauncherForGame)
                 {
                     _parkedLauncherForGame = false;
-                    LauncherWindowInitializer.UnparkLauncherWindow();
+                    LauncherWindowInitializer.RestoreLauncherAfterGame();
                     _log.Info("Returned to launcher after game exit.");
                 }
             }
@@ -1109,12 +1113,24 @@ namespace LatticeVeil.Launcher
             var skinsBtnRect = new Rect(profileInfoX, contentY, profileInfoWidth, 72);
             if (GUI.Button(skinsBtnRect, "SKINS", _skinsButtonStyle))
             {
-                _showSkinModal = true;
-                _showSettingsModal = false;
-                _showVersionManagerModal = false;
-                _showInstallPromptModal = false;
-                RefreshSkinModalPreview();
-                _log.Info("Skin library opened.");
+                // Floating panel: real always-on-top OS window over everything.
+                if (TryOpenFloatingPanel(FloatingPanelKind.Skins))
+                {
+                    _showSkinModal = false;
+                    _showSettingsModal = false;
+                    _showVersionManagerModal = false;
+                    _showInstallPromptModal = false;
+                    _log.Info("Skin library opened in floating panel.");
+                }
+                else
+                {
+                    _showSkinModal = true;
+                    _showSettingsModal = false;
+                    _showVersionManagerModal = false;
+                    _showInstallPromptModal = false;
+                    RefreshSkinModalPreview();
+                    _log.Info("Skin library opened.");
+                }
             }
 
             // Offline Username Section
@@ -1502,8 +1518,54 @@ namespace LatticeVeil.Launcher
             return Vector2.zero;
         }
 
+        /// <summary>
+        /// Spawns this exe as a floating panel process (real topmost OS window).
+        /// Returns false when the panel could not be started (caller falls back
+        /// to the in-window modal). The panel shares all on-disk state because
+        /// it is the same binary reading the same folders.
+        /// </summary>
+        private bool TryOpenFloatingPanel(FloatingPanelKind kind)
+        {
+            try
+            {
+                var exePath = Process.GetCurrentProcess().MainModule?.FileName;
+                if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath) || IsEditorOrHostProcess(exePath))
+                    return false;
+
+                var arg = kind == FloatingPanelKind.Versions ? "--panel=versions" : "--panel=skins";
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = exePath,
+                    Arguments = arg,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                startInfo.EnvironmentVariables["LATTICEVEIL_INSTALL_ROOT"] = Core.Paths.InstallRootDir;
+
+                var proc = Process.Start(startInfo);
+                return proc != null;
+            }
+            catch (Exception ex)
+            {
+                _log?.Warn($"Floating panel could not start, falling back to in-window modal: {ex.Message}");
+                return false;
+            }
+        }
+
         private void OpenVersionManager()
         {
+            // Floating panel: open in its own real always-on-top OS window that
+            // floats over the launcher (and other apps). Falls back to the
+            // in-window modal if the panel process cannot be started.
+            if (TryOpenFloatingPanel(FloatingPanelKind.Versions))
+            {
+                _showVersionManagerModal = false;
+                _showSettingsModal = false;
+                _showSkinModal = false;
+                _log.Info("Version Manager opened in floating panel.");
+                return;
+            }
+
             _showVersionManagerModal = true;
             _showSettingsModal = false;
             _showSkinModal = false;
@@ -2012,6 +2074,14 @@ namespace LatticeVeil.Launcher
                 if (newKeepOpen != _settings.KeepLauncherOpen)
                 {
                     _settings.KeepLauncherOpen = newKeepOpen;
+                    _settings.Save(_log);
+                }
+
+                rowY += rowHeight + 10;
+                var newInstantQuit = DrawSwitch(new Rect(contentX, rowY, contentWidth, rowHeight), _settings.InstantQuitEnabled, "Instant Quit", "Close the launcher entirely when the game starts (no return to launcher)");
+                if (newInstantQuit != _settings.InstantQuitEnabled)
+                {
+                    _settings.InstantQuitEnabled = newInstantQuit;
                     _settings.Save(_log);
                 }
 
@@ -4074,18 +4144,33 @@ namespace LatticeVeil.Launcher
                 {
                     _log.Info("Game process started successfully.");
 
-                    // Park the launcher window far off-screen (instead of
-                    // minimizing or hiding) while the game runs when
-                    // KeepLauncherOpen is false. The window must keep existing:
-                    // it is the Task Manager group head, and minimizing/hiding it
-                    // would hide the game's owned window too. The process stays
-                    // alive watching the game and unparks automatically on exit.
+                    // Instant Quit: the user wants NO launcher at all while
+                    // playing — quit the process entirely. The game survives
+                    // because the job object only kill-on-closes when the JOB
+                    // handle closes, which OnDestroy does only for launcher
+                    // teardown paths that should kill the game; here we release
+                    // the job instead so the game outlives the launcher.
+                    if (_settings.InstantQuitEnabled)
+                    {
+                        _log.Info("InstantQuitEnabled is on; quitting launcher process (game keeps running).");
+                        GameProcessJob.ReleaseForInstantQuit();
+                        _settings.Save(_log);
+                        _profile?.Save(_log);
+                        _instantQuitInProgress = true;
+                        Application.Quit();
+                        return;
+                    }
+
+                    // Hide the launcher completely (screen, taskbar AND alt-tab)
+                    // while the game runs when KeepLauncherOpen is false. The
+                    // process stays alive watching the game and restores the
+                    // window automatically once the game exits.
                     if (!_settings.KeepLauncherOpen)
                     {
-                        _log.Info("KeepLauncherOpen is false; parking launcher window off-screen until the game closes.");
+                        _log.Info("KeepLauncherOpen is false; hiding launcher until the game closes.");
                         _parkedLauncherForGame = true;
                         Application.runInBackground = true;
-                        LauncherWindowInitializer.ParkLauncherWindowOffScreen();
+                        LauncherWindowInitializer.HideLauncherWindowCompletely();
                     }
                 }
                 else
@@ -4328,18 +4413,22 @@ namespace LatticeVeil.Launcher
                 _profile.Save(_log);
             }
 
-            // Clean up game process
-            if (_gameProcess != null && !_gameProcess.HasExited)
+            // Clean up game process — but NOT on the Instant Quit path, where
+            // the user explicitly wants the game to outlive the launcher.
+            if (!_instantQuitInProgress)
             {
-                try
+                if (_gameProcess != null && !_gameProcess.HasExited)
                 {
-                    _gameProcess.Kill();
+                    try
+                    {
+                        _gameProcess.Kill();
+                    }
+                    catch { }
                 }
-                catch { }
-            }
 
-            // Close the job object (kill-on-close ends any remaining game processes)
-            GameProcessJob.Shutdown();
+                // Close the job object (kill-on-close ends any remaining game processes)
+                GameProcessJob.Shutdown();
+            }
 
             // Clean up HTTP client
             _httpClient?.Dispose();

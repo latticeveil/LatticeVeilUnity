@@ -35,6 +35,7 @@ namespace LatticeVeil.Core
 
         // [Launcher]
         public bool KeepLauncherOpen { get; set; } = false;
+        public bool InstantQuitEnabled { get; set; } = false; // close launcher process entirely when the game starts
         public bool AlwaysMinimizeLauncherToTray { get; set; } = false;
         public string LauncherCloseButtonAction { get; set; } = ""; // "", "Tray", or "Close"
         public bool DarkMode { get; set; } = true;
@@ -148,7 +149,9 @@ namespace LatticeVeil.Core
                 sb.AppendLine("# AutoUpdateChecksEnabled: If true, the launcher checks for game updates every time it opens.");
                 sb.AppendLine("# AutoInstallUpdatesEnabled: If true, the launcher downloads and installs the latest game version automatically (no prompt).");
                 sb.AppendLine("# AutoTextureDownloadsEnabled: If true, default textures are synced on launch. Disable this to keep any manually edited textures.");
+                sb.AppendLine("# InstantQuitEnabled: If true, the launcher quits entirely the moment the game starts (no return to launcher).");
                 sb.AppendLine($"KeepLauncherOpen={(KeepLauncherOpen ? "true" : "false")}");
+                sb.AppendLine($"InstantQuitEnabled={(InstantQuitEnabled ? "true" : "false")}");
                 sb.AppendLine($"AlwaysMinimizeLauncherToTray={(AlwaysMinimizeLauncherToTray ? "true" : "false")}");
                 sb.AppendLine($"LauncherCloseButtonAction=\"{LauncherCloseButtonAction}\"");
                 sb.AppendLine($"DarkMode={(DarkMode ? "true" : "false")}");
@@ -225,6 +228,7 @@ namespace LatticeVeil.Core
 
                     case "launcher":
                         if (string.Equals(key, "KeepLauncherOpen", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var klo)) KeepLauncherOpen = klo;
+                        else if (string.Equals(key, "InstantQuitEnabled", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var iq)) InstantQuitEnabled = iq;
                         else if (string.Equals(key, "AlwaysMinimizeLauncherToTray", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var amt)) AlwaysMinimizeLauncherToTray = amt;
                         else if (string.Equals(key, "LauncherCloseButtonAction", StringComparison.OrdinalIgnoreCase)) LauncherCloseButtonAction = val;
                         else if (string.Equals(key, "DarkMode", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var dm)) DarkMode = dm;
@@ -242,6 +246,7 @@ namespace LatticeVeil.Core
                     default:
                         // General fallback for top-level keys
                         if (string.Equals(key, "KeepLauncherOpen", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var klo2)) KeepLauncherOpen = klo2;
+                        else if (string.Equals(key, "InstantQuitEnabled", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var iq2)) InstantQuitEnabled = iq2;
                         else if (string.Equals(key, "DarkMode", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var dm2)) DarkMode = dm2;
                         else if (string.Equals(key, "AutoUpdateChecksEnabled", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var auc2)) AutoUpdateChecksEnabled = auc2;
                         else if (string.Equals(key, "AutoInstallUpdatesEnabled", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var aii2)) AutoInstallUpdatesEnabled = aii2;

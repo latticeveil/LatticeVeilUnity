@@ -51,11 +51,6 @@ namespace LatticeVeil.Launcher
         private const int GCLP_HBRBACKGROUND = -10;
         private const int BLACK_BRUSH = 4;
 
-        // GWL_HWNDPARENT sets a window's OWNER. An owned window (like a dialog)
-        // belongs to its owner's app: Task Manager and the taskbar group it under
-        // the owner's single entry instead of creating a separate app.
-        private const int GWL_HWNDPARENT = -8;
-
         [DllImport("gdi32.dll")]
         private static extern IntPtr GetStockObject(int fnObject);
 
@@ -323,31 +318,6 @@ namespace LatticeVeil.Launcher
             if (hWnd == IntPtr.Zero || string.IsNullOrEmpty(title) || !IsWindow(hWnd))
                 return false;
             return SetWindowText(hWnd, title);
-#else
-            return false;
-#endif
-        }
-
-        /// <summary>
-        /// Makes another top-level window (the game's) an OWNED window of the
-        /// launcher window. Owned windows belong to the owner's app: Task
-        /// Manager shows them inside the single "LatticeVeil" entry instead of
-        /// as a separate app collection. Best-effort; returns false on failure.
-        /// </summary>
-        public static bool SetWindowOwner(IntPtr childHwnd, IntPtr ownerHwnd)
-        {
-#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-            if (childHwnd == IntPtr.Zero || ownerHwnd == IntPtr.Zero || !IsWindow(childHwnd) || !IsWindow(ownerHwnd))
-                return false;
-            if (childHwnd == ownerHwnd)
-                return false;
-
-            SetWindowLong(childHwnd, GWL_HWNDPARENT, ownerHwnd);
-
-            // Verify the owner actually stuck (SetWindowLong returns the
-            // previous value, which can legitimately be zero on success).
-            IntPtr owner = GetWindowLong(childHwnd, GWL_HWNDPARENT);
-            return owner == ownerHwnd;
 #else
             return false;
 #endif

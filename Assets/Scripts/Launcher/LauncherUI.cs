@@ -36,12 +36,14 @@ namespace LatticeVeil.Launcher
         private Process _gameProcess;
         private bool _isLaunching;
 
-        // Single Task Manager collection: the launcher window ("LatticeVeil") owns
-        // the game's window, so Task Manager and the taskbar nest the game inside
-        // the one "LatticeVeil.exe" entry instead of a separate app collection.
-        private string _gameWindowTitle = null;
+        // Task Manager grouping: Win11 never nests a process that owns a window
+        // under another app (jobs, parentage and even window ownership all fail —
+        // ownership demotes the game to a background process). The one surviving
+        // mechanism is TITLE MERGE: windows sharing the same title collapse into
+        // a single group. So the game window is retitled to exactly the
+        // launcher's window title ("LatticeVeil") and left UNOWNED.
+        private const string GameWindowTitle = "LatticeVeil";
         private bool _gameWindowRenamed = false;
-        private bool _gameWindowOwned = false;
         private float _gameWindowRenameElapsed = 0f;
         private float _gameWindowRenameNextAttempt = 0f;
 
@@ -256,25 +258,19 @@ namespace LatticeVeil.Launcher
                 }
             }
 
-            // While the game runs, claim its main window and retitle it.
-            //  • Ownership: the launcher window becomes the game window's OWNER
-            //    (GWL_HWNDPARENT), so Task Manager and the taskbar nest the game
-            //    inside the single "LatticeVeil.exe" entry — no separate app
-            //    collection, whichever game version is installed.
-            //  • Title: the sub-entry reads "LatticeVeilMonogame" (MonoGame)
-            //    or "LatticeVeil" (Unity) instead of the raw exe name.
-            // The engine may recreate/retile its window during startup, so retry
-            // every 0.5 s until both stick (give up after a minute).
-            bool gameWindowNeedsWork = !_gameWindowRenamed || !_gameWindowOwned;
-            if (_gameProcess != null && !_gameProcess.HasExited && gameWindowNeedsWork && !string.IsNullOrEmpty(_gameWindowTitle))
+            // While the game runs, retitle its main window to exactly the
+            // launcher's window title ("LatticeVeil") so Task Manager's
+            // title-based grouping merges both windows into ONE entry instead of
+            // two separate app collections. The engine may set its own title
+            // during startup, so retry every 0.5 s until it sticks (max 60 s).
+            if (_gameProcess != null && !_gameProcess.HasExited && !_gameWindowRenamed)
             {
                 _gameWindowRenameElapsed += Time.deltaTime;
                 if (_gameWindowRenameElapsed >= _gameWindowRenameNextAttempt)
                 {
                     if (_gameWindowRenameElapsed > 60f)
                     {
-                        _gameWindowRenamed = true;
-                        _gameWindowOwned = true; // give up after a minute
+                        _gameWindowRenamed = true; // give up after a minute
                     }
                     else
                     {
@@ -283,21 +279,10 @@ namespace LatticeVeil.Launcher
                         {
                             _gameProcess.Refresh();
                             var hwnd = _gameProcess.MainWindowHandle;
-                            if (hwnd != IntPtr.Zero)
+                            if (hwnd != IntPtr.Zero && LauncherWindowInitializer.SetExternalWindowTitle(hwnd, GameWindowTitle))
                             {
-                                if (!_gameWindowOwned &&
-                                    LauncherWindowInitializer.SetWindowOwner(hwnd, LauncherWindowInitializer.GetWindowHandle()))
-                                {
-                                    _gameWindowOwned = true;
-                                    _log.Info("Game window claimed under the launcher (Task Manager: one LatticeVeil entry).");
-                                }
-
-                                if (!_gameWindowRenamed &&
-                                    LauncherWindowInitializer.SetExternalWindowTitle(hwnd, _gameWindowTitle))
-                                {
-                                    _gameWindowRenamed = true;
-                                    _log.Info($"Game window retitled to '{_gameWindowTitle}'.");
-                                }
+                                _gameWindowRenamed = true;
+                                _log.Info($"Game window retitled to '{GameWindowTitle}' (Task Manager title-merge grouping).");
                             }
                         }
                         catch
@@ -4081,15 +4066,7 @@ namespace LatticeVeil.Launcher
                 // via kill-on-close.
                 GameProcessJob.Attach(_gameProcess);
 
-                // Decide the Task Manager label for the game window now: the
-                // MonoGame exe shows as "LatticeVeilMonogame", Unity builds as
-                // "LatticeVeil" (they carry the brand name already).
-                var exeName = Path.GetFileNameWithoutExtension(exePath);
-                _gameWindowTitle = exeName != null && exeName.IndexOf("monogame", StringComparison.OrdinalIgnoreCase) >= 0
-                    ? "LatticeVeilMonogame"
-                    : "LatticeVeil";
                 _gameWindowRenamed = false;
-                _gameWindowOwned = false;
                 _gameWindowRenameElapsed = 0f;
                 _gameWindowRenameNextAttempt = 0.5f;
 

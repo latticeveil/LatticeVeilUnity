@@ -1,7 +1,7 @@
 using System;
 using System.Windows;
 
-namespace LatticeVeilInstaller
+namespace LatticeVeilUninstaller
 {
     public class Program
     {

@@ -152,6 +152,7 @@ namespace LatticeVeil.Launcher
         private Texture2D _dimmerTex;
         private Texture2D _panelBorderTex;
         private Texture2D _settingsIconTex;
+        private Texture2D _folderIconTex;
         private Texture2D _switchTrackOnTex;
         private Texture2D _switchTrackOffTex;
         private Texture2D _switchTrackOffHoverTex;
@@ -423,6 +424,10 @@ namespace LatticeVeil.Launcher
                 if (_settingsIconTex == null)
                     _settingsIconTex = CreateGearIconTexture();
 
+                // 4b. White folder icon (Game Folder button)
+                if (_folderIconTex == null)
+                    _folderIconTex = CreateFolderIconTexture();
+
                 // 5. Skin button icons (procedural white glyphs)
                 _iconUpload  = CreateSkinButtonIcon(SkinIconType.Upload);
                 _iconOnline  = CreateSkinButtonIcon(SkinIconType.Online);
@@ -541,6 +546,40 @@ namespace LatticeVeil.Launcher
                 if (inBody || inTooth)
                     pix[y * S + x] = white;
             }
+
+            tex.SetPixels(pix);
+            tex.Apply();
+            return tex;
+        }
+
+        /// <summary>
+        /// Generates a clean 24×24 white folder icon (procedural, no asset file needed).
+        /// Used for the Game Folder button next to the version dropdown.
+        /// </summary>
+        private static Texture2D CreateFolderIconTexture()
+        {
+            const int S = 24;
+            var tex = new Texture2D(S, S, TextureFormat.RGBA32, false);
+            tex.filterMode = FilterMode.Bilinear;
+            var pix = new Color[S * S];
+
+            for (int i = 0; i < pix.Length; i++) pix[i] = Color.clear;
+
+            var white = new Color(0.95f, 0.95f, 0.95f, 1f);
+
+            void Set(int x, int y) { if (x >= 0 && x < S && y >= 0 && y < S) pix[y * S + x] = white; }
+
+            // Folder tab (top-left)
+            for (int y = 4; y <= 7; y++)
+                for (int x = 3; x <= 10; x++) Set(x, y);
+
+            // Folder body
+            for (int y = 7; y <= 18; y++)
+                for (int x = 3; x <= 20; x++) Set(x, y);
+
+            // Slight perspective notch under the tab
+            for (int x = 10; x <= 13; x++)
+                for (int y = 5; y <= 6; y++) Set(x, y);
 
             tex.SetPixels(pix);
             tex.Apply();
@@ -1014,34 +1053,16 @@ namespace LatticeVeil.Launcher
             // Bottom Controls Area
             var bottomY = launcherRect.y + launcherRect.height - 96;
 
-            // Game Folder button (bottom left)
-            var gameFolderBtnRect = new Rect(launcherRect.x + 16, bottomY + 12, 160, 68);
-            if (GUI.Button(gameFolderBtnRect, "Game Folder", _buttonStyle))
-            {
-                OpenGameFolder();
-            }
-
-            // Right-side bottom controls
-            var launchBtnWidth = 160;
-            var logsBtnWidth = 140;
-            var launchBtnHeight = 68;
-
-            var launchBtnX = launcherRect.width - 16 - launchBtnWidth;
-            var logsBtnX = launchBtnX - logsBtnWidth - 14;
-
-            // Logs Button
-            var logsBtnRect = new Rect(logsBtnX, bottomY + 12, logsBtnWidth, launchBtnHeight);
-            if (GUI.Button(logsBtnRect, "Logs", _buttonStyle))
-            {
-                OpenLogsFolder();
-            }
-
-            // Game Version dropdown (above the Online/Offline dropdown).
-            // Option 2: shows ONLY installed versions plus a LATEST entry —
-            // the full library (all releases, notes, install/uninstall) lives
-            // in the movable Version Manager.
-            var versionHeight = 30;
-            var versionRect = new Rect(launchBtnX, bottomY - 64, launchBtnWidth, versionHeight);
+            // Bottom-left version cluster:
+            //   [ VERSION SELECTOR ]      <- opens the Version Manager directly
+            //   [ version dropdown    v ] [folder]
+            // The dropdown and the selector are separate controls stacked on top
+            // of each other, so the manager never requires opening the dropdown.
+            var versionClusterX = launcherRect.x + 16;
+            var versionClusterWidth = 250;
+            var selectorRect = new Rect(versionClusterX, bottomY + 10, versionClusterWidth, 30);
+            var versionRect = new Rect(versionClusterX, bottomY + 44, versionClusterWidth, 30);
+            var folderIconRect = new Rect(versionClusterX + versionClusterWidth + 10, bottomY + 27, 34, 34);
 
             var installedVersions = new System.Collections.Generic.List<GameVersionInfo>();
             foreach (var v in _gameVersions)
@@ -1050,7 +1071,22 @@ namespace LatticeVeil.Launcher
             }
             var latestVersion = GetLatestGameVersion();
 
-            // Items: LATEST + one per installed version + MANAGE VERSIONS...
+            // VERSION SELECTOR — opens the Version Manager in one click.
+            if (GUI.Button(selectorRect, "VERSION SELECTOR", _buttonStyle))
+            {
+                OpenVersionManager();
+            }
+
+            // Game Folder (white folder icon)
+            var folderBtnContent = _folderIconTex != null ? new GUIContent(_folderIconTex) : new GUIContent("...");
+            if (GUI.Button(folderIconRect, folderBtnContent, _wrenchControlStyle))
+            {
+                OpenGameFolder();
+            }
+
+            // Version dropdown — ONLY installed versions plus a LATEST entry.
+            // The full library (all releases, notes, install/uninstall) lives in
+            // the Version Manager, reachable via the VERSION SELECTOR button above.
             var vItemHeight = 30;
             var vPopupHeight = (1 + installedVersions.Count + 1) * vItemHeight + 6;
             var versionPopupRect = new Rect(versionRect.x, versionRect.y - vPopupHeight, versionRect.width, vPopupHeight);
@@ -1121,6 +1157,21 @@ namespace LatticeVeil.Launcher
                     _versionDropdownOpen = false;
                     OpenVersionManager();
                 }
+            }
+
+            // Right-side bottom controls
+            var launchBtnWidth = 160;
+            var logsBtnWidth = 140;
+            var launchBtnHeight = 68;
+
+            var launchBtnX = launcherRect.width - 16 - launchBtnWidth;
+            var logsBtnX = launchBtnX - logsBtnWidth - 14;
+
+            // Logs Button
+            var logsBtnRect = new Rect(logsBtnX, bottomY + 12, logsBtnWidth, launchBtnHeight);
+            if (GUI.Button(logsBtnRect, "Logs", _buttonStyle))
+            {
+                OpenLogsFolder();
             }
 
             // Online / Offline Dropdown (positioned directly above LAUNCH button)

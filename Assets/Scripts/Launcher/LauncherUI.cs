@@ -98,6 +98,7 @@ namespace LatticeVeil.Launcher
         private Vector2 _scrollPosition;
         private string _logContent = "";
         private bool _launcherVisible = true;
+        private bool _hidLauncherForGame = false;
         private bool _launchModeDropdownOpen = false;
         private bool _showSettingsModal = false;
         private bool _showSkinModal = false;
@@ -252,6 +253,14 @@ namespace LatticeVeil.Launcher
                 _log.Info("Game process exited.");
                 _gameProcess = null;
                 _isLaunching = false;
+
+                // Return the user to the launcher once the game closes again.
+                if (_hidLauncherForGame)
+                {
+                    _hidLauncherForGame = false;
+                    LauncherWindowInitializer.RestoreLauncherWindow();
+                    _log.Info("Returned to launcher after game exit.");
+                }
             }
 
             // Update log display periodically
@@ -1824,21 +1833,20 @@ namespace LatticeVeil.Launcher
             var wasEnabled = GUI.enabled;
             if (_isDownloadingVersion) GUI.enabled = false;
 
-            var installRect = new Rect(rowRect.x + rowRect.width - 112, rowRect.y + 6, 100, 26);
-            var installLabel = version.IsInstalled ? "REINSTALL" : "INSTALL";
-            if (GUI.Button(installRect, installLabel, _buttonStyle))
+            // INSTALL only for uninstalled versions — reinstalling is just
+            // uninstall + install, so installed versions offer UNINSTALL only.
+            var rowButtonRect = new Rect(rowRect.x + rowRect.width - 112, rowRect.y + 20, 100, 28);
+            if (!version.IsInstalled)
             {
-                _versionManagerSelected = version;
-                StartVersionDownload(version);
-            }
-
-            if (version.IsInstalled)
-            {
-                var uninstallRect = new Rect(rowRect.x + rowRect.width - 112, rowRect.y + 38, 100, 24);
-                if (GUI.Button(uninstallRect, "UNINSTALL", _buttonStyle))
+                if (GUI.Button(rowButtonRect, "INSTALL", _buttonStyle))
                 {
-                    UninstallGameVersion(version);
+                    _versionManagerSelected = version;
+                    StartVersionDownload(version);
                 }
+            }
+            else if (GUI.Button(rowButtonRect, "UNINSTALL", _buttonStyle))
+            {
+                UninstallGameVersion(version);
             }
 
             GUI.enabled = wasEnabled;
@@ -4005,15 +4013,16 @@ namespace LatticeVeil.Launcher
                 {
                     _log.Info("Game process started successfully.");
 
-                    // Close launcher if KeepLauncherOpen is false
+                    // Hide the launcher while the game runs when KeepLauncherOpen is
+                    // false. The process stays alive watching the game and restores
+                    // the window automatically once the game exits — quitting here
+                    // would leave nothing to detect the exit.
                     if (!_settings.KeepLauncherOpen)
                     {
-                        _log.Info("KeepLauncherOpen is false; closing launcher.");
-#if UNITY_EDITOR
-                        UnityEditor.EditorApplication.isPlaying = false;
-#else
-                        Application.Quit();
-#endif
+                        _log.Info("KeepLauncherOpen is false; hiding launcher until the game closes.");
+                        _hidLauncherForGame = true;
+                        Application.runInBackground = true;
+                        LauncherWindowInitializer.HideLauncherWindow();
                     }
                 }
                 else

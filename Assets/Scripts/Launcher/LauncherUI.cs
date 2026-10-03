@@ -36,6 +36,14 @@ namespace LatticeVeil.Launcher
         private Process _gameProcess;
         private bool _isLaunching;
 
+        // Single Task Manager collection: the launcher window ("LatticeVeil") is
+        // the group head and the game is retitled to match its engine and nested
+        // beneath it via GameProcessJob.
+        private string _gameWindowTitle = null;
+        private bool _gameWindowRenamed = false;
+        private float _gameWindowRenameElapsed = 0f;
+        private float _gameWindowRenameNextAttempt = 0f;
+
         // Veilnet authentication
         private string _veilnetUsername = "";
         private string _veilnetToken = "";
@@ -98,7 +106,7 @@ namespace LatticeVeil.Launcher
         private Vector2 _scrollPosition;
         private string _logContent = "";
         private bool _launcherVisible = true;
-        private bool _hidLauncherForGame = false;
+        private bool _minimizedLauncherForGame = false;
         private bool _launchModeDropdownOpen = false;
         private bool _showSettingsModal = false;
         private bool _showSkinModal = false;
@@ -247,6 +255,40 @@ namespace LatticeVeil.Launcher
                 }
             }
 
+            // While the game runs, nudge its main window title until it sticks
+            // (the engine sets its own title during startup). This is what makes
+            // the sub-process entry read "LatticeVeilMonogame" / "LatticeVeil" in
+            // Task Manager instead of the raw exe name.
+            if (_gameProcess != null && !_gameProcess.HasExited && !_gameWindowRenamed && !string.IsNullOrEmpty(_gameWindowTitle))
+            {
+                _gameWindowRenameElapsed += Time.deltaTime;
+                if (_gameWindowRenameElapsed >= _gameWindowRenameNextAttempt)
+                {
+                    if (_gameWindowRenameElapsed > 60f)
+                    {
+                        _gameWindowRenamed = true; // give up after a minute
+                    }
+                    else
+                    {
+                        _gameWindowRenameNextAttempt += 0.5f;
+                        try
+                        {
+                            _gameProcess.Refresh();
+                            var hwnd = _gameProcess.MainWindowHandle;
+                            if (hwnd != IntPtr.Zero && LauncherWindowInitializer.SetExternalWindowTitle(hwnd, _gameWindowTitle))
+                            {
+                                _gameWindowRenamed = true;
+                                _log.Info($"Game window retitled to '{_gameWindowTitle}'.");
+                            }
+                        }
+                        catch
+                        {
+                            // Window not up yet (or exited between checks); retry next attempt.
+                        }
+                    }
+                }
+            }
+
             // Check if game process is still running
             if (_gameProcess != null && _gameProcess.HasExited)
             {
@@ -255,9 +297,9 @@ namespace LatticeVeil.Launcher
                 _isLaunching = false;
 
                 // Return the user to the launcher once the game closes again.
-                if (_hidLauncherForGame)
+                if (_minimizedLauncherForGame)
                 {
-                    _hidLauncherForGame = false;
+                    _minimizedLauncherForGame = false;
                     LauncherWindowInitializer.RestoreLauncherWindow();
                     _log.Info("Returned to launcher after game exit.");
                 }
@@ -4007,27 +4049,47 @@ namespace LatticeVeil.Launcher
                     startInfo.EnvironmentVariables["LV_VEILNET_ACCESS_TOKEN"] = _veilnetToken;
                 }
 
+                // ONE Task Manager collection: put the launcher into the group
+                // job BEFORE starting the game so the game is born inside it —
+                // the launcher window ("LatticeVeil") is the group head and the
+                // game becomes its sub-process for every game version.
+                GameProcessJob.PrepareForLaunch();
+
                 _gameProcess = Process.Start(startInfo);
 
-                // Nest the game under the launcher (Task Manager:
-                // LatticeLauncher.exe > LatticeVeilMonoGame.exe / LatticeVeil.exe)
-                // and tie its lifetime to the launcher via a job object.
+                // Assign the game into the nested sandbox job (group membership
+                // was already inherited) and tie its lifetime to the launcher
+                // via kill-on-close.
                 GameProcessJob.Attach(_gameProcess);
+
+                // Decide the Task Manager label for the game window now: the
+                // MonoGame exe shows as "LatticeVeilMonogame", Unity builds as
+                // "LatticeVeil" (they carry the brand name already).
+                var exeName = Path.GetFileNameWithoutExtension(exePath);
+                _gameWindowTitle = exeName != null && exeName.IndexOf("monogame", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? "LatticeVeilMonogame"
+                    : "LatticeVeil";
+                _gameWindowRenamed = false;
+                _gameWindowRenameElapsed = 0f;
+                _gameWindowRenameNextAttempt = 0.5f;
 
                 if (_gameProcess != null)
                 {
                     _log.Info("Game process started successfully.");
 
-                    // Hide the launcher while the game runs when KeepLauncherOpen is
-                    // false. The process stays alive watching the game and restores
-                    // the window automatically once the game exits — quitting here
-                    // would leave nothing to detect the exit.
+                    // Minimize (not hide) the launcher while the game runs when
+                    // KeepLauncherOpen is false. A hidden window stops being an
+                    // "app" in Task Manager and the game would become a separate
+                    // collection head — a minimized window keeps the launcher as
+                    // the single "LatticeVeil" group head. The process stays
+                    // alive watching the game and restores the window
+                    // automatically once the game exits.
                     if (!_settings.KeepLauncherOpen)
                     {
-                        _log.Info("KeepLauncherOpen is false; hiding launcher until the game closes.");
-                        _hidLauncherForGame = true;
+                        _log.Info("KeepLauncherOpen is false; minimizing launcher until the game closes.");
+                        _minimizedLauncherForGame = true;
                         Application.runInBackground = true;
-                        LauncherWindowInitializer.HideLauncherWindow();
+                        LauncherWindowInitializer.MinimizeLauncherWindow();
                     }
                 }
                 else

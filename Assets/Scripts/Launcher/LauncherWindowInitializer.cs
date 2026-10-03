@@ -44,6 +44,7 @@ namespace LatticeVeil.Launcher
         public const int SW_SHOW = 5;
         public const int SW_MINIMIZE = 6;
         public const int SW_SHOWMINIMIZED = 2;
+        public const int SW_RESTORE = 9;
         public const int WM_NCLBUTTONDOWN = 0xA1;
         public const int HTCAPTION = 0x2;
 
@@ -252,8 +253,10 @@ namespace LatticeVeil.Launcher
             IntPtr hWnd = GetWindowHandle();
             if (hWnd != IntPtr.Zero)
             {
-                // Set window title so Task Manager shows "LatticeLauncher"
-                SetWindowText(hWnd, "LatticeLauncher");
+                // Set window title so Task Manager shows ONE collection named
+                // "LatticeVeil" — this launcher window is the group head and the
+                // game joins it as a sub-process via GameProcessJob.
+                SetWindowText(hWnd, "LatticeVeil");
                 ShowWindow(hWnd, SW_SHOW);
                 SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
                 UpdateWindow(hWnd);
@@ -284,6 +287,22 @@ namespace LatticeVeil.Launcher
 #endif
         }
 
+        /// <summary>
+        /// Renames any top-level window (used to retitle the game's main window
+        /// to "LatticeVeilMonogame" / "LatticeVeil" so its Task Manager entry
+        /// reads correctly inside the single LatticeVeil collection).
+        /// </summary>
+        public static bool SetExternalWindowTitle(IntPtr hWnd, string title)
+        {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (hWnd == IntPtr.Zero || string.IsNullOrEmpty(title) || !IsWindow(hWnd))
+                return false;
+            return SetWindowText(hWnd, title);
+#else
+            return false;
+#endif
+        }
+
         /// <summary>Brings the launcher window back after the game closes.</summary>
         public static void RestoreLauncherWindow()
         {
@@ -291,7 +310,10 @@ namespace LatticeVeil.Launcher
             IntPtr hWnd = GetWindowHandle();
             if (hWnd != IntPtr.Zero)
             {
-                ShowWindow(hWnd, SW_SHOW);
+                // SW_RESTORE un-minimizes (and shows) the window — the launcher
+                // now stays minimized rather than hidden while the game runs so
+                // it remains the Task Manager group head.
+                ShowWindow(hWnd, SW_RESTORE);
                 SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
                 UpdateWindow(hWnd);
                 SetForegroundWindow(hWnd);

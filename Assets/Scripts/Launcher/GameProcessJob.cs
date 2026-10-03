@@ -4,22 +4,64 @@ using System.Runtime.InteropServices;
 namespace LatticeVeil.Launcher
 {
     /// <summary>
-    /// Owns a Windows job object that ties the running game process to the
-    /// launcher. The game is assigned into the launcher-owned job, so:
-    ///   • Task Manager shows it nested under LatticeLauncher.exe
-    ///     (LatticeLauncher.exe > LatticeVeilMonoGame.exe / LatticeVeil.exe)
-    ///   • kill-on-close means the game can never outlive the launcher
-    ///     (no orphaned game processes when the launcher is closed).
-    ///   • the game is sandboxed: UI restrictions stop it from reading the
-    ///     clipboard, touching inherited handles, registering global atoms,
-    ///     or shutting down/restarting the system.
+    /// Owns the Windows job objects that bind the launcher and the game into a
+    /// single process collection:
+    ///
+    ///   LatticeVeil  (outer "group" job — launcher + every game version)
+    ///    ├─ LatticeVeilMonoGame.exe / LatticeVeil.exe   (the game)
+    ///    └─ the launcher itself
+    ///
+    ///   └─ inner "sandbox" job (game only — UI restrictions)
+    ///
+    /// The launcher assigns ITSELF to the outer job and the game is started as
+    /// its child (children inherit the outer job automatically) and then also
+    /// assigned into the nested sandbox job. Because both processes live in the
+    /// same job tree, Task Manager shows ONE collection — "LatticeVeil" (the
+    /// launcher window title) — with the game and the launcher as two
+    /// sub-processes, no matter which game version is running.
+    ///
+    /// Also gives:
+    ///   • kill-on-close: the game can never outlive the launcher (no orphans).
+    ///   • sandbox-lite for the game: UI restrictions stop it from reading the
+    ///     clipboard, touching inherited handles, registering global atoms, or
+    ///     shutting down/restarting the system.
+    ///
+    /// NOTE: this is process grouping + lifetime tying, NOT a true security
+    /// sandbox — the game still has normal file access.
     /// </summary>
     internal static class GameProcessJob
     {
         private static readonly object _lock = new object();
-        private static IntPtr _jobHandle = IntPtr.Zero;
+        private static IntPtr _groupJobHandle = IntPtr.Zero;   // launcher + game
+        private static IntPtr _sandboxJobHandle = IntPtr.Zero; // game only, nested
+        private static bool _launcherAssigned;
 
-        /// <summary>Assigns the game process into the launcher's job object. Non-fatal on failure.</summary>
+        /// <summary>
+        /// Creates the job tree and puts the launcher into the group job BEFORE
+        /// the game process is started, so the game inherits the group
+        /// membership at creation time (one Task Manager collection from the
+        /// first millisecond). Non-fatal on failure.
+        /// </summary>
+        public static void PrepareForLaunch()
+        {
+            lock (_lock)
+            {
+                try
+                {
+                    EnsureJobsLocked();
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[GameProcessJob] PrepareForLaunch failed: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Binds a freshly started game process into the collection. Creates the
+        /// jobs on first use (assigning the launcher to the group job in the
+        /// process). Non-fatal on failure.
+        /// </summary>
         public static void Attach(System.Diagnostics.Process process)
         {
             if (process == null)
@@ -29,51 +71,97 @@ namespace LatticeVeil.Launcher
             {
                 lock (_lock)
                 {
-                    if (_jobHandle == IntPtr.Zero)
-                    {
-                        _jobHandle = CreateJobObject(IntPtr.Zero, null);
-                        if (_jobHandle == IntPtr.Zero)
-                            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                    EnsureJobsLocked();
 
-                        var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-                        {
-                            BasicLimitInformation = new JOBOBJECT_BASIC_LIMIT_INFORMATION
-                            {
-                                LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                            }
-                        };
-
-                        var size = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
-                        var ptr = Marshal.AllocHGlobal(size);
-                        try
-                        {
-                            Marshal.StructureToPtr(info, ptr, false);
-                            if (!SetInformationJobObject(_jobHandle, JobObjectExtendedLimitInformation, ptr, (uint)size))
-                                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-                        }
-                        finally
-                        {
-                            Marshal.FreeHGlobal(ptr);
-                        }
-
-                        // Sandbox UI restrictions for every process in the job.
-                        ApplyUiRestrictions(_jobHandle);
-                    }
-
-                    if (!AssignProcessToJobObject(_jobHandle, process.Handle))
+                    // Put the game into the nested sandbox job. It is already a
+                    // member of the group job by inheritance (child of the
+                    // launcher); the sandbox job is nested inside the group job,
+                    // so this single assignment covers both.
+                    if (!AssignProcessToJobObject(_sandboxJobHandle, process.Handle))
                         throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
                 }
             }
             catch (Exception ex)
             {
                 // Non-fatal: the game still runs normally, just without the
-                // launcher nesting / lifetime tie.
+                // Task Manager grouping / lifetime tie.
                 UnityEngine.Debug.LogWarning($"[GameProcessJob] Attach failed: {ex.Message}");
             }
         }
 
+        private static void EnsureJobsLocked()
+        {
+            if (_groupJobHandle == IntPtr.Zero)
+            {
+                _groupJobHandle = CreateJobObject(IntPtr.Zero, null);
+                if (_groupJobHandle == IntPtr.Zero)
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+
+                SetKillOnClose(_groupJobHandle);
+            }
+
+            if (!_launcherAssigned)
+            {
+                // The launcher joins its own group job so both processes share
+                // one collection. Best-effort: if the launcher already runs
+                // inside a foreign job that refuses the assignment, grouping
+                // silently degrades but everything keeps working.
+                if (AssignProcessToJobObject(_groupJobHandle, GetCurrentProcess()))
+                {
+                    _launcherAssigned = true;
+                }
+                else
+                {
+                    UnityEngine.Debug.LogWarning(
+                        $"[GameProcessJob] Could not assign launcher to group job (error {Marshal.GetLastWin32Error()}); continuing without self-grouping.");
+                    _launcherAssigned = true; // don't retry every launch
+                }
+            }
+
+            if (_sandboxJobHandle == IntPtr.Zero)
+            {
+                _sandboxJobHandle = CreateJobObject(IntPtr.Zero, null);
+                if (_sandboxJobHandle == IntPtr.Zero)
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+
+                SetKillOnClose(_sandboxJobHandle);
+                ApplyUiRestrictions(_sandboxJobHandle);
+
+                // Nest the sandbox job inside the group job (job hierarchy).
+                // Best-effort: if nesting is refused the game is only sandboxed,
+                // not grouped — attach still succeeds via process inheritance.
+                if (!AssignProcessToJobObject(_groupJobHandle, _sandboxJobHandle))
+                    UnityEngine.Debug.LogWarning(
+                        $"[GameProcessJob] Job nesting failed (error {Marshal.GetLastWin32Error()}); continuing without nesting.");
+            }
+        }
+
+        private static void SetKillOnClose(IntPtr jobHandle)
+        {
+            var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+            {
+                BasicLimitInformation = new JOBOBJECT_BASIC_LIMIT_INFORMATION
+                {
+                    LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                }
+            };
+
+            var size = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+            var ptr = Marshal.AllocHGlobal(size);
+            try
+            {
+                Marshal.StructureToPtr(info, ptr, false);
+                if (!SetInformationJobObject(jobHandle, JobObjectExtendedLimitInformation, ptr, (uint)size))
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(ptr);
+            }
+        }
+
         /// <summary>
-        /// Applies the sandbox UI restrictions to the job. Best-effort: if the
+        /// Applies the sandbox UI restrictions to a job. Best-effort: if the
         /// system refuses them the game simply runs without that restriction.
         /// </summary>
         private static void ApplyUiRestrictions(IntPtr jobHandle)
@@ -101,16 +189,27 @@ namespace LatticeVeil.Launcher
             }
         }
 
-        /// <summary>Closes the job handle (kills any remaining job members via kill-on-close).</summary>
+        /// <summary>
+        /// Closes both job handles. Kill-on-close ends any remaining job members
+        /// (the game) — the launcher itself is already exiting at this point.
+        /// </summary>
         public static void Shutdown()
         {
             lock (_lock)
             {
-                if (_jobHandle != IntPtr.Zero)
+                if (_groupJobHandle != IntPtr.Zero)
                 {
-                    CloseHandle(_jobHandle);
-                    _jobHandle = IntPtr.Zero;
+                    CloseHandle(_groupJobHandle);
+                    _groupJobHandle = IntPtr.Zero;
                 }
+
+                if (_sandboxJobHandle != IntPtr.Zero)
+                {
+                    CloseHandle(_sandboxJobHandle);
+                    _sandboxJobHandle = IntPtr.Zero;
+                }
+
+                _launcherAssigned = false;
             }
         }
 
@@ -171,5 +270,8 @@ namespace LatticeVeil.Launcher
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
     }
 }

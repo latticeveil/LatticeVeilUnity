@@ -4009,6 +4009,11 @@ namespace LatticeVeil.Launcher
 
                 _gameProcess = Process.Start(startInfo);
 
+                // Nest the game under the launcher (Task Manager:
+                // LatticeLauncher.exe > LatticeVeilMonoGame.exe / LatticeVeil.exe)
+                // and tie its lifetime to the launcher via a job object.
+                GameProcessJob.Attach(_gameProcess);
+
                 if (_gameProcess != null)
                 {
                     _log.Info("Game process started successfully.");
@@ -4274,6 +4279,9 @@ namespace LatticeVeil.Launcher
                 }
                 catch { }
             }
+
+            // Close the job object (kill-on-close ends any remaining game processes)
+            GameProcessJob.Shutdown();
 
             // Clean up HTTP client
             _httpClient?.Dispose();

@@ -77,7 +77,7 @@ namespace LatticeVeil.Launcher
         // everything else (full library, notes, install/uninstall) lives in the Version Manager.
         private bool _selectedIsLatest = false;
         private bool _showVersionManagerModal = false;
-        private Rect _versionManagerRect = new Rect(240, 110, 820, 560);
+        private Rect _versionManagerRect = new Rect(170, 90, 1080, 620);
         private bool _draggingVersionManager = false;
         private Vector2 _versionManagerListScroll = Vector2.zero;
         private Vector2 _versionManagerNotesScroll = Vector2.zero;
@@ -1654,7 +1654,7 @@ namespace LatticeVeil.Launcher
             var wasEnabled = GUI.enabled;
 
             // Left: version list (all releases with a zip asset)
-            var listRect = new Rect(modalRect.x + 16, modalRect.y + 54, 380, modalRect.height - 122);
+            var listRect = new Rect(modalRect.x + 16, modalRect.y + 54, 470, modalRect.height - 122);
             GUI.Box(listRect, "", _panelBoxStyle);
             var rowHeight = 68f;
             var listContent = new Rect(0, 0, listRect.width - 20, 8 + _gameVersions.Count * rowHeight);
@@ -1673,7 +1673,7 @@ namespace LatticeVeil.Launcher
             GUI.EndScrollView();
 
             // Right: update notes for the selected release
-            var notesRect = new Rect(modalRect.x + 412, modalRect.y + 54, modalRect.width - 428, modalRect.height - 122);
+            var notesRect = new Rect(modalRect.x + 502, modalRect.y + 54, modalRect.width - 518, modalRect.height - 122);
             GUI.Box(notesRect, "", _panelBoxStyle);
             GUI.Label(new Rect(notesRect.x + 12, notesRect.y + 8, notesRect.width - 24, 24), "UPDATE NOTES", _sectionHeaderStyle);
 
@@ -1713,7 +1713,7 @@ namespace LatticeVeil.Launcher
                     fontSize = 13,
                     fontStyle = FontStyle.Bold,
                     wordWrap = false,
-                    clipping = TextClipping.Overflow
+                    clipping = TextClipping.Clip
                 };
                 _rowTitleStyle.normal.textColor = new Color(0.95f, 0.95f, 0.95f);
             }
@@ -1744,6 +1744,23 @@ namespace LatticeVeil.Launcher
             }
         }
 
+        /// <summary>Trims text with an ellipsis until it fits maxWidth in the given style.</summary>
+        private static string TruncateToWidth(string text, GUIStyle style, float maxWidth)
+        {
+            if (string.IsNullOrEmpty(text) || maxWidth <= 0)
+                return text ?? string.Empty;
+
+            if (style.CalcSize(new GUIContent(text)).x <= maxWidth)
+                return text;
+
+            var clipped = text.TrimEnd();
+            while (clipped.Length > 1 && style.CalcSize(new GUIContent(clipped.TrimEnd() + "…")).x > maxWidth)
+            {
+                clipped = clipped.Substring(0, clipped.Length - 1);
+            }
+            return clipped.TrimEnd() + "…";
+        }
+
         private void DrawVersionManagerRow(Rect rowRect, GameVersionInfo version)
         {
             var isSelected = _versionManagerSelected != null && string.Equals(version.Tag, _versionManagerSelected.Tag, StringComparison.OrdinalIgnoreCase);
@@ -1766,11 +1783,11 @@ namespace LatticeVeil.Launcher
             const float buttonZoneWidth = 118f;
             var textWidth = rowRect.width - buttonZoneWidth - 24;
 
-            // Title — single line, clipped cleanly (never wraps into the next row).
+            // Title — single line, ellipsized when long so it can never run under
+            // the engine chip (which killed the old layout).
             var isLegacy = version.IsLegacyEngine;
             var titleStyle = _rowTitleStyle;
-            var titleContent = new GUIContent(string.IsNullOrWhiteSpace(version.DisplayName) ? version.Tag : version.DisplayName);
-            var titleSize = titleStyle.CalcSize(titleContent);
+            var titleText = string.IsNullOrWhiteSpace(version.DisplayName) ? version.Tag : version.DisplayName;
 
             // Engine classification chip sits inline after the title; reserve room for it.
             var chipWidth = 0f;
@@ -1779,8 +1796,10 @@ namespace LatticeVeil.Launcher
                 chipWidth = _engineChipStyle.CalcSize(new GUIContent("MONOGAME")).x + 2;
             }
 
-            var titleRect = new Rect(rowRect.x + 12, rowRect.y + 5, Mathf.Min(titleSize.x, textWidth - (isLegacy ? chipWidth + 8 : 0)), 20);
-            GUI.Label(titleRect, titleContent, titleStyle);
+            var maxTitleWidth = textWidth - (isLegacy ? chipWidth + 8 : 0);
+            titleText = TruncateToWidth(titleText, titleStyle, maxTitleWidth);
+            var titleRect = new Rect(rowRect.x + 12, rowRect.y + 5, maxTitleWidth, 20);
+            GUI.Label(titleRect, new GUIContent(titleText), titleStyle);
 
             if (isLegacy && chipWidth > 0)
             {

@@ -942,11 +942,13 @@ namespace LatticeVeil.Launcher
             var logBoxRect = new Rect(leftPanelRect.x, leftPanelRect.y, leftPanelRect.width, logBoxHeight);
             GUI.Box(logBoxRect, "", _boxStyle);
 
-            // Scrollable log text
+            // Scrollable log text — TextArea so log lines can be selected and
+            // copied (Ctrl+C) like any Windows text box. Edits are discarded:
+            // the buffer is re-fed every frame from the logger.
             var scrollAreaRect = new Rect(logBoxRect.x + 6, logBoxRect.y + 6, logBoxRect.width - 12, logBoxRect.height - 12);
             var textHeight = Mathf.Max(scrollAreaRect.height, _logContent.Length * 22);
             _scrollPosition = GUI.BeginScrollView(scrollAreaRect, _scrollPosition, new Rect(0, 0, scrollAreaRect.width - 20, textHeight));
-            GUI.Label(new Rect(4, 4, scrollAreaRect.width - 24, textHeight), _logContent, _logStyle);
+            GUI.TextArea(new Rect(4, 4, scrollAreaRect.width - 24, textHeight), _logContent, _logStyle);
             GUI.EndScrollView();
 
             // Status label & Colored horizontal status bar
@@ -3855,6 +3857,27 @@ namespace LatticeVeil.Launcher
                     return;
                 }
 
+                // Verify the installed game exe against its release manifest hash
+                // (version.json beside the exe). A mismatched exe never launches in
+                // online mode — this is the local half of the anti-spoof chain; the
+                // Supabase game-hashes list completes it server-side.
+                var gameHashOk = VerifyInstalledGameHash(exePath, out var gameHashStatus);
+                if (gameHashOk)
+                {
+                    _log.Info($"Game hash verified: {gameHashStatus}");
+                }
+                else
+                {
+                    _log.Warn($"Game hash check failed: {gameHashStatus}");
+                    if (!isOffline)
+                    {
+                        _log.Error("Online launch blocked: installed game hash does not match its release manifest.");
+                        _isLaunching = false;
+                        launchMode = "Offline";
+                        return;
+                    }
+                }
+
                 _log.Info($"Launching game from: {exePath}");
                 _log.Info($"Launch arguments: {args}");
 
@@ -3999,6 +4022,67 @@ namespace LatticeVeil.Launcher
                 || fileName.Contains("protocolbridge")
                 || fileName == "dotnet.exe"
                 || fileName == "dotnet";
+        }
+
+        /// <summary>
+        /// Verifies the installed game exe against the version.json manifest stored
+        /// beside it at install time. Returns true (with the hash as status) when the
+        /// manifest is absent or the hash matches; false on any mismatch or read error.
+        /// </summary>
+        private static bool VerifyInstalledGameHash(string exePath, out string status)
+        {
+            status = "no manifest";
+            try
+            {
+                var manifestPath = Path.Combine(Path.GetDirectoryName(exePath) ?? "", "version.json");
+                if (!File.Exists(manifestPath))
+                    return true; // zip-era install without a manifest: nothing to verify against
+
+                var manifestJson = File.ReadAllText(manifestPath);
+                var expectedHash = ExtractManifestString(manifestJson, "sha256");
+                if (string.IsNullOrWhiteSpace(expectedHash))
+                    return true; // manifest without a hash: treat as unverified-but-allowed
+
+                using var sha = System.Security.Cryptography.SHA256.Create();
+                using var stream = File.OpenRead(exePath);
+                var hashBytes = sha.ComputeHash(stream);
+                var sb = new System.Text.StringBuilder(hashBytes.Length * 2);
+                foreach (var b in hashBytes) sb.Append(b.ToString("x2"));
+                var actualHash = sb.ToString();
+
+                status = actualHash;
+                return string.Equals(actualHash, expectedHash.Trim(), StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                status = $"verification error: {ex.Message}";
+                return false;
+            }
+        }
+
+        /// <summary>Minimal string lookup inside a flat json object (no dependency).</summary>
+        private static string ExtractManifestString(string json, string key)
+        {
+            var search = "\"" + key + "\"";
+            var idx = json.IndexOf(search, StringComparison.Ordinal);
+            if (idx < 0) return null;
+
+            var colon = json.IndexOf(':', idx + search.Length);
+            if (colon < 0) return null;
+
+            var quoteOpen = json.IndexOf('"', colon + 1);
+            if (quoteOpen < 0) return null;
+
+            var quoteClose = quoteOpen + 1;
+            while (quoteClose < json.Length)
+            {
+                if (json[quoteClose] == '\\') { quoteClose += 2; continue; }
+                if (json[quoteClose] == '"') break;
+                quoteClose++;
+            }
+
+            if (quoteClose >= json.Length) return null;
+            return json.Substring(quoteOpen + 1, quoteClose - quoteOpen - 1);
         }
 
         private void OpenLogsFolder()

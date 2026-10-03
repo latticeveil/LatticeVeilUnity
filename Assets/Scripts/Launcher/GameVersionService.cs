@@ -24,6 +24,23 @@ namespace LatticeVeil.Launcher
         /// <summary>Release notes body from GitHub (markdown, may be empty).</summary>
         public string Body { get; set; } = "";
 
+        // ---- Manifest-driven fields (releases shipping exe + version.json) ----
+        /// <summary>Version number from the manifest (e.g. "17.0.0").</summary>
+        public string VersionNumber { get; set; } = "";
+        /// <summary>Engine declared by the manifest ("monogame" or "unity").</summary>
+        public string Engine { get; set; } = "";
+        /// <summary>Expected SHA-256 of the game exe, from the manifest.</summary>
+        public string ExeHash { get; set; } = "";
+        public string ExeAssetName { get; set; } = "";
+        public string ExeAssetUrl { get; set; } = "";
+        public long ExeAssetSizeBytes { get; set; }
+        /// <summary>Raw manifest json, persisted beside the installed exe.</summary>
+        public string ManifestJson { get; set; } = "";
+
+        /// <summary>True when the release ships the exe + version.json manifest pair.</summary>
+        public bool HasManifest =>
+            !string.IsNullOrWhiteSpace(ExeHash) && !string.IsNullOrWhiteSpace(ExeAssetUrl);
+
         public bool IsInstalled { get; set; }
         public string InstallDirectory { get; set; } = "";
 
@@ -39,15 +56,18 @@ namespace LatticeVeil.Launcher
         {
             get
             {
+                if (string.Equals(Engine, "monogame", StringComparison.OrdinalIgnoreCase))
+                    return true;
+
                 var haystack = $"{Tag} {DisplayName}";
                 return haystack.IndexOf("legacy", StringComparison.OrdinalIgnoreCase) >= 0 ||
                        haystack.IndexOf("monogame", StringComparison.OrdinalIgnoreCase) >= 0;
             }
         }
 
-        /// <summary>Short single-line label for dropdowns/lists.</summary>
+        /// <summary>Short single-line label for dropdowns/lists (manifest name preferred).</summary>
         public string ListLabel =>
-            $"{Tag}{EngineBadge}";
+            $"{(string.IsNullOrWhiteSpace(DisplayName) ? Tag : DisplayName)}{EngineBadge}";
 
         public string SizeDisplay =>
             AssetSizeBytes <= 0 ? "" :
@@ -85,7 +105,9 @@ namespace LatticeVeil.Launcher
                 request.Headers.Add("User-Agent", UserAgent);
                 request.Headers.Add("Accept", "application/vnd.github+json");
 
-                using var response = await _http.GetAsync(request.RequestUri, ct).ConfigureAwait(false);
+                // Send the prepared request — GetAsync(request.RequestUri) would
+                // discard these headers and GitHub 403s User-Agent-less calls.
+                using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
                 if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
                     return versions;
                 response.EnsureSuccessStatusCode();
@@ -97,25 +119,85 @@ namespace LatticeVeil.Launcher
                     if (string.IsNullOrWhiteSpace(tag))
                         continue;
 
-                    var asset = JsonLite.FindFirstZipAsset(release);
-                    if (string.IsNullOrWhiteSpace(asset.Item1))
-                        continue;
+                    var publishedAt = JsonLite.ExtractString(release, "published_at");
+                    var isPrerelease = JsonLite.ExtractBool(release, "prerelease");
+                    var body = JsonLite.ExtractString(release, "body") ?? "";
+                    var installedExe = Core.Paths.TryResolveInstalledVersionExe(tag);
 
-                    versions.Add(new GameVersionInfo
+                    GameVersionInfo version = null;
+
+                    // Preferred flow: release ships the game exe + a version.json
+                    // manifest (name, number, engine, sha256, size). No zip needed —
+                    // the launcher reads the manifest directly from the release.
+                    var exeAsset = JsonLite.FindFirstAssetWithExtension(release, ".exe");
+                    var jsonAsset = JsonLite.FindFirstAssetWithExtension(release, ".json");
+                    if (!string.IsNullOrWhiteSpace(exeAsset.Item2) && !string.IsNullOrWhiteSpace(jsonAsset.Item2))
                     {
-                        Tag = tag,
-                        DisplayName = FirstNonEmpty(JsonLite.ExtractString(release, "name"), tag),
-                        AssetName = asset.Item1,
-                        AssetUrl = asset.Item2,
-                        AssetSizeBytes = asset.Item3,
-                        PublishedAt = JsonLite.ExtractString(release, "published_at"),
-                        IsPrerelease = JsonLite.ExtractBool(release, "prerelease"),
-                        Body = JsonLite.ExtractString(release, "body") ?? "",
-                        IsInstalled = Core.Paths.TryResolveInstalledVersionExe(tag) != null,
-                        InstallDirectory = Core.Paths.TryResolveInstalledVersionExe(tag) is { } exe
-                            ? System.IO.Path.GetDirectoryName(exe)
-                            : ""
-                    });
+                        try
+                        {
+                            using var manifestRequest = new HttpRequestMessage(HttpMethod.Get, jsonAsset.Item2);
+                            manifestRequest.Headers.Add("User-Agent", UserAgent);
+                            using var manifestResponse = await _http.SendAsync(manifestRequest, ct).ConfigureAwait(false);
+                            manifestResponse.EnsureSuccessStatusCode();
+                            var manifestJson = await manifestResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+                            version = new GameVersionInfo
+                            {
+                                Tag = tag,
+                                DisplayName = FirstNonEmpty(
+                                    JsonLite.ExtractString(manifestJson, "versionName"),
+                                    JsonLite.ExtractString(release, "name"),
+                                    tag),
+                                VersionNumber = JsonLite.ExtractString(manifestJson, "version"),
+                                Engine = JsonLite.ExtractString(manifestJson, "engine"),
+                                ExeHash = (JsonLite.ExtractString(manifestJson, "sha256") ?? "").Trim(),
+                                ExeAssetName = exeAsset.Item1,
+                                ExeAssetUrl = exeAsset.Item2,
+                                ExeAssetSizeBytes = exeAsset.Item3,
+                                ManifestJson = manifestJson,
+                                PublishedAt = publishedAt,
+                                IsPrerelease = isPrerelease,
+                                Body = body
+                            };
+
+                            // Fall back to the manifest's size when the asset metadata is unavailable.
+                            var manifestSize = JsonLite.ExtractNumber(manifestJson, "size");
+                            version.AssetSizeBytes = version.ExeAssetSizeBytes > 0 ? version.ExeAssetSizeBytes : manifestSize;
+                            version.AssetName = version.ExeAssetName;
+                            version.AssetUrl = version.ExeAssetUrl;
+                        }
+                        catch (Exception manifestEx)
+                        {
+                            _log?.Warn($"Manifest fetch failed for {tag}: {manifestEx.Message}");
+                        }
+                    }
+
+                    // Fallback flow: legacy zip-only releases (no hash verification possible).
+                    if (version == null)
+                    {
+                        var asset = JsonLite.FindFirstZipAsset(release);
+                        if (string.IsNullOrWhiteSpace(asset.Item1))
+                            continue;
+
+                        version = new GameVersionInfo
+                        {
+                            Tag = tag,
+                            DisplayName = FirstNonEmpty(JsonLite.ExtractString(release, "name"), tag),
+                            AssetName = asset.Item1,
+                            AssetUrl = asset.Item2,
+                            AssetSizeBytes = asset.Item3,
+                            PublishedAt = publishedAt,
+                            IsPrerelease = isPrerelease,
+                            Body = body
+                        };
+                    }
+
+                    version.IsInstalled = installedExe != null;
+                    version.InstallDirectory = installedExe != null
+                        ? System.IO.Path.GetDirectoryName(installedExe)
+                        : "";
+
+                    versions.Add(version);
                 }
 
                 versions.Sort((a, b) => string.Compare(b.PublishedAt, a.PublishedAt, StringComparison.Ordinal));
@@ -129,8 +211,15 @@ namespace LatticeVeil.Launcher
             return versions;
         }
 
-        private static string FirstNonEmpty(string a, string b) =>
-            !string.IsNullOrWhiteSpace(a) ? a : (b ?? string.Empty);
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                    return value;
+            }
+            return string.Empty;
+        }
     }
 
     /// <summary>
@@ -247,7 +336,11 @@ namespace LatticeVeil.Launcher
         }
 
         /// <summary>Finds the first .zip asset (name, browser_download_url, size) in a release object.</summary>
-        public static (string, string, long) FindFirstZipAsset(string releaseJson)
+        public static (string, string, long) FindFirstZipAsset(string releaseJson) =>
+            FindFirstAssetWithExtension(releaseJson, ".zip");
+
+        /// <summary>Finds the first asset with the given extension (name, browser_download_url, size).</summary>
+        public static (string, string, long) FindFirstAssetWithExtension(string releaseJson, string extension)
         {
             var assetsIdx = releaseJson.IndexOf("\"assets\"", StringComparison.Ordinal);
             if (assetsIdx < 0) return (null, null, 0);
@@ -260,7 +353,7 @@ namespace LatticeVeil.Launcher
             foreach (var obj in SplitTopLevelObjects(assetsArray))
             {
                 var name = ExtractString(obj, "name");
-                if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!name.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) continue;
                 var url = ExtractString(obj, "browser_download_url");
                 if (string.IsNullOrWhiteSpace(url)) continue;
                 return (name, url, ExtractNumber(obj, "size"));

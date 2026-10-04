@@ -530,6 +530,7 @@ namespace LatticeVeil.Launcher
             private string _onlinePngPath;                   // cached PNG for the ONLINE row thumbnail
             private string _onlineName = "ONLINE SKIN";
             private readonly Dictionary<string, string> _hashCache = new Dictionary<string, string>();
+            private bool _activeSelectionDone;
 
             private class OnlineResult
             {
@@ -838,6 +839,32 @@ namespace LatticeVeil.Launcher
                 }
             }
 
+            /// <summary>Resolves the local file (or ONLINE row) for the active skin hash.</summary>
+            private string FindActiveSkinPath(string activeHash)
+            {
+                if (string.IsNullOrWhiteSpace(activeHash) || string.Equals(activeHash, "default_skin", StringComparison.OrdinalIgnoreCase))
+                    return null; // default skin: panel preview shows its default
+                try
+                {
+                    if (_onlinePngPath != null && File.Exists(_onlinePngPath)
+                        && string.Equals(activeHash, _onlineHash, StringComparison.OrdinalIgnoreCase))
+                        return _onlinePngPath;
+
+                    var candidates = new[]
+                    {
+                        Path.Combine(Core.Paths.RuntimeSkinsDir, activeHash + ".png"),
+                        Path.Combine(Core.Paths.UserSkinsDir, activeHash + ".png"),
+                    };
+                    foreach (var c in candidates) if (File.Exists(c)) return c;
+
+                    foreach (var p in _skinPaths)
+                        if (string.Equals(GetSkinHashCached(p), activeHash, StringComparison.OrdinalIgnoreCase))
+                            return p;
+                }
+                catch { }
+                return null;
+            }
+
             /// <summary>SHA-256 of a skin file, computed once per path (the list redraws every frame).</summary>
             private string GetSkinHashCached(string path)
             {
@@ -871,6 +898,14 @@ namespace LatticeVeil.Launcher
 
                 _skinPaths = GetLocalSkinPaths();
                 var activeHash = ReadActiveSkinHashSafe();
+
+                // Reopening the panel starts with the ACTIVE skin in the preview
+                // (the ONLINE row's copy when the active skin came from Veilnet).
+                if (!_activeSelectionDone)
+                {
+                    _activeSelectionDone = true;
+                    _selectedSkinPath = FindActiveSkinPath(activeHash);
+                }
 
                 var listRect = new Rect(16, HeaderH + 12, 400, panelRect.height - HeaderH - 24);
                 float rowH = 74f;

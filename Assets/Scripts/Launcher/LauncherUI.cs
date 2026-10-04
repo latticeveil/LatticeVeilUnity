@@ -155,6 +155,8 @@ namespace LatticeVeil.Launcher
         private Texture2D _logoTexture;
         private Texture2D _avatarTexture;
         private Texture2D _skinHeadTexture;
+        private bool _avatarIsSkinFace;            // avatar box shows the active skin's face (no Veilnet avatar)
+        private string _lastActiveSkinHashSeen;    // watches active.txt so faces update without a restart
         private Texture2D _greenBarTex;
         private Texture2D _amberBarTex;
         private Texture2D _redBarTex;
@@ -242,6 +244,8 @@ namespace LatticeVeil.Launcher
                     _log?.Warn($"MainThread dispatch error: {ex.Message}");
                 }
             }
+
+            CheckActiveSkinChanged();
 
             if (_showSkinModal)
             {
@@ -773,10 +777,49 @@ namespace LatticeVeil.Launcher
                         {
                             tex.filterMode = FilterMode.Bilinear;
                             _avatarTexture = tex;
+                            _avatarIsSkinFace = false;
                             return;
                         }
                     }
                 }
+
+                // No Veilnet avatar available: show the active skin's face so the
+                // profile picture always reflects the live skin.
+                var face = ExtractHeadTexture(SkinManager.LoadActiveSkinTexture());
+                if (face != null)
+                {
+                    _avatarTexture = face;
+                    _avatarIsSkinFace = true;
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Watches active.txt (written by every skin apply: USE, SYNC, UPLOAD,
+        /// auto-fetch) so the skin face and preview update the moment the active
+        /// skin changes - no launcher restart needed.
+        /// </summary>
+        private void CheckActiveSkinChanged()
+        {
+            try
+            {
+                if (!File.Exists(Paths.ActiveSkinHashPath)) return;
+                var hash = File.ReadAllText(Paths.ActiveSkinHashPath).Trim();
+                if (string.Equals(hash, _lastActiveSkinHashSeen, StringComparison.Ordinal)) return;
+                _lastActiveSkinHashSeen = hash;
+
+                if (_skinHeadTexture != null) Destroy(_skinHeadTexture);
+                LoadSkinHeadTexture();
+
+                if (_avatarIsSkinFace)
+                {
+                    if (_avatarTexture != null) Destroy(_avatarTexture);
+                    _avatarTexture = null;
+                    LoadAvatarTexture();
+                }
+
+                RefreshSkinModalPreview();
             }
             catch { }
         }

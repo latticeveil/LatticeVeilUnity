@@ -188,6 +188,10 @@ namespace LatticeVeil.Launcher
                 PanelWin32.DrawTextString(Hdc, r, text ?? "", size, bold, color, anchor, wrap);
             }
 
+            /// <summary>Measured height (px) a wrapped label needs for the given width.</summary>
+            public static float MeasureWrappedTextHeight(string text, float width, int size)
+                => PanelWin32.MeasureTextHeight(text, width, size);
+
             /// <summary>Draws a button; returns true on click this frame.</summary>
             public bool Button(Rect r, string text, int size, Color bg, Color hoverBg, Color fg)
             {
@@ -223,7 +227,7 @@ namespace LatticeVeil.Launcher
                     float barY = (viewport.height - barH) * (scroll.y / (contentHeight - viewport.height));
                     Fill(new Rect(viewport.width - 5, barY, 3, barH), new Color(0.35f, 0.36f, 0.4f));
                 }
-                return new Rect(0, -scroll.y, viewport.width, contentHeight);
+                return new Rect(viewport.x, viewport.y - scroll.y, viewport.width, viewport.y - scroll.y + contentHeight);
             }
 
             public void EndList() => PanelWin32.PopClip(Hdc);
@@ -372,14 +376,16 @@ namespace LatticeVeil.Launcher
                 ui.Frame(notesRect, new Color(0.16f, 0.16f, 0.18f));
                 ui.Label(new Rect(notesRect.x + 12, notesRect.y + 8, notesRect.width - 24, 24), "UPDATE NOTES", 13, Accent, bold: true);
 
-                var notesViewport = new Rect(notesRect.x + 8, notesRect.y + 36, notesRect.width - 16, notesRect.height - 46);
+                var notesViewport = new Rect(notesRect.x + 8, notesRect.y + 36, notesRect.width - 16, notesRect.height - 44);
                 var notes = _selectedVersion?.Body ?? "";
-                float notesH = Mathf.Max(notesViewport.height, notes.Length * 14f);
+                float measured = PanelUI.MeasureWrappedTextHeight(notes, notesViewport.width - 8, 12);
+                float notesH = Mathf.Max(notesViewport.height, measured);
                 _notesScroll.y = Mathf.Clamp(_notesScroll.y - (notesViewport.Contains(ui.Mouse) ? ui.WheelDelta : 0),
                     0, Mathf.Max(0, notesH - notesViewport.height));
+                _notesScroll.y = Mathf.Clamp(_notesScroll.y, 0, Mathf.Max(0, notesH - notesViewport.height));
                 ui.Fill(notesViewport, RowBg);
                 PanelWin32.PushClip(ui.Hdc, notesViewport);
-                ui.Label(new Rect(notesViewport.x, notesViewport.y - _notesScroll.y, notesViewport.width, notesH),
+                ui.Label(new Rect(notesViewport.x + 4, notesViewport.y - _notesScroll.y, notesViewport.width - 8, notesH),
                     notes, 12, Dim, wrap: true);
                 PanelWin32.PopClip(ui.Hdc);
 
@@ -484,10 +490,10 @@ namespace LatticeVeil.Launcher
                     var filePath = SkinManager.PromptSelectSkinFile();
                     if (!string.IsNullOrEmpty(filePath))
                     {
-                        if (SkinManager.ValidateSkinFile(filePath, out _, out _, out var err))
+                        if (SkinManager.ImportAndSetActiveSkin(filePath, out _, out _, Path.GetFileNameWithoutExtension(filePath)))
                             _statusMessage = "Skin imported and set as active.";
                         else
-                            _statusMessage = $"Invalid skin: {err}";
+                            _statusMessage = $"Invalid skin: could not import.";
                     }
                 }
             }
@@ -508,13 +514,21 @@ namespace LatticeVeil.Launcher
                 DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), "DEFAULT SKIN", null,
                     string.IsNullOrWhiteSpace(activeHash), "USE DEFAULT");
                 rowY += rowH;
+                bool anyRowActive = false;
                 foreach (var path in _skinPaths)
                 {
                     var name = Path.GetFileNameWithoutExtension(path);
+                    // Imported skins keep their friendly filename (hashes live in
+                    // active.txt), so a name match is preferred but a direct hash
+                    // file still matches too.
                     var isActive = string.Equals(name, activeHash, StringComparison.OrdinalIgnoreCase);
+                    if (isActive) anyRowActive = true;
                     DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), name, path, isActive, "USE");
                     rowY += rowH;
                 }
+                if (!anyRowActive && !string.IsNullOrWhiteSpace(activeHash) && !string.Equals("DEFAULT SKIN", activeHash, StringComparison.OrdinalIgnoreCase))
+                    ui.Label(new Rect(list.x + 4, rowY + 4, list.width - 10, 22),
+                        $"Active skin hash: {activeHash}", 11, Accent);
                 ui.EndList();
 
                 // Right column: preview + actions
@@ -526,6 +540,11 @@ namespace LatticeVeil.Launcher
                 if (_selectedSkinPath == null || !ui.Image(previewViewport, _selectedSkinPath))
                     ui.Label(new Rect(previewRect.x + 16, previewRect.y + 16, previewRect.width - 32, 60),
                         "Select a skin from the list.", 12, Dim, wrap: true);
+
+                // Auto-select the skin the game is actually wearing on first open.
+                if (_selectedSkinPath == null && !string.IsNullOrWhiteSpace(activeHash))
+                    _selectedSkinPath = _skinPaths.FirstOrDefault(path =>
+                        string.Equals(Path.GetFileNameWithoutExtension(path), activeHash, StringComparison.OrdinalIgnoreCase));
 
                 if (!string.IsNullOrEmpty(_statusMessage))
                     ui.Label(new Rect(16, panelRect.height - 40, panelRect.width - 32, 26), _statusMessage, 12, Dim);
@@ -554,9 +573,16 @@ namespace LatticeVeil.Launcher
                 var useRect = new Rect(row.x + row.width - 106, row.y + 8, 96, 28);
                 if (ui.Button(useRect, useText, 11, BtnBg, BtnHover, Text) && !isActive)
                 {
-                    if (path == null) SkinManager.ClearActiveSkin();
-                    else SkinManager.ImportAndSetActiveSkin(path, out _, out _, Path.GetFileNameWithoutExtension(path));
-                    _statusMessage = isActive ? "Already active." : $"Applied {displayName}.";
+                    if (path == null)
+                    {
+                        SkinManager.ClearActiveSkin();
+                        _statusMessage = "Reverted to the default skin.";
+                    }
+                    else
+                    {
+                        var applied = SkinManager.ImportAndSetActiveSkin(path, out var importError, out _, Path.GetFileNameWithoutExtension(path));
+                        _statusMessage = applied ? $"Applied {displayName}." : $"Could not apply skin: {importError}";
+                    }
                 }
 
                 if (path != null)
@@ -634,6 +660,7 @@ namespace LatticeVeil.Launcher
             private const uint DT_EDITCONTROL = 0x2000;
             private const uint DT_NOPREFIX = 0x800;
             private const uint DT_END_ELLIPSIS = 0x8000;
+            private const uint DT_CALCRECT = 0x400;
 
             private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
             private static WndProcDelegate _wndProc; // rooted so the delegate is not collected
@@ -986,6 +1013,18 @@ namespace LatticeVeil.Launcher
                     Bottom = (int)(r.y + r.height),
                 };
                 DrawTextW(hdc, text, text.Length, ref rc, flags);
+            }
+
+            /// <summary>DT_CALCRECT measurement pass mirroring DrawTextString's wrap style.</summary>
+            public static int MeasureTextHeight(string text, float width, int size)
+            {
+                if (string.IsNullOrEmpty(text)) return 0;
+
+                SelectObject(_memDc, FontFor(size, false));
+                var rc = new RECT { Left = 0, Top = 0, Right = Mathf.Max(16, (int)width), Bottom = 0 };
+                DrawTextW(_memDc, text, text.Length, ref rc,
+                    DT_NOPREFIX | DT_WORDBREAK | DT_EDITCONTROL | DT_CALCRECT);
+                return rc.Bottom;
             }
 
             private static IntPtr FontFor(int size, bool bold)

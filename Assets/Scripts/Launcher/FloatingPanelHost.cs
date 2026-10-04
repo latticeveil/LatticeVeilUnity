@@ -270,6 +270,7 @@ namespace LatticeVeil.Launcher
             protected static readonly Color RowHover = new Color(0.15f, 0.15f, 0.17f);
             protected static readonly Color BtnBg = new Color(0.18f, 0.19f, 0.22f);
             protected static readonly Color BtnHover = new Color(0.26f, 0.28f, 0.32f);
+            protected static readonly Color OnlineGreen = new Color(0.36f, 0.80f, 0.44f);
             protected const int HeaderH = 42;
 
             protected void DrawHeader(PanelUI ui, Rect panelRect, string title)
@@ -515,6 +516,34 @@ namespace LatticeVeil.Launcher
             private Color[] _workerPreview; // worker-owned scratch, reused per bake
             private bool _bakeFailureLogged;
 
+            // --- Veilnet online-skin sync ---
+            private SupabaseSkinClient _syncClient;
+            private bool _onlineFetchQueued = true;          // check once when the panel opens
+            private volatile OnlineResult _pendingOnline;    // worker -> Tick
+            private volatile UploadResult _pendingUpload;    // worker -> Tick
+            private volatile bool _syncBusy;
+            private bool _syncCheckRequested;                // SYNC button was pressed
+            private bool _syncDialogOpen;                    // local-vs-online mismatch prompt
+            private byte[] _onlinePngBytes;                  // bytes of the fetched online skin
+            private string _onlineHash = "";                 // hash of the uploaded skin ("" = default/none)
+            private bool _onlineIsDefault;                   // online profile has the baseline skin
+            private string _onlinePngPath;                   // cached PNG for the ONLINE row thumbnail
+            private string _onlineName = "ONLINE SKIN";
+            private readonly Dictionary<string, string> _hashCache = new Dictionary<string, string>();
+
+            private class OnlineResult
+            {
+                public bool Success, HasSkin;
+                public string Hash, DisplayName, Error;
+                public byte[] PngBytes;
+            }
+
+            private class UploadResult
+            {
+                public bool Ok;
+                public string Hash, Error;
+            }
+
             private static readonly Dictionary<string, PreviewBitmap> _previewCache =
                 new Dictionary<string, PreviewBitmap>();
 
@@ -551,12 +580,289 @@ namespace LatticeVeil.Launcher
                     var filePath = SkinManager.PromptSelectSkinFile();
                     if (!string.IsNullOrEmpty(filePath))
                     {
-                        if (SkinManager.ImportAndSetActiveSkin(filePath, out _, out _, Path.GetFileNameWithoutExtension(filePath)))
-                            _statusMessage = "Skin imported and set as active.";
+                        if (SkinManager.ImportAndSetActiveSkin(filePath, out _, out var importedHash, Path.GetFileNameWithoutExtension(filePath)))
+                        {
+                            _statusMessage = "Skin imported. Uploading to Veilnet…";
+                            QueueUploadActiveSkin(importedHash, filePath);
+                        }
                         else
                             _statusMessage = $"Invalid skin: could not import.";
                     }
                 }
+
+                // Consume worker results (online fetch / upload) and kick the
+                // one-time open fetch. All main-thread.
+                var online = _pendingOnline;
+                if (online != null)
+                {
+                    _pendingOnline = null;
+                    ConsumeOnlineResult(online);
+                }
+                var uploaded = _pendingUpload;
+                if (uploaded != null)
+                {
+                    _pendingUpload = null;
+                    ConsumeUploadResult(uploaded);
+                }
+                if (_onlineFetchQueued)
+                    QueueOnlineFetch();
+            }
+
+            // ---------------- Veilnet online-skin sync ----------------
+
+            private void QueueOnlineFetch()
+            {
+                _onlineFetchQueued = false;
+                var auth = VeilnetSession.TryRead();
+                if (auth == null)
+                {
+                    if (_syncCheckRequested)
+                    {
+                        _syncCheckRequested = false;
+                        _statusMessage = "Log in to Veilnet to sync your online skin.";
+                    }
+                    return;
+                }
+                if (_syncBusy) { _onlineFetchQueued = true; return; }
+
+                _syncBusy = true;
+                var client = _syncClient ?? (_syncClient = VeilnetSession.CreateClient(auth));
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    SupabaseSkinClient.FetchResult r;
+                    try { r = client.FetchSkinAsync().GetAwaiter().GetResult(); }
+                    catch (Exception ex) { r = new SupabaseSkinClient.FetchResult { Success = false, Error = ex.Message }; }
+                    _pendingOnline = new OnlineResult
+                    {
+                        Success = r.Success,
+                        HasSkin = r.HasSkin,
+                        Hash = r.Hash,
+                        DisplayName = r.DisplayName,
+                        Error = r.Error,
+                        PngBytes = r.PngBytes,
+                    };
+                    _syncBusy = false;
+                });
+            }
+
+            private void ConsumeOnlineResult(OnlineResult r)
+            {
+                if (!r.Success)
+                {
+                    if (_syncCheckRequested) _statusMessage = $"Sync check failed: {r.Error}";
+                    _syncCheckRequested = false;
+                    return;
+                }
+
+                if (!r.HasSkin || r.PngBytes == null || r.PngBytes.Length == 0)
+                {
+                    _onlineIsDefault = true;
+                    _onlineHash = "";
+                    _onlinePngPath = null;
+                    _onlinePngBytes = null;
+                }
+                else
+                {
+                    _onlineIsDefault = false;
+                    _onlineHash = (r.Hash ?? string.Empty).Trim().ToLowerInvariant();
+                    _onlinePngBytes = r.PngBytes;
+                    try
+                    {
+                        Directory.CreateDirectory(Core.Paths.RuntimeSkinsDir);
+                        _onlinePngPath = Path.Combine(Core.Paths.RuntimeSkinsDir, "Veilnet_online.png");
+                        File.WriteAllBytes(_onlinePngPath, r.PngBytes);
+                    }
+                    catch { _onlinePngPath = null; }
+                    _onlineName = string.IsNullOrWhiteSpace(r.DisplayName) ? "ONLINE SKIN" : r.DisplayName.Trim().ToUpperInvariant();
+                }
+
+                if (_syncCheckRequested)
+                {
+                    _syncCheckRequested = false;
+                    EvaluateSync();
+                }
+            }
+
+            /// <summary>Compares the local ACTIVE skin against the fetched online skin.</summary>
+            private void EvaluateSync()
+            {
+                var activeHash = ReadActiveSkinHashSafe();
+                bool localDefault = string.IsNullOrWhiteSpace(activeHash)
+                    || string.Equals(activeHash, "default_skin", StringComparison.OrdinalIgnoreCase);
+
+                if (_onlineIsDefault)
+                {
+                    if (localDefault)
+                        _statusMessage = "In sync: the default skin is online and active.";
+                    else
+                        _syncDialogOpen = true; // online default vs local custom
+                }
+                else if (localDefault)
+                {
+                    _syncDialogOpen = true; // local default vs online custom
+                }
+                else if (string.Equals(activeHash, _onlineHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    _statusMessage = "In sync: local skin matches the uploaded skin.";
+                }
+                else
+                {
+                    _syncDialogOpen = true;
+                }
+            }
+
+            /// <summary>"USE LOCAL": uploads the local active skin to Veilnet.</summary>
+            private void ApplyLocalAsLatest(bool localIsUsable)
+            {
+                if (!localIsUsable)
+                {
+                    _statusMessage = "The default skin is active locally; nothing to upload.";
+                    return;
+                }
+
+                var activeHash = ReadActiveSkinHashSafe();
+                string localPath = null;
+                var candidates = new[]
+                {
+                    Path.Combine(Core.Paths.UserSkinsDir, $"{activeHash}.png"),
+                    Path.Combine(Core.Paths.RuntimeSkinsDir, $"{activeHash}.png"),
+                };
+                foreach (var c in candidates) if (File.Exists(c)) { localPath = c; break; }
+                if (localPath == null)
+                {
+                    _statusMessage = $"Local skin file for the active hash was not found.";
+                    return;
+                }
+
+                var auth = VeilnetSession.TryRead();
+                if (auth == null) { _statusMessage = "Log in to Veilnet to upload."; return; }
+
+                byte[] png;
+                try { png = File.ReadAllBytes(localPath); }
+                catch (Exception ex) { _statusMessage = $"Could not read local skin: {ex.Message}"; return; }
+
+                _statusMessage = "Uploading local skin to Veilnet…";
+                QueueUpload(auth, activeHash, png);
+            }
+
+            /// <summary>"USE ONLINE": downloads/applies the online skin locally.</summary>
+            private void ApplyOnlineAsLatest()
+            {
+                if (_onlineIsDefault)
+                {
+                    SkinManager.ClearActiveSkin();
+                    _statusMessage = "Switched to the default (online) skin.";
+                    return;
+                }
+                if (_onlinePngBytes == null || _onlinePngBytes.Length == 0)
+                {
+                    _statusMessage = "Online skin data unavailable; press SYNC to re-fetch.";
+                    return;
+                }
+
+                try
+                {
+                    Directory.CreateDirectory(Core.Paths.UserSkinsDir);
+                    var tempPath = Path.Combine(Core.Paths.UserSkinsDir, ".temp_veilnet_skin.png");
+                    try
+                    {
+                        File.WriteAllBytes(tempPath, _onlinePngBytes);
+                        if (SkinManager.ImportAndSetActiveSkin(tempPath, out var importError, out _, "Veilnet_skin"))
+                            _statusMessage = "Online skin applied — local now matches the uploaded skin.";
+                        else
+                            _statusMessage = $"Failed to import online skin: {importError}";
+                    }
+                    finally
+                    {
+                        try { File.Delete(tempPath); } catch { }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _statusMessage = $"Failed to apply online skin: {ex.Message}";
+                }
+            }
+
+            /// <summary>Uploads the just-imported skin to Veilnet in the background (UPLOAD button).</summary>
+            private void QueueUploadActiveSkin(string hash, string importedPath)
+            {
+                var auth = VeilnetSession.TryRead();
+                if (auth == null)
+                {
+                    _statusMessage = "Imported locally. Log in to Veilnet to upload it.";
+                    return;
+                }
+                if (string.IsNullOrEmpty(hash))
+                {
+                    if (!SkinManager.ValidateSkinFile(importedPath, out var tex, out hash, out _))
+                    {
+                        _statusMessage = "Imported locally, but the skin could not be hashed for upload.";
+                        if (tex != null) Destroy(tex);
+                        return;
+                    }
+                    if (tex != null) Destroy(tex);
+                }
+
+                byte[] png;
+                try { png = File.ReadAllBytes(importedPath); }
+                catch (Exception ex) { _statusMessage = $"Imported locally, but upload failed: {ex.Message}"; return; }
+
+                QueueUpload(auth, hash, png);
+            }
+
+            private void QueueUpload(VeilnetSession.Auth auth, string hash, byte[] png)
+            {
+                if (_syncBusy) { _statusMessage = "Another sync operation is running; try again in a moment."; return; }
+                _syncBusy = true;
+                var client = _syncClient ?? (_syncClient = VeilnetSession.CreateClient(auth));
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    var (ok, error) = client.UploadSkinAsync(hash, png).GetAwaiter().GetResult();
+                    _pendingUpload = new UploadResult { Ok = ok, Error = error, Hash = hash };
+                    _syncBusy = false;
+                });
+            }
+
+            private void ConsumeUploadResult(UploadResult r)
+            {
+                if (r.Ok)
+                {
+                    SkinManager.MarkSkinUploaded(r.Hash);
+                    _onlineHash = (r.Hash ?? string.Empty).ToLowerInvariant();
+                    _onlineIsDefault = false;
+                    _statusMessage = "Uploaded — local and online skins now match.";
+                }
+                else
+                {
+                    _statusMessage = $"Upload failed: {r.Error}";
+                }
+            }
+
+            /// <summary>SHA-256 of a skin file, computed once per path (the list redraws every frame).</summary>
+            private string GetSkinHashCached(string path)
+            {
+                if (string.IsNullOrEmpty(path)) return null;
+                if (_hashCache.TryGetValue(path, out var h)) return h;
+
+                h = "";
+                if (SkinManager.ValidateSkinFile(path, out var tex, out var hash, out _))
+                {
+                    h = hash;
+                    if (tex != null) Destroy(tex); // ValidateSkinFile decodes a Texture2D we don't need
+                }
+                _hashCache[path] = h;
+                return h;
+            }
+
+            private static string ReadUploadedHashSafe()
+            {
+                try
+                {
+                    return File.Exists(SkinManager.UploadedSkinHashPath)
+                        ? File.ReadAllText(SkinManager.UploadedSkinHashPath).Trim()
+                        : string.Empty;
+                }
+                catch { return string.Empty; }
             }
 
             public override void OnGUI(PanelUI ui, Rect panelRect)
@@ -568,13 +874,31 @@ namespace LatticeVeil.Launcher
 
                 var listRect = new Rect(16, HeaderH + 12, 400, panelRect.height - HeaderH - 24);
                 float rowH = 74f;
-                float contentH = 8 + (_skinPaths.Length + 1) * rowH;
+                bool onlineRowVisible = _onlinePngPath != null;
+                float contentH = 8 + (_skinPaths.Length + (onlineRowVisible ? 2 : 1)) * rowH;
                 var list = ui.BeginList(listRect, contentH, ref _skinScroll);
+
+                string uploadedMarker = ReadUploadedHashSafe();
+                bool defaultUploaded = _onlineIsDefault
+                    || string.Equals(_onlineHash, "default_skin", StringComparison.OrdinalIgnoreCase)
+                    || (!onlineRowVisible && string.Equals(uploadedMarker, "default_skin", StringComparison.OrdinalIgnoreCase));
 
                 float rowY = list.y + 4;
                 DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), "DEFAULT SKIN", null,
-                    string.IsNullOrWhiteSpace(activeHash), "USE DEFAULT");
+                    string.IsNullOrWhiteSpace(activeHash), "USE DEFAULT",
+                    defaultUploaded ? "UPLOADED" : null);
                 rowY += rowH;
+
+                // The fetched online skin, shown as its own row so the user can
+                // always see (preview/apply) exactly what is uploaded right now.
+                if (onlineRowVisible)
+                {
+                    var onlineIsActive = string.Equals(activeHash, _onlineHash, StringComparison.OrdinalIgnoreCase);
+                    DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), _onlineName, _onlinePngPath,
+                        onlineIsActive, "USE", "UPLOADED");
+                    rowY += rowH;
+                }
+
                 bool anyRowActive = false;
                 foreach (var path in _skinPaths)
                 {
@@ -584,7 +908,11 @@ namespace LatticeVeil.Launcher
                     // file still matches too.
                     var isActive = string.Equals(name, activeHash, StringComparison.OrdinalIgnoreCase);
                     if (isActive) anyRowActive = true;
-                    DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), name, path, isActive, "USE");
+                    var rowHash = GetSkinHashCached(path);
+                    bool isUploaded = (!string.IsNullOrEmpty(_onlineHash) && string.Equals(rowHash, _onlineHash, StringComparison.OrdinalIgnoreCase))
+                        || (string.IsNullOrEmpty(_onlineHash) && !string.IsNullOrEmpty(uploadedMarker) && string.Equals(rowHash, uploadedMarker, StringComparison.OrdinalIgnoreCase));
+                    DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), name, path, isActive, "USE",
+                        isUploaded ? "UPLOADED" : null);
                     rowY += rowH;
                 }
                 if (!anyRowActive && !string.IsNullOrWhiteSpace(activeHash) && !string.Equals("DEFAULT SKIN", activeHash, StringComparison.OrdinalIgnoreCase))
@@ -604,18 +932,67 @@ namespace LatticeVeil.Launcher
                     ui.Label(new Rect(16, panelRect.height - 40, panelRect.width - 32, 26), _statusMessage, 12, Dim);
 
                 var buttonRowY = previewRect.y + previewRect.height - 52;
-                if (ui.Button(new Rect(previewRect.x + 16, buttonRowY, 120, 38), "RECENTER", 12, BtnBg, BtnHover, Text))
+
+                // Distribute the buttons across the preview column so they can
+                // never be cut off by the window edge at small panel widths.
+                const int ButtonCount = 5;
+                const float Gap = 10f, Margin = 16f;
+                float btnW = (previewRect.width - Margin * 2 - Gap * (ButtonCount - 1)) / ButtonCount;
+                if (btnW < 56f) btnW = 56f;
+                float totalW = ButtonCount * btnW + (ButtonCount - 1) * Gap;
+                float bx = previewRect.x + Mathf.Max(Margin, (previewRect.width - totalW) * 0.5f);
+                int btnFont = btnW < 84 ? 9 : 11;
+                Rect B(int i) => new Rect(bx + i * (btnW + Gap), buttonRowY, btnW, 38);
+
+                if (ui.Button(B(0), "RECENTER", btnFont, BtnBg, BtnHover, Text))
                 {
-                    _yaw = 0.42f; _pitch = 0f; _zoom = 1f;
+                    // yaw = 90 => rootYaw = 0 => the model faces the camera.
+                    _yaw = 90f; _pitch = 0f; _zoom = 1f;
                 }
-                if (ui.Button(new Rect(previewRect.x + 148, buttonRowY, 120, 38), _layers ? "LAYERS: ON" : "LAYERS: OFF", 12, BtnBg, BtnHover, Text))
+                if (ui.Button(B(1), _layers ? "LAYERS: ON" : "LAYERS: OFF", btnFont, BtnBg, BtnHover, Text))
                     _layers = !_layers;
-                if (ui.Button(new Rect(previewRect.x + 280, buttonRowY, 96, 38), "UPLOAD", 12, BtnBg, BtnHover, Text))
+                if (ui.Button(B(2), "UPLOAD", btnFont, BtnBg, BtnHover, Text))
                     _uploadQueued = true;
-                if (ui.Button(new Rect(previewRect.x + 388, buttonRowY, 96, 38), "FOLDER", 12, BtnBg, BtnHover, Text))
+                if (ui.Button(B(3), _syncBusy ? "…" : "SYNC", btnFont, BtnBg, BtnHover, Text))
+                {
+                    _syncCheckRequested = true;
+                    QueueOnlineFetch();
+                }
+                if (ui.Button(B(4), "FOLDER", btnFont, BtnBg, BtnHover, Text))
                 {
                     try { Process.Start("explorer.exe", Core.Paths.UserSkinsDir); } catch { }
                 }
+
+                if (_syncDialogOpen)
+                    DrawSyncDialog(ui, panelRect);
+            }
+
+            /// <summary>"Local and online differ" prompt: the user picks which one is the latest.</summary>
+            private void DrawSyncDialog(PanelUI ui, Rect panelRect)
+            {
+                const float w = 380f, h = 148f;
+                var box = new Rect((panelRect.width - w) * 0.5f, (panelRect.height - h) * 0.5f, w, h);
+                ui.Fill(box, new Color(0.12f, 0.12f, 0.14f));
+                ui.Frame(box, Accent);
+                ui.Label(new Rect(box.x + 16, box.y + 14, w - 32, 24), "LOCAL AND ONLINE SKINS DIFFER", 13, Text, bold: true);
+                ui.Label(new Rect(box.x + 16, box.y + 42, w - 32, 40),
+                    "Which one is the latest? Pick to make local and online match.", 11, Dim);
+
+                bool localIsUsable = !string.IsNullOrWhiteSpace(ReadActiveSkinHashSafe())
+                    && !string.Equals(ReadActiveSkinHashSafe(), "default_skin", StringComparison.OrdinalIgnoreCase);
+
+                if (ui.Button(new Rect(box.x + 16, box.y + h - 48, (w - 48) / 2, 34), "USE LOCAL (UPLOAD)", 11, BtnBg, BtnHover, Text))
+                {
+                    _syncDialogOpen = false;
+                    ApplyLocalAsLatest(localIsUsable);
+                }
+                if (ui.Button(new Rect(box.x + 32 + (w - 48) / 2, box.y + h - 48, (w - 48) / 2, 34), "USE ONLINE (DOWNLOAD)", 11, BtnBg, BtnHover, Text))
+                {
+                    _syncDialogOpen = false;
+                    ApplyOnlineAsLatest();
+                }
+                if (ui.Button(new Rect(box.x + w - 34, box.y + 8, 24, 22), "X", 11, BtnBg, BtnHover, Text))
+                    _syncDialogOpen = false;
             }
 
             /// <summary>
@@ -784,7 +1161,7 @@ namespace LatticeVeil.Launcher
                 return bmp;
             }
 
-            private void DrawSkinRow(PanelUI ui, Rect row, string displayName, string path, bool isActive, string useText)
+            private void DrawSkinRow(PanelUI ui, Rect row, string displayName, string path, bool isActive, string useText, string badge = null)
             {
                 bool hover = row.Contains(ui.Mouse);
                 if (hover && ui.Clicked && path != null) _selectedSkinPath = path;
@@ -795,7 +1172,11 @@ namespace LatticeVeil.Launcher
                     ui.Image(new Rect(row.x + 8, row.y + 8, 58, 58), path);
 
                 ui.Label(new Rect(row.x + 74, row.y + 8, row.width - 190, 22), displayName, 14, Text, bold: true);
-                ui.Label(new Rect(row.x + 74, row.y + 32, row.width - 190, 18), isActive ? "ACTIVE" : "", 11, Accent);
+                var status = isActive ? "ACTIVE" : "";
+                if (badge != null)
+                    status = string.IsNullOrEmpty(status) ? badge : status + "  ·  " + badge;
+                ui.Label(new Rect(row.x + 74, row.y + 32, row.width - 190, 18), status, 11,
+                    isActive ? Accent : OnlineGreen);
 
                 var useRect = new Rect(row.x + row.width - 106, row.y + 8, 96, 28);
                 if (ui.Button(useRect, useText, 11, BtnBg, BtnHover, Text) && !isActive)

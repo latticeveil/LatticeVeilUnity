@@ -4413,19 +4413,20 @@ namespace LatticeVeil.Launcher
 
             _log.Info("Unity Launcher shutting down.");
         }
+    }
 
-        // Helper classes for Veilnet auth (100% format-compatible with MonoGame LvcSerializer/DPAPI)
-        public sealed class VeilnetTokenRecord
-        {
-            public string Username { get; set; } = string.Empty;
-            public string Token { get; set; } = string.Empty;
-            public string UserId { get; set; } = string.Empty;
-            public DateTime SavedAtUtc { get; set; }
-        }
+    // Helper classes for Veilnet auth (100% format-compatible with MonoGame LvcSerializer/DPAPI).
+    // Namespace-level so both LauncherUI and VeilnetSession (floating panels) can use them.
+    public sealed class VeilnetTokenRecord
+    {
+        public string Username { get; set; } = string.Empty;
+        public string Token { get; set; } = string.Empty;
+        public string UserId { get; set; } = string.Empty;
+        public DateTime SavedAtUtc { get; set; }
+    }
 
-        public sealed class ProtectedVeilnetTokenEnvelope
-        {
-            public string PayloadBase64 { get; set; } = string.Empty;
-        }
+    public sealed class ProtectedVeilnetTokenEnvelope
+    {
+        public string PayloadBase64 { get; set; } = string.Empty;
     }
 }

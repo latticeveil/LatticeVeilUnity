@@ -10,6 +10,11 @@ namespace LatticeVeil.Launcher
     /// once and reused; a pose change is a transform write plus a 360x320 readback.
     /// Returns false when GPU rendering is unavailable so callers can fall back to the
     /// CPU path in PlayerSkinPreviewGenerator.
+    ///
+    /// Pose convention (shared with the CPU renderer): rootYaw = 90 - yaw, so
+    /// yaw = 90 shows the model's front face toward the camera and yaw = 0 shows
+    /// it edge-on. The floor grid lives OUTSIDE the rotated node - it must not
+    /// spin with the model.
     /// </summary>
     public static class PlayerSkinPreview3D
     {
@@ -17,7 +22,7 @@ namespace LatticeVeil.Launcher
         // independent compile-time constants).
         private const int Width = 360;
         private const int Height = 320;
-        private const float TexSize = 64f;       // skin textures are 64x64 nor 64x32
+        private const float TexSize = 64f;       // skin textures are 64x64 or 64x32
         private const float FrameHalfHeight = 320f / (2f * 130f); // CPU scale-parity framing (~1.2308)
         private const float OverlayScale = 1.05f; // CPU adds ~0.026 absolute per part
         private static readonly Color BackgroundColor = new Color(18f / 255f, 20f / 255f, 24f / 255f, 1f);
@@ -25,7 +30,8 @@ namespace LatticeVeil.Launcher
 
         private class PreviewScene
         {
-            public GameObject Root;       // rotated per pose; scaled by zoom
+            public GameObject Holder;     // toggled active only during our own render
+            public GameObject ModelRoot;  // rotated per pose; scaled by zoom
             public GameObject Overlay;    // second model tree, scaled up, toggled by LAYERS
             public Camera Camera;
             public RenderTexture Target;
@@ -52,12 +58,13 @@ namespace LatticeVeil.Launcher
                 if (!EnsureScene()) return false;
 
                 var s = _scene;
-                if (s.Root == null || s.Camera == null || s.Target == null || !s.Target.IsCreated())
+                if (s.ModelRoot == null || s.Camera == null || s.Target == null || !s.Target.IsCreated())
                 {
                     Shutdown(); // scene objects lost (e.g. after a domain reload)
                     if (!EnsureScene()) return false;
                     s = _scene;
                 }
+
                 if (s.BoundSkin != skin)
                 {
                     s.ModelMaterial.mainTexture = skin;
@@ -66,25 +73,26 @@ namespace LatticeVeil.Launcher
 
                 // Same rotation formula as the CPU renderer so drag direction and the
                 // rest pose feel identical: Euler(pitch, 90 - yaw, 0) == yaw * pitch.
-                s.Root.transform.localRotation = Quaternion.Euler(pitchDegrees, 90f - yawDegrees, 0f);
+                // yaw = 90 => model front toward the camera; yaw = 0 => edge-on.
+                s.ModelRoot.transform.localRotation = Quaternion.Euler(pitchDegrees, 90f - yawDegrees, 0f);
                 float z = Mathf.Clamp(zoom, 0.2f, 3f);
-                s.Root.transform.localScale = new Vector3(z, z, z);
+                s.ModelRoot.transform.localScale = new Vector3(z, z, z);
                 s.Overlay.SetActive(showLayers);
 
                 // Activate only for our own render call: the launcher's main camera
                 // must never see this scene in the normal frame loop.
-                s.Root.SetActive(true);
+                s.Holder.SetActive(true);
                 s.Camera.Render();
-                s.Root.SetActive(false);
+                s.Holder.SetActive(false);
 
-                // Small, throttled readback (only runs on pose change).
+                // Small readback (only runs on pose change).
                 var prevActive = RenderTexture.active;
                 RenderTexture.active = s.Target;
                 s.Readback.ReadPixels(new Rect(0, 0, Width, Height), 0, 0, false);
                 s.Readback.Apply(false);
                 RenderTexture.active = prevActive;
 
-                // GetRawTextureData<byte> is zero-alloc (Colors via GetPixels32 would allocate).
+                // GetRawTextureData<byte> is zero-alloc (GetPixels32 would allocate).
                 // Layout: RGBA rows bottom-up (row 0 = image bottom); GDI wants top-down BGRA.
                 var raw = s.Readback.GetRawTextureData<byte>();
                 for (int y = 0; y < Height; y++)
@@ -119,6 +127,7 @@ namespace LatticeVeil.Launcher
             _scene = null;
             try
             {
+                if (s.Holder != null) UnityEngine.Object.Destroy(s.Holder);
                 if (s.Camera != null) UnityEngine.Object.Destroy(s.Camera.gameObject);
                 if (s.Target != null) UnityEngine.Object.Destroy(s.Target);
                 if (s.Readback != null) UnityEngine.Object.Destroy(s.Readback);
@@ -147,22 +156,25 @@ namespace LatticeVeil.Launcher
             var flatMat = new Material(shader) { hideFlags = HideFlags.DontSave };
             flatMat.mainTexture = Texture2D.whiteTexture;
 
-            var root = new GameObject("SkinPreviewRoot");
-            root.hideFlags = HideFlags.DontSave;
+            var holder = new GameObject("SkinPreviewScene");
+            holder.hideFlags = HideFlags.DontSave;
+
+            var modelRoot = new GameObject("ModelRoot");
+            modelRoot.transform.SetParent(holder.transform, false);
 
             var baseTree = new GameObject("Base").transform;
-            baseTree.SetParent(root.transform, false);
+            baseTree.SetParent(modelRoot.transform, false);
             BuildModelTree(baseTree, modelMat, overlay: false);
 
             var overlayTree = new GameObject("Overlay").transform;
-            overlayTree.SetParent(root.transform, false);
+            overlayTree.SetParent(modelRoot.transform, false);
             overlayTree.localScale = new Vector3(OverlayScale, OverlayScale, OverlayScale);
             BuildModelTree(overlayTree, modelMat, overlay: true);
 
-            // Radial floor grid at the feet (CPU-renderer parity; the grid it draws
-            // at model feet level as a fan of thin lines).
+            // Radial floor grid at the feet - a SIBLING of the rotated model node so
+            // it never spins with the model (it is the floor, not part of the model).
             var gridGo = new GameObject("FloorGrid");
-            gridGo.transform.SetParent(root.transform, false);
+            gridGo.transform.SetParent(holder.transform, false);
             var gridFilter = gridGo.AddComponent<MeshFilter>();
             gridFilter.sharedMesh = BuildFloorGridMesh();
             var gridRenderer = gridGo.AddComponent<MeshRenderer>();
@@ -196,12 +208,13 @@ namespace LatticeVeil.Launcher
 
             // Hidden by default (and the camera component disabled): the scene is
             // only rendered on demand inside TryBakePreviewBGRA.
-            root.SetActive(false);
+            holder.SetActive(false);
             camera.enabled = false;
 
             _scene = new PreviewScene
             {
-                Root = root,
+                Holder = holder,
+                ModelRoot = modelRoot,
                 Overlay = overlayTree.gameObject,
                 Camera = camera,
                 Target = rt,
@@ -220,37 +233,58 @@ namespace LatticeVeil.Launcher
 
         private static void BuildModelTree(Transform parent, Material material, bool overlay)
         {
-            // Same part layout, UV slots and face shading as the CPU renderer
-            // (centers are already offset by the model's -1 center-of-rotation).
-            (Vector3 center, Vector3 size, RectInt top, RectInt bottom, RectInt left,
-                RectInt front, RectInt right, RectInt back, float shade)[] parts =
+            // Same part layout and UV slot binding as the CPU renderer. Rect arrays
+            // are in face order: +z(back), -z(front), -x(left), +x(right), +y(top), -y(bottom).
+            // Overlay rects are EXPLICIT per part - the head's hat layer lives in rows
+            // 0-16 (same rows as the base head), while body overlays sit 16px lower.
+            (Vector3 center, Vector3 size, RectInt[] baseRects, RectInt[] overlayRects, float shade)[] parts =
             {
-                (new Vector3(0f, 0.59f, 0f),   new Vector3(0.42f, 0.42f, 0.42f),
-                    new RectInt(8, 0, 8, 8),  new RectInt(16, 0, 8, 8), new RectInt(0, 8, 8, 8),
-                    new RectInt(8, 8, 8, 8),  new RectInt(16, 8, 8, 8), new RectInt(24, 8, 8, 8), 1.00f),
-                (new Vector3(0f, 0.07f, 0f),   new Vector3(0.52f, 0.70f, 0.30f),
-                    new RectInt(20, 16, 8, 4), new RectInt(28, 16, 8, 4), new RectInt(16, 20, 4, 12),
-                    new RectInt(20, 20, 8, 12), new RectInt(28, 20, 4, 12), new RectInt(32, 20, 8, 12), 0.96f),
+                // Head: base rows 0-16, hat layer also rows 0-16 (columns 32-63).
+                (new Vector3(0f, 0.59f, 0f), new Vector3(0.42f, 0.42f, 0.42f),
+                    new[] { new RectInt(24, 8, 8, 8), new RectInt(8, 8, 8, 8), new RectInt(0, 8, 8, 8),
+                            new RectInt(16, 8, 8, 8), new RectInt(8, 0, 8, 8), new RectInt(16, 0, 8, 8) },
+                    new[] { new RectInt(56, 8, 8, 8), new RectInt(40, 8, 8, 8), new RectInt(32, 8, 8, 8),
+                            new RectInt(48, 8, 8, 8), new RectInt(40, 0, 8, 8), new RectInt(48, 0, 8, 8) }, 1.00f),
+                // Torso: overlay rows = base rows + 16.
+                (new Vector3(0f, 0.07f, 0f), new Vector3(0.52f, 0.70f, 0.30f),
+                    new[] { new RectInt(32, 20, 8, 12), new RectInt(20, 20, 8, 12), new RectInt(16, 20, 4, 12),
+                            new RectInt(28, 20, 4, 12), new RectInt(20, 16, 8, 4), new RectInt(28, 16, 8, 4) },
+                    new[] { new RectInt(32, 36, 8, 12), new RectInt(20, 36, 8, 12), new RectInt(16, 36, 4, 12),
+                            new RectInt(28, 36, 4, 12), new RectInt(20, 32, 8, 4), new RectInt(28, 32, 8, 4) }, 0.96f),
+                // Left arm.
                 (new Vector3(-0.38f, 0.06f, 0f), new Vector3(0.24f, 0.72f, 0.24f),
-                    new RectInt(44, 16, 4, 4), new RectInt(48, 16, 4, 4), new RectInt(40, 20, 4, 12),
-                    new RectInt(44, 20, 4, 12), new RectInt(48, 20, 4, 12), new RectInt(52, 20, 4, 12), 0.92f),
+                    new[] { new RectInt(52, 20, 4, 12), new RectInt(44, 20, 4, 12), new RectInt(40, 20, 4, 12),
+                            new RectInt(48, 20, 4, 12), new RectInt(44, 16, 4, 4), new RectInt(48, 16, 4, 4) },
+                    new[] { new RectInt(52, 36, 4, 12), new RectInt(44, 36, 4, 12), new RectInt(40, 36, 4, 12),
+                            new RectInt(48, 36, 4, 12), new RectInt(44, 32, 4, 4), new RectInt(48, 32, 4, 4) }, 0.92f),
+                // Right arm.
                 (new Vector3(0.38f, 0.06f, 0f), new Vector3(0.24f, 0.72f, 0.24f),
-                    new RectInt(36, 48, 4, 4), new RectInt(40, 48, 4, 4), new RectInt(32, 52, 4, 12),
-                    new RectInt(36, 52, 4, 12), new RectInt(40, 52, 4, 12), new RectInt(44, 52, 4, 12), 0.92f),
+                    new[] { new RectInt(44, 52, 4, 12), new RectInt(36, 52, 4, 12), new RectInt(32, 52, 4, 12),
+                            new RectInt(40, 52, 4, 12), new RectInt(36, 48, 4, 4), new RectInt(40, 48, 4, 4) },
+                    new[] { new RectInt(60, 52, 4, 12), new RectInt(52, 52, 4, 12), new RectInt(48, 52, 4, 12),
+                            new RectInt(56, 52, 4, 12), new RectInt(52, 48, 4, 4), new RectInt(56, 48, 4, 4) }, 0.92f),
+                // Left leg.
                 (new Vector3(-0.13f, -0.64f, 0f), new Vector3(0.22f, 0.72f, 0.24f),
-                    new RectInt(4, 16, 4, 4),  new RectInt(8, 16, 4, 4),  new RectInt(0, 20, 4, 12),
-                    new RectInt(4, 20, 4, 12),  new RectInt(8, 20, 4, 12), new RectInt(12, 20, 4, 12), 0.88f),
+                    new[] { new RectInt(12, 20, 4, 12), new RectInt(4, 20, 4, 12), new RectInt(0, 20, 4, 12),
+                            new RectInt(8, 20, 4, 12), new RectInt(4, 16, 4, 4), new RectInt(8, 16, 4, 4) },
+                    new[] { new RectInt(12, 36, 4, 12), new RectInt(4, 36, 4, 12), new RectInt(0, 36, 4, 12),
+                            new RectInt(8, 36, 4, 12), new RectInt(4, 32, 4, 4), new RectInt(8, 32, 4, 4) }, 0.88f),
+                // Right leg.
                 (new Vector3(0.13f, -0.64f, 0f), new Vector3(0.22f, 0.72f, 0.24f),
-                    new RectInt(20, 48, 4, 4), new RectInt(24, 48, 4, 4), new RectInt(16, 52, 4, 12),
-                    new RectInt(20, 52, 4, 12), new RectInt(24, 52, 4, 12), new RectInt(28, 52, 4, 12), 0.88f),
+                    new[] { new RectInt(28, 52, 4, 12), new RectInt(20, 52, 4, 12), new RectInt(16, 52, 4, 12),
+                            new RectInt(24, 52, 4, 12), new RectInt(20, 48, 4, 4), new RectInt(24, 48, 4, 4) },
+                    new[] { new RectInt(12, 52, 4, 12), new RectInt(4, 52, 4, 12), new RectInt(0, 52, 4, 12),
+                            new RectInt(8, 52, 4, 12), new RectInt(4, 48, 4, 4), new RectInt(8, 48, 4, 4) }, 0.88f),
             };
 
             foreach (var part in parts)
             {
+                var rects = overlay ? part.overlayRects : part.baseRects;
+                var shade = overlay ? part.shade * 1.02f : part.shade;
+
                 var go = new GameObject(overlay ? "PartOverlay" : "Part");
                 go.transform.SetParent(parent, false);
-                var mesh = BuildPartMesh(part.center, part.size, part.top, part.bottom, part.left,
-                    part.front, part.right, part.back, part.shade, overlay);
+                var mesh = BuildPartMesh(part.center, part.size, rects, shade);
                 go.AddComponent<MeshFilter>().sharedMesh = mesh;
                 var renderer = go.AddComponent<MeshRenderer>();
                 renderer.sharedMaterial = material;
@@ -259,11 +293,9 @@ namespace LatticeVeil.Launcher
             }
         }
 
-        /// <summary>Six submeshes in the CPU renderer's face order: +z(back), -z(front),
-        /// -x(left), +x(right), +y(top), -y(bottom). Vertex colors carry the per-face shade.</summary>
-        private static Mesh BuildPartMesh(Vector3 center, Vector3 size,
-            RectInt top, RectInt bottom, RectInt left, RectInt front, RectInt right, RectInt back,
-            float partShade, bool overlay)
+        /// <summary>Six submeshes in face order: +z(back), -z(front), -x(left), +x(right),
+        /// +y(top), -y(bottom). Vertex colors carry the per-face shade.</summary>
+        private static Mesh BuildPartMesh(Vector3 center, Vector3 size, RectInt[] rects, float partShade)
         {
             float hx = size.x * 0.5f, hy = size.y * 0.5f, hz = size.z * 0.5f;
 
@@ -277,8 +309,6 @@ namespace LatticeVeil.Launcher
                 new[] { new Vector3(-hx, hy, hz), new Vector3( hx, hy, hz), new Vector3( hx, hy,-hz), new Vector3(-hx, hy,-hz) }, // +y -> top rect
                 new[] { new Vector3(-hx,-hy,-hz), new Vector3( hx,-hy,-hz), new Vector3( hx,-hy, hz), new Vector3(-hx,-hy, hz) }, // -y -> bottom rect
             };
-
-            var rects = new[] { back, front, left, right, top, bottom };
             var shades = new[] { 1.00f, 0.72f, 0.82f, 0.92f, 1.05f, 0.62f };
 
             var verts = new Vector3[24];
@@ -296,14 +326,6 @@ namespace LatticeVeil.Launcher
                     new Vector2(u0, vBottom), new Vector2(u1, vBottom),
                     new Vector2(u1, vTop), new Vector2(u0, vTop),
                 };
-
-                // Overlay layer stacks the same texture rows 16px lower (jacket layer).
-                if (overlay)
-                {
-                    float dy = 16f / TexSize;
-                    for (int c = 0; c < 4; c++)
-                        uvCorners[c] = new Vector2(uvCorners[c].x, uvCorners[c].y - dy);
-                }
 
                 float shade = partShade * shades[f];
                 for (int c = 0; c < 4; c++)
@@ -337,11 +359,11 @@ namespace LatticeVeil.Launcher
             const float radius = 0.95f;
             const float thickness = 0.012f;
 
-            var verts = new System.Collections.Generic.List<Vector3>(13 * 8);
-            var indices = new System.Collections.Generic.List<int>(13 * 12);
+            var verts = new System.Collections.Generic.List<Vector3>(13 * 4);
+            var indices = new System.Collections.Generic.List<int>(13 * 6);
             for (int i = 0; i < 13; i++)
             {
-                float ang = Mathf.PI * (i / 12f) + Mathf.PI; // back half keeping the fan subtle
+                float ang = Mathf.PI * (i / 12f) + Mathf.PI; // half facing the camera
                 var dir = new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang) * 0.45f);
                 var perp = new Vector3(-dir.z, 0f, dir.x).normalized * thickness;
                 var center = new Vector3(0f, y, 0f);

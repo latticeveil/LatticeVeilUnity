@@ -55,13 +55,13 @@ namespace LatticeVeil.Launcher
 
             try
             {
-                if (!EnsureScene()) return false;
+                if (!EnsureSceneV2()) return false;
 
                 var s = _scene;
                 if (s.ModelRoot == null || s.Camera == null || s.Target == null || !s.Target.IsCreated())
                 {
                     Shutdown(); // scene objects lost (e.g. after a domain reload)
-                    if (!EnsureScene()) return false;
+                    if (!EnsureSceneV2()) return false;
                     s = _scene;
                 }
 
@@ -139,7 +139,8 @@ namespace LatticeVeil.Launcher
 
         // ---------------- scene construction ----------------
 
-        private static bool EnsureScene()
+        // V2: grid outside the rotated node, explicit per-part overlay rects.
+        private static bool EnsureSceneV2()
         {
             if (_scene != null) return true;
 

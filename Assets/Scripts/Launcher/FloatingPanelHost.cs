@@ -161,7 +161,7 @@ namespace LatticeVeil.Launcher
         {
             public readonly Vector2 Mouse;
             public readonly bool Clicked;
-            public readonly float WheelDelta;
+            public float WheelDelta; // consumed via ConsumeWheel() so scroll and zoom stay exclusive
             internal IntPtr Hdc;
 
             public PanelUI(Vector2 mouse, bool clicked, float wheelDelta, IntPtr hdc)
@@ -173,6 +173,14 @@ namespace LatticeVeil.Launcher
             }
 
             public void Fill(Rect r, Color c) => PanelWin32.FillRect(Hdc, r, c);
+
+            /// <summary>Wheel motion not yet consumed by another widget (scroll vs zoom are exclusive).</summary>
+            public float ConsumeWheel()
+            {
+                var v = WheelDelta;
+                WheelDelta = 0f;
+                return v;
+            }
 
             public void Frame(Rect r, Color c)
             {
@@ -212,7 +220,7 @@ namespace LatticeVeil.Launcher
             public Rect BeginList(Rect viewport, float contentHeight, ref Vector2 scroll)
             {
                 if (viewport.Contains(Mouse))
-                    scroll.y = Mathf.Clamp(scroll.y - WheelDelta, 0, Mathf.Max(0, contentHeight - viewport.height));
+                    scroll.y = Mathf.Clamp(scroll.y - ConsumeWheel(), 0, Mathf.Max(0, contentHeight - viewport.height));
                 scroll.y = Mathf.Clamp(scroll.y, 0, Mathf.Max(0, contentHeight - viewport.height));
 
                 Fill(viewport, new Color(0.09f, 0.09f, 0.10f, 1f));
@@ -380,7 +388,7 @@ namespace LatticeVeil.Launcher
                 var notes = _selectedVersion?.Body ?? "";
                 float measured = PanelUI.MeasureWrappedTextHeight(notes, notesViewport.width - 8, 12);
                 float notesH = Mathf.Max(notesViewport.height, measured);
-                _notesScroll.y = Mathf.Clamp(_notesScroll.y - (notesViewport.Contains(ui.Mouse) ? ui.WheelDelta : 0),
+                _notesScroll.y = Mathf.Clamp(_notesScroll.y - (notesViewport.Contains(ui.Mouse) ? ui.ConsumeWheel() : 0),
                     0, Mathf.Max(0, notesH - notesViewport.height));
                 _notesScroll.y = Mathf.Clamp(_notesScroll.y, 0, Mathf.Max(0, notesH - notesViewport.height));
                 ui.Fill(notesViewport, RowBg);
@@ -474,11 +482,31 @@ namespace LatticeVeil.Launcher
 
         public class SkinsPanel : PanelContent
         {
+            // --- interactive 3D preview state (MonoGame parity) ---
+            private float _yaw = 0.42f;       // matches MonoGame default
+            private float _pitch = 0f;
+            private float _zoom = 1f;         // generator-relative; clamped 0.72..1.45 in DrawPreview
+            private float _autoSpin;          // idle rotation, seconds accumulated
+            private bool _layers = true;
             private string[] _skinPaths = Array.Empty<string>();
             private Vector2 _skinScroll = Vector2.zero;
             private string _selectedSkinPath;
             private string _statusMessage = "";
             private bool _uploadQueued;
+
+            // --- baked bitmap cache (CPU-rendered 3D preview -> GDI) ---
+            private class PreviewBitmap
+            {
+                public byte[] Pixels;      // BGRA, top-down, generator-sized
+                public int Width, Height;
+                public string SkinPath;    // identity of the baked source
+                public bool Layers;
+                public float Zoom; // orientation params were baked in too; rebuilt on change
+                public float Yaw, Pitch;
+            }
+
+            private static readonly Dictionary<string, PreviewBitmap> _previewCache =
+                new Dictionary<string, PreviewBitmap>();
 
             public SkinsPanel(Core.Logger log) : base(log) { }
 
@@ -537,24 +565,119 @@ namespace LatticeVeil.Launcher
                 ui.Frame(previewRect, new Color(0.16f, 0.16f, 0.18f));
 
                 var previewViewport = new Rect(previewRect.x + 16, previewRect.y + 16, previewRect.width - 32, previewRect.height - 84);
-                if (_selectedSkinPath == null || !ui.Image(previewViewport, _selectedSkinPath))
-                    ui.Label(new Rect(previewRect.x + 16, previewRect.y + 16, previewRect.width - 32, 60),
-                        "Select a skin from the list.", 12, Dim, wrap: true);
-
-                // Auto-select the skin the game is actually wearing on first open.
-                if (_selectedSkinPath == null && !string.IsNullOrWhiteSpace(activeHash))
-                    _selectedSkinPath = _skinPaths.FirstOrDefault(path =>
-                        string.Equals(Path.GetFileNameWithoutExtension(path), activeHash, StringComparison.OrdinalIgnoreCase));
+                DrawPreview(ui, previewViewport, panelRect);
 
                 if (!string.IsNullOrEmpty(_statusMessage))
                     ui.Label(new Rect(16, panelRect.height - 40, panelRect.width - 32, 26), _statusMessage, 12, Dim);
 
-                if (ui.Button(new Rect(previewRect.x + 16, previewRect.y + previewRect.height - 52, 120, 38), "UPLOAD", 12, BtnBg, BtnHover, Text))
+                var buttonRowY = previewRect.y + previewRect.height - 52;
+                if (ui.Button(new Rect(previewRect.x + 16, buttonRowY, 120, 38), "RECENTER", 12, BtnBg, BtnHover, Text))
+                {
+                    _yaw = 0.42f; _pitch = 0f; _zoom = 1f; _autoSpin = 0f;
+                }
+                if (ui.Button(new Rect(previewRect.x + 148, buttonRowY, 120, 38), _layers ? "LAYERS: ON" : "LAYERS: OFF", 12, BtnBg, BtnHover, Text))
+                    _layers = !_layers;
+                if (ui.Button(new Rect(previewRect.x + 280, buttonRowY, 96, 38), "UPLOAD", 12, BtnBg, BtnHover, Text))
                     _uploadQueued = true;
-                if (ui.Button(new Rect(previewRect.x + 148, previewRect.y + previewRect.height - 52, 120, 38), "FOLDER", 12, BtnBg, BtnHover, Text))
+                if (ui.Button(new Rect(previewRect.x + 388, buttonRowY, 96, 38), "FOLDER", 12, BtnBg, BtnHover, Text))
                 {
                     try { Process.Start("explorer.exe", Core.Paths.UserSkinsDir); } catch { }
                 }
+            }
+
+            /// <summary>
+            /// Interactive 3D player preview (MonoGame-parity software renderer).
+            /// Left-drag / right-dag rotates; wheel zooms; RECENTER/LAYERS controls. Idle auto-spin.
+            /// Renders through PlayerSkinPreviewGenerator into a cached BGRA buffer, blitted via GDI.
+            /// </summary>
+            private void DrawPreview(PanelUI ui, Rect viewport, Rect panelRect)
+            {
+                if (panelRect.width - 448 >= 60 && panelRect.height - HeaderH - 24 >= 60)
+                {
+                    // Drag rotation (hot while button held, so it also works outside the viewport).
+                    if (PanelWin32.IsDragging)
+                    {
+                        _yaw += PanelWin32.DragDeltaX * 0.8f;             // ~0.8 deg per pixel (MonoGame: 0.014 rad)
+                        _pitch = Mathf.Clamp(_pitch + PanelWin32.DragDeltaY * 0.8f, -55f, 55f);
+                        _autoSpin = 0f;
+                    }
+                    else
+                    {
+                        _autoSpin += Time.deltaTime; // reset by drags; keeps idle spin monotonic
+                        if (_autoSpin > 3f) _yaw += Time.deltaTime * 12f; // slow idle spin after 3s idle
+                    }
+
+                    // Wheel zoom (exclusive against list scrolling via ConsumeWheel).
+                    if (viewport.Contains(ui.Mouse))
+                    {
+                        var wheel = ui.ConsumeWheel();
+                        if (Mathf.Abs(wheel) > 0.01f)
+                            _zoom = Mathf.Clamp(_zoom + Mathf.Sign(wheel) * 0.08f, 0.72f, 1.45f);
+
+                        // Click-to-select: clicking the preview selects the currently shown file.
+                        if (ui.Clicked && _selectedSkinPath == null && _skinPaths.Length > 0)
+                            _selectedSkinPath = _skinPaths[0];
+                    }
+
+                    // Bake (or re-bake after pose change) the 3D render for the selected skin.
+                    var skinTex = LoadSkinTexture(_selectedSkinPath);
+                    if (skinTex != null)
+                    {
+                        var key = _selectedSkinPath ?? "default";
+                        if (!_previewCache.TryGetValue(key, out var bmp) || bmp == null ||
+                            bmp.SkinPath != key || bmp.Layers != _layers || bmp.Zoom != _zoom ||
+                            !Mathf.Approximately(bmp.Yaw, _yaw) || !Mathf.Approximately(bmp.Pitch, _pitch))
+                        {
+                            var rgba = PlayerSkinPreviewGenerator.GetPreviewPixels(skinTex, _yaw, _pitch, _layers, _zoom);
+                            if (rgba != null)
+                                _previewCache[key] = new PreviewBitmap { Pixels = SwapRgbToBgra(rgba), Width = PlayerSkinPreviewGenerator.PreviewWidth, Height = PlayerSkinPreviewGenerator.PreviewHeight, SkinPath = key, Layers = _layers, Zoom = _zoom, Yaw = _yaw, Pitch = _pitch };
+                            else
+                                _previewCache.Remove(key);
+                        }
+
+                        if (_previewCache.TryGetValue(key, out var cached) && cached?.Pixels != null)
+                        {
+                            // Fit-preserve-aspect blit into the viewport.
+                            var drawRect = FitInto(cached.Width, cached.Height, viewport);
+                            PanelWin32.DrawPixelsScaled(ui.Hdc, drawRect, cached.Pixels, cached.Width, cached.Height);
+                        }
+                    }
+                }
+
+            }
+
+            /// <summary>Aspect-preserving fit of a w×h image into r.</summary>
+            private static Rect FitInto(int w, int h, Rect r)
+            {
+                float scale = Mathf.Min(r.width / w, r.height / h);
+                float dw = w * scale, dh = h * scale;
+                return new Rect(r.x + (r.width - dw) * 0.5f, r.y + (r.height - dh) * 0.5f, dw, dh);
+            }
+
+            /// <summary>RGBA bytes (Unity GetPixels32 order) → BGRA for GDI, mutated in place.</summary>
+            private static byte[] SwapRgbToBgra(byte[] rgba)
+            {
+                for (int i = 0; i + 3 < rgba.Length; i += 4)
+                {
+                    var t = rgba[i];
+                    rgba[i] = rgba[i + 2];
+                    rgba[i + 2] = t;
+                }
+                return rgba;
+            }
+
+            private static Texture2D LoadSkinTexture(string path)
+            {
+                Texture2D tex;
+                if (string.IsNullOrEmpty(path))
+                {
+                    tex = DefaultPlayerSkinFactory.CreateTexture();
+                }
+                else
+                {
+                    SkinManager.ValidateSkinFile(path, out tex, out _, out _);
+                }
+                return tex;
             }
 
             private void DrawSkinRow(PanelUI ui, Rect row, string displayName, string path, bool isActive, string useText)
@@ -641,16 +764,74 @@ namespace LatticeVeil.Launcher
 
             private const int WM_DESTROY = 0x0002;
             private const int WM_PAINT = 0x000F;
+            private const int WM_SETCURSOR = 0x0020;
             private const int WM_ERASEBKGND = 0x0014;
             private const int WM_LBUTTONDOWN = 0x0201;
             private const int WM_LBUTTONUP = 0x0202;
+            private const int WM_MOUSEMOVE = 0x0200;
             private const int WM_MOUSEWHEEL = 0x020A;
             private const int WM_NCHITTEST = 0x0084;
+            private const int WM_CAPTURECHANGED = 0x0215;
+            private const int WM_RBUTTONDOWN = 0x0204;
+            private const int WM_RBUTTONUP = 0x0205;
+
+            private const int RDW_INVALIDATE = 0x0001;
+            private const int RDW_UPDATENOW = 0x0080;
+            private const int RDW_NOFRAME = 0x0800;
+
+            [DllImport("user32.dll")]
+            private static extern bool RedrawWindow(IntPtr hWnd, IntPtr lprcUpdate, IntPtr hrgnUpdate, uint flags);
 
             private const int HTCLIENT = 1;
             private const int HTCAPTION = 2;
 
             private const uint SRCCOPY = 0x00CC0020;
+
+            private const int BI_RGB = 0;
+            private const int DIB_RGB_COLORS = 0;
+            private const int HORZRES = 8;
+            private const int VERTRES = 10;
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct BITMAPINFOHEADER
+            {
+                public uint biSize;
+                public int biWidth;
+                public int biHeight;
+                public ushort biPlanes;
+                public ushort biBitCount;
+                public uint biCompression;
+                public uint biSizeImage;
+                public int biXPelsPerMeter;
+                public int biYPelsPerMeter;
+                public uint biClrUsed;
+                public uint biClrImportant;
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct BITMAPINFO
+            {
+                public BITMAPINFOHEADER bmiHeader;
+                public uint bmiColors; // unused for 32bpp BI_RGB
+            }
+
+            // ---- drag input state (settled by GetInput) ----
+            private static bool _dragging;
+            private static int _dragButton; // 1 = left, 2 = right
+            private static int _lastMouseX, _lastDragY;
+            private static Vector2 _deltaAccum; // pending mouse-move deltas since the last frame
+
+            [DllImport("user32.dll", SetLastError = true)]
+            private static extern IntPtr SetCapture(IntPtr hWnd);
+
+            [DllImport("user32.dll")]
+            private static extern bool ReleaseCapture();
+
+            [DllImport("user32.dll")]
+            private static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
+
+            [DllImport("user32.dll")]
+            private static extern IntPtr SetCursor(IntPtr hCursor);
 
             // DrawText flags
             private const uint DT_CENTER = 0x1;
@@ -784,6 +965,20 @@ namespace LatticeVeil.Launcher
             private static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight,
                 IntPtr hdcSrc, int nXSrc, int nYSrc, uint dwRop);
 
+            [DllImport("gdi32.dll")]
+            private static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
+
+            [DllImport("gdi32.dll")]
+            private static extern int SetDIBitsToDevice(IntPtr hdc, int XDest, int YDest,
+                uint dwWidth, uint dhHeight, int XSrc, int YSrc,
+                uint uStartScan, uint cScanLines,
+                byte[] lpvBits, [In] ref BITMAPINFO lpbmi, uint fuColorUse);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool StretchDIBits(IntPtr hdc, int XDest, int YDest, int DestWidth, int DestHeight,
+                int XSrc, int YSrc, int SrcWidth, int SrcHeight, byte[] lpBits,
+                [In] ref BITMAPINFO lpbmi, uint iUsage, uint dwRop);
+
             // ---- GDI+ (PNG thumbnails) ----
             [StructLayout(LayoutKind.Sequential)]
             private struct GdiplusStartupInput
@@ -907,7 +1102,18 @@ namespace LatticeVeil.Launcher
                 clicked = System.Threading.Interlocked.Exchange(ref _clickQueued, 0) == 1;
                 wheelDelta = _wheelAccum;
                 _wheelAccum = 0f;
+
+                DragDeltaX = _deltaAccum.x;
+                DragDeltaY = _deltaAccum.y;
+                _deltaAccum = Vector2.zero;
             }
+
+            /// <summary>Pending mouse-motion deltas while a button is held (drag rotation), consumed by GetInput.</summary>
+            public static float DragDeltaX;
+            /// <summary>Pending vertical drag delta.</summary>
+            public static float DragDeltaY;
+            /// <summary>True while a mouse button is held down on the panel (drag in progress).</summary>
+            public static bool IsDragging => _dragging;
 
             // ---------------- drawing ----------------
 
@@ -1047,6 +1253,36 @@ namespace LatticeVeil.Launcher
 
             public static void PopClip(IntPtr hdc) => RestoreDC(hdc, -1);
 
+            /// <summary>Blits a row-order-agnostic 32bpp BGRA buffer at 1:1. Buffer must be w*h*4 bytes.</summary>
+            public static void DrawPixels(IntPtr hdc, Rect r, byte[] bgra, int w, int h, bool topDown)
+            {
+                if (bgra == null || bgra.Length < w * h * 4 || w <= 0 || h <= 0) return;
+                var bmi = new BITMAPINFO();
+                bmi.bmiHeader.biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>();
+                bmi.bmiHeader.biWidth = w;
+                bmi.bmiHeader.biHeight = topDown ? -h : h; // negative = top-down
+                bmi.bmiHeader.biPlanes = 1;
+                bmi.bmiHeader.biBitCount = 32;
+                bmi.bmiHeader.biCompression = BI_RGB;
+                SetDIBitsToDevice(hdc, (int)r.x, (int)r.y, (uint)w, (uint)h,
+                    0, 0, 0, (uint)h, bgra, ref bmi, DIB_RGB_COLORS);
+            }
+
+            /// <summary>Scales a top-down 32bpp BGRA buffer into the destination rect (bilinear-ish via GDI Stretch).</summary>
+            public static void DrawPixelsScaled(IntPtr hdc, Rect r, byte[] bgra, int srcW, int srcH)
+            {
+                if (bgra == null || bgra.Length < srcW * srcH * 4 || srcW <= 0 || srcH <= 0) return;
+                var bmi = new BITMAPINFO();
+                bmi.bmiHeader.biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>();
+                bmi.bmiHeader.biWidth = srcW;
+                bmi.bmiHeader.biHeight = -srcH; // top-down
+                bmi.bmiHeader.biPlanes = 1;
+                bmi.bmiHeader.biBitCount = 32;
+                bmi.bmiHeader.biCompression = BI_RGB;
+                StretchDIBits(hdc, (int)r.x, (int)r.y, (int)r.width, (int)r.height,
+                    0, 0, srcW, srcH, bgra, ref bmi, DIB_RGB_COLORS, SRCCOPY);
+            }
+
             public static bool DrawImage(IntPtr hdc, Rect r, string path)
             {
                 if (string.IsNullOrEmpty(path) || r.width < 2 || r.height < 2) return false;
@@ -1120,10 +1356,50 @@ namespace LatticeVeil.Launcher
                 {
                     case WM_LBUTTONDOWN:
                         System.Threading.Interlocked.Exchange(ref _clickQueued, 1);
+                        _dragging = true; _dragButton = 1;
+                        _lastMouseX = (short)(lParam.ToInt64() & 0xFFFF);
+                        _lastDragY = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
+                        SetCapture(hWnd);
+                        return IntPtr.Zero;
+
+                    case WM_RBUTTONDOWN:
+                        _dragging = true; _dragButton = 2;
+                        _lastMouseX = (short)(lParam.ToInt64() & 0xFFFF);
+                        _lastDragY = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
+                        SetCapture(hWnd);
+                        return IntPtr.Zero;
+
+                    case WM_MOUSEMOVE:
+                        if (_dragging)
+                        {
+                            int x = (short)(lParam.ToInt64() & 0xFFFF);
+                            int y = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
+                            _deltaAccum.x += x - _lastMouseX;
+                            _deltaAccum.y += y - _lastDragY;
+                            _lastMouseX = x; _lastDragY = y;
+                        }
+                        // Queue an OS paint request so dragging repaints without
+                        // drawing inside the native callback (re-entrancy hazard).
+                        if (_deltaAccum.sqrMagnitude > 0f)
+                            RedrawWindow(hWnd, IntPtr.Zero, IntPtr.Zero,
+                                (uint)(RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOFRAME));
                         return IntPtr.Zero;
 
                     case WM_LBUTTONUP:
+                    case WM_RBUTTONUP:
+                    case WM_CAPTURECHANGED:
+                        _dragging = false;
+                        _dragButton = 0;
                         return IntPtr.Zero;
+
+                    case WM_SETCURSOR:
+                        // Default cursor; content could swap it per hit-test later.
+                        if (((lParam.ToInt64() & 0xFFFF) & 0x00000001) != 0 /*HTCLIENT*/) // loword == HTCLIENT
+                        {
+                            SetCursor(LoadCursor(IntPtr.Zero, (IntPtr)32512 /* IDC_ARROW */));
+                            return (IntPtr)1;
+                        }
+                        break;
 
                     case WM_MOUSEWHEEL:
                         short delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);

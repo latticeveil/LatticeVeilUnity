@@ -1204,7 +1204,10 @@ namespace LatticeVeil.Launcher
                             if (string.Equals(_selectedSkinPath, path)) _selectedSkinPath = null;
                             _statusMessage = $"Removed {displayName}.";
                         }
-                        catch { }
+                        catch
+                        {
+                            _statusMessage = $"Could not remove {displayName} (file may be in use).";
+                        }
                     }
                 }
             }
@@ -1508,8 +1511,8 @@ namespace LatticeVeil.Launcher
 
             private static readonly Dictionary<long, IntPtr> BrushCache = new Dictionary<long, IntPtr>();
             private static readonly Dictionary<long, IntPtr> FontCache = new Dictionary<long, IntPtr>();
-            private static readonly Dictionary<string, Tuple<IntPtr, DateTime>> ImageCache =
-                new Dictionary<string, Tuple<IntPtr, DateTime>>(StringComparer.OrdinalIgnoreCase);
+            private static readonly Dictionary<string, Tuple<byte[], int, int, DateTime>> ImageCache =
+                new Dictionary<string, Tuple<byte[], int, int, DateTime>>(StringComparer.OrdinalIgnoreCase);
             private static IntPtr _gdiplusToken = IntPtr.Zero;
             private static bool _gdiplusReady;
 
@@ -1778,41 +1781,72 @@ namespace LatticeVeil.Launcher
             {
                 if (string.IsNullOrEmpty(path) || r.width < 2 || r.height < 2) return false;
                 if (!File.Exists(path)) { DropImage(path); return false; }
-                if (!EnsureGdiplus()) return false;
 
                 DateTime mtime;
                 try { mtime = File.GetLastWriteTimeUtc(path); } catch { return false; }
 
-                if (!ImageCache.TryGetValue(path, out var entry) || entry == null || entry.Item2 != mtime)
+                if (!ImageCache.TryGetValue(path, out var entry) || entry == null || entry.Item4 != mtime)
                 {
-                    if (entry != null) GdipDisposeImage(entry.Item1);
-                    if (GdipCreateBitmapFromFile(path, out var bmp) != 0 || bmp == IntPtr.Zero)
+                    // Decode via Unity instead of GdipCreateBitmapFromFile: GDI+ keeps
+                    // the source FILE locked for the lifetime of the bitmap, which made
+                    // re-importing/uploading a displayed skin fail with a sharing
+                    // violation. Caching decoded BGRA bytes locks nothing.
+                    try
+                    {
+                        byte[] png;
+                        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                        using (var ms = new MemoryStream())
+                        {
+                            fs.CopyTo(ms);
+                            png = ms.ToArray();
+                        }
+
+                        var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                        if (!tex.LoadImage(png))
+                        {
+                            UnityEngine.Object.Destroy(tex);
+                            ImageCache.Remove(path);
+                            return false;
+                        }
+                        var pixels = tex.GetPixels32();
+                        int w = tex.width, h = tex.height;
+                        UnityEngine.Object.Destroy(tex);
+
+                        var bgra = new byte[w * h * 4];
+                        for (int y = 0; y < h; y++) // flip: Unity rows are bottom-up, GDI wants top-down
+                        {
+                            var src = (h - 1 - y) * w;
+                            var dst = y * w * 4;
+                            for (int x = 0; x < w; x++)
+                            {
+                                var c = pixels[src + x];
+                                int i = dst + x * 4;
+                                bgra[i + 0] = c.b; bgra[i + 1] = c.g;
+                                bgra[i + 2] = c.r; bgra[i + 3] = c.a;
+                            }
+                        }
+
+                        entry = Tuple.Create(bgra, w, h, mtime);
+                        ImageCache[path] = entry;
+                    }
+                    catch
                     {
                         ImageCache.Remove(path);
                         return false;
                     }
-                    entry = Tuple.Create(bmp, mtime);
-                    ImageCache[path] = entry;
                 }
 
-                if (GdipCreateFromHDC(hdc, out var gfx) != 0) return false;
-                GdipSetInterpolationMode(gfx, 7 /*HighQualityBicubic*/);
-                GdipDrawImageRectI(gfx, entry.Item1, (int)r.x, (int)r.y, (int)r.width, (int)r.height);
-                GdipDeleteGraphics(gfx);
+                DrawPixelsScaled(hdc, r, entry.Item1, entry.Item2, entry.Item3);
                 return true;
             }
 
             private static void DropImage(string path)
             {
-                if (ImageCache.TryGetValue(path, out var entry) && entry != null)
-                    GdipDisposeImage(entry.Item1);
                 ImageCache.Remove(path);
             }
 
             public static void DisposeImages()
             {
-                foreach (var entry in ImageCache.Values)
-                    if (entry != null) GdipDisposeImage(entry.Item1);
                 ImageCache.Clear();
             }
 

@@ -195,13 +195,13 @@ namespace LatticeVeil.Launcher
                     if (!string.IsNullOrWhiteSpace(cleanName))
                     {
                         var namedUserPng = Path.Combine(userSkinsDir, $"{cleanName}.png");
-                        File.WriteAllBytes(namedUserPng, bytes);
+                        WriteAllBytesResilient(namedUserPng, bytes);
                     }
                 }
                 else
                 {
                     var destUserPng = Path.Combine(userSkinsDir, $"{hash}.png");
-                    File.WriteAllBytes(destUserPng, bytes);
+                    WriteAllBytesResilient(destUserPng, bytes);
                 }
 
                 // 2. Save to Runtime Skins Dir (AppData/Roaming/LatticeVeil/Runtime/skins)
@@ -212,13 +212,13 @@ namespace LatticeVeil.Launcher
                 BackupCurrentSkin();
 
                 var destPng = Path.Combine(runtimeSkinsDir, $"{hash}.png");
-                File.WriteAllBytes(destPng, bytes);
+                WriteAllBytesResilient(destPng, bytes);
 
                 // Set active.txt
-                File.WriteAllText(Paths.ActiveSkinHashPath, hash);
+                WriteAllTextResilient(Paths.ActiveSkinHashPath, hash);
 
                 // Touch signal
-                try { File.WriteAllText(Paths.SkinChangeSignalPath, hash); } catch { }
+                try { WriteAllTextResilient(Paths.SkinChangeSignalPath, hash); } catch { }
 
                 return true;
             }
@@ -381,6 +381,41 @@ namespace LatticeVeil.Launcher
                     : string.Empty;
             }
             catch { return string.Empty; }
+        }
+
+        /// <summary>SHA-256 (lowercase hex) of raw skin PNG bytes - matches ValidateSkinFile.</summary>
+        public static string HashPngBytes(byte[] bytes)
+        {
+            using (var sha = SHA256.Create())
+            {
+                var hashBytes = sha.ComputeHash(bytes);
+                var sb = new StringBuilder(hashBytes.Length * 2);
+                foreach (var b in hashBytes) sb.Append(b.ToString("x2"));
+                return sb.ToString();
+            }
+        }
+
+        /// <summary>
+        /// Writes with a short retry on IOException: the game client (or a thumbnail
+        /// reader) can hold the skin file open with a sharing lock for a moment, and
+        /// an immediate overwrite would throw "sharing violation".
+        /// </summary>
+        private static void WriteAllBytesResilient(string path, byte[] bytes)
+        {
+            for (int attempt = 0; ; attempt++)
+            {
+                try { File.WriteAllBytes(path, bytes); return; }
+                catch (IOException) when (attempt < 4) { System.Threading.Thread.Sleep(25 * (attempt + 1)); }
+            }
+        }
+
+        private static void WriteAllTextResilient(string path, string contents)
+        {
+            for (int attempt = 0; ; attempt++)
+            {
+                try { File.WriteAllText(path, contents); return; }
+                catch (IOException) when (attempt < 4) { System.Threading.Thread.Sleep(25 * (attempt + 1)); }
+            }
         }
     }
 }

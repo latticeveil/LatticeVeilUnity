@@ -3684,10 +3684,119 @@ namespace LatticeVeil.Launcher
 
                 _supabaseSkinClient = new SupabaseSkinClient(functionsUrl, anonKey, _veilnetToken, _httpClient);
                 _log?.Info($"[SupabaseSkin] Client ready (Functions: {functionsUrl})");
+                StartAutoSkinSync();
             }
             catch (Exception ex)
             {
                 _log?.Warn($"[SupabaseSkin] Init failed: {ex.Message}");
+            }
+        }
+
+        private bool _autoSkinSyncRunning;
+
+        /// <summary>
+        /// Auto-fetches the online skin after login/session restore. If the online
+        /// skin differs from the local active one AND the local one matches what we
+        /// last uploaded (or is default), the online copy is newer and is applied
+        /// automatically - the runtime skin + signal file update, so the game
+        /// displays the current online skin. If the local skin is something else
+        /// (possibly newer, not yet uploaded) we never clobber it; the skins panel's
+        /// SYNC dialog asks the user which is the latest instead.
+        /// </summary>
+        private void StartAutoSkinSync()
+        {
+            if (_autoSkinSyncRunning) return;
+            _autoSkinSyncRunning = true;
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                SupabaseSkinClient.FetchResult fetch = null;
+                try
+                {
+                    var client = _supabaseSkinClient;
+                    if (client != null)
+                        fetch = await client.FetchSkinAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _log?.Warn($"[SupabaseSkin] Auto-sync fetch failed: {ex.Message}");
+                }
+                EnqueueMainThread(() =>
+                {
+                    _autoSkinSyncRunning = false;
+                    ApplyAutoFetchedSkin(fetch);
+                });
+            });
+        }
+
+        private void ApplyAutoFetchedSkin(SupabaseSkinClient.FetchResult fetch)
+        {
+            try
+            {
+                if (fetch == null || !fetch.Success)
+                {
+                    if (fetch != null && !string.IsNullOrEmpty(fetch.Error))
+                        _log?.Warn($"[SupabaseSkin] Auto-sync fetch error: {fetch.Error}");
+                    return;
+                }
+                if (!fetch.HasSkin || fetch.PngBytes == null || fetch.PngBytes.Length == 0)
+                {
+                    _log?.Info("[SupabaseSkin] Auto-sync: online skin is default; leaving local active skin as-is.");
+                    return;
+                }
+
+                var onlineHash = SkinManager.HashPngBytes(fetch.PngBytes);
+                var activeHash = string.Empty;
+                try
+                {
+                    if (File.Exists(Paths.ActiveSkinHashPath))
+                        activeHash = File.ReadAllText(Paths.ActiveSkinHashPath).Trim();
+                }
+                catch { }
+
+                if (string.Equals(activeHash, onlineHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    _log?.Info("[SupabaseSkin] Auto-sync: local active skin already matches the online skin.");
+                    return;
+                }
+
+                var uploadedMarker = SkinManager.TryReadUploadedSkinHash();
+                bool localDefault = string.IsNullOrWhiteSpace(activeHash)
+                    || string.Equals(activeHash, "default_skin", StringComparison.OrdinalIgnoreCase);
+                bool onlineIsNewer = localDefault
+                    || (!string.IsNullOrWhiteSpace(uploadedMarker)
+                        && string.Equals(activeHash, uploadedMarker, StringComparison.OrdinalIgnoreCase));
+
+                if (!onlineIsNewer)
+                {
+                    _log?.Info("[SupabaseSkin] Auto-sync: local skin differs from online and may be newer; not overwriting. Use SYNC in the skins panel to choose.");
+                    return;
+                }
+
+                Directory.CreateDirectory(Paths.UserSkinsDir);
+                var tempPath = Path.Combine(Paths.UserSkinsDir, ".temp_veilnet_skin.png");
+                try
+                {
+                    File.WriteAllBytes(tempPath, fetch.PngBytes);
+                    if (SkinManager.ImportAndSetActiveSkin(tempPath, out var importErr, out _, "Veilnet_skin"))
+                    {
+                        SkinManager.MarkSkinUploaded(onlineHash);
+                        _skinStatusMessage = "Online skin fetched and applied automatically.";
+                        RefreshSkinModalPreview();
+                        _log?.Info($"[SupabaseSkin] Auto-sync applied online skin: {onlineHash}");
+                    }
+                    else
+                    {
+                        _log?.Warn($"[SupabaseSkin] Auto-sync import failed: {importErr}");
+                    }
+                }
+                finally
+                {
+                    try { File.Delete(tempPath); } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                _log?.Warn($"[SupabaseSkin] Auto-sync apply failed: {ex.Message}");
             }
         }
 

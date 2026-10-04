@@ -494,6 +494,7 @@ namespace LatticeVeil.Launcher
             private string _selectedSkinPath;
             private string _statusMessage = "";
             private bool _uploadQueued;
+            private bool _bakePathLogged;
 
             // Last baked pose; the renderer only runs when this differs.
             private string _bakedKey;
@@ -624,6 +625,12 @@ namespace LatticeVeil.Launcher
                 var skinTex = LoadSkinTexture(_selectedSkinPath);
                 if (skinTex != null)
                 {
+                    if (!_bakePathLogged)
+                    {
+                        _bakePathLogged = true;
+                        Log?.Info($"Skin preview render path: {(PlayerSkinPreview3D.Available ? "GPU" : "CPU fallback")}");
+                    }
+
                     var key = _selectedSkinPath ?? "default";
                     bool poseChanged = _layers != _lastBakedLayers || _zoom != _lastBakedZoom ||
                                        !Mathf.Approximately(_yaw, _lastBakedYaw) ||

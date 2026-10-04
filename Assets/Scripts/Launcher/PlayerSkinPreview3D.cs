@@ -42,6 +42,10 @@ namespace LatticeVeil.Launcher
         }
 
         private static PreviewScene _scene;
+        private static bool _diagnosticsLogged;
+
+        /// <summary>True when the GPU scene initialized successfully (false = CPU fallback in use).</summary>
+        public static bool Available => _scene != null;
 
         /// <summary>Renders the preview on the GPU and writes a 32bpp top-down BGRA buffer
         /// for GDI. Same contract as PlayerSkinPreviewGenerator.TryBakePreviewBGRA.</summary>
@@ -109,6 +113,7 @@ namespace LatticeVeil.Launcher
                         destination[dIdx + 3] = raw[sIdx + 3]; // A
                     }
                 }
+                LogFirstBakeDiagnostics(s, destination);
                 return true;
             }
             catch (Exception e)
@@ -116,6 +121,62 @@ namespace LatticeVeil.Launcher
                 UnityEngine.Debug.LogWarning($"[PlayerSkinPreview3D] GPU preview unavailable, using CPU fallback: {e.Message}");
                 Shutdown();
                 return false;
+            }
+        }
+
+        /// <summary>One-shot diagnostics: pixel-art silhouette of the first bake plus the
+        /// full scene state, so a player-side rendering problem is visible in Player.log.</summary>
+        private static void LogFirstBakeDiagnostics(PreviewScene s, byte[] dest)
+        {
+            if (_diagnosticsLogged) return;
+            _diagnosticsLogged = true;
+            try
+            {
+                var sb = new System.Text.StringBuilder();
+                string ramp = " .:-=+*#%@";
+                for (int by = 0; by < 24; by++)
+                {
+                    for (int bx = 0; bx < 60; bx++)
+                    {
+                        float mx = 0f;
+                        for (int yy = by * (Height / 24); yy < (by + 1) * (Height / 24); yy++)
+                            for (int xx = bx * (Width / 60); xx < (bx + 1) * (Width / 60); xx++)
+                            {
+                                int o = (yy * Width + xx) * 4;
+                                float l = (dest[o] + dest[o + 1] + dest[o + 2]) / 765f;
+                                if (l > mx) mx = l;
+                            }
+                        sb.Append(ramp[Mathf.Clamp((int)(mx * ramp.Length), 0, ramp.Length - 1)]);
+                    }
+                    sb.Append('\n');
+                }
+
+                var cam = s.Camera.transform;
+                var dumpPng = "not written";
+                try
+                {
+                    var cols = new Color32[Width * Height];
+                    for (int i = 0; i < cols.Length; i++)
+                        cols[i] = new Color32(dest[i * 4 + 2], dest[i * 4 + 1], dest[i * 4], 255);
+                    var png = new Texture2D(Width, Height, TextureFormat.RGBA32, false);
+                    png.SetPixels32(cols);
+                    png.Apply();
+                    var path = System.IO.Path.Combine(Application.persistentDataPath, "skin3d_first_bake.png");
+                    System.IO.File.WriteAllBytes(path, png.EncodeToPNG());
+                    UnityEngine.Object.Destroy(png);
+                    dumpPng = path;
+                }
+                catch (Exception pngEx) { dumpPng = "png dump failed: " + pngEx.Message; }
+
+                UnityEngine.Debug.Log("[Skin3D] first bake diagnostics\n" + sb.ToString()
+                    + $"cam pos={cam.position} rot={cam.rotation.eulerAngles} ortho={s.Camera.orthographic} size={s.Camera.orthographicSize} aspect={s.Camera.aspect}\n"
+                    + $"modelRoot rot={s.ModelRoot.transform.localRotation.eulerAngles} lossyScale={s.ModelRoot.transform.lossyScale}\n"
+                    + $"holderActive={s.Holder.activeSelf} overlayActive={s.Overlay.activeSelf} rtSize={s.Target.width}x{s.Target.height}\n"
+                    + $"png=" + dumpPng);
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning("[Skin3D] diagnostics failed: " + ex.Message);
             }
         }
 

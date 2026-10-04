@@ -613,7 +613,9 @@ namespace LatticeVeil.Launcher
                 if (rotateDrag)
                 {
                     _yaw += PanelWin32.DragDeltaX * 0.8f;             // ~0.8 deg per pixel (MonoGame: 0.014 rad)
-                    _pitch = Mathf.Clamp(_pitch + PanelWin32.DragDeltaY * 0.8f, -55f, 55f);
+                    // Screen-drag down should tilt the camera toward the model's
+                    // top; the renderer's pitch sign is opposite, so negate.
+                    _pitch = Mathf.Clamp(_pitch - PanelWin32.DragDeltaY * 0.8f, -55f, 55f);
                 }
 
                 // Bake only when the output would actually differ.
@@ -628,16 +630,9 @@ namespace LatticeVeil.Launcher
                     bool throttle = rotateDrag && (Time.realtimeSinceStartup - _lastBakeTime) < 0.05f;
                     if (poseChanged && !throttle)
                     {
-                        var rgba = PlayerSkinPreviewGenerator.GetPreviewPixels(skinTex, _yaw, _pitch, _layers, _zoom);
-                        if (rgba != null)
+                        var bmp = GetOrCreatePreviewBitmap(key);
+                        if (bmp != null)
                         {
-                            _previewCache[key] = new PreviewBitmap
-                            {
-                                Pixels = SwapRgbToBgra(rgba),
-                                Width = PlayerSkinPreviewGenerator.PreviewWidth,
-                                Height = PlayerSkinPreviewGenerator.PreviewHeight,
-                                SkinPath = key,
-                            };
                             _bakedKey = key;
                             _lastBakedLayers = _layers; _lastBakedZoom = _zoom;
                             _lastBakedYaw = _yaw; _lastBakedPitch = _pitch;
@@ -663,17 +658,6 @@ namespace LatticeVeil.Launcher
             }
 
             /// <summary>RGBA bytes (Unity GetPixels32 order) → BGRA for GDI, mutated in place.</summary>
-            private static byte[] SwapRgbToBgra(byte[] rgba) // note: instance-free helper kept static
-            {
-                for (int i = 0; i + 3 < rgba.Length; i += 4)
-                {
-                    var t = rgba[i];
-                    rgba[i] = rgba[i + 2];
-                    rgba[i + 2] = t;
-                }
-                return rgba;
-            }
-
             // Skin decode is expensive (disk + SHA + PNG) — cache the Texture2D per path.
             private Texture2D _cachedSkinTex;
             private string _cachedSkinPath;
@@ -695,6 +679,29 @@ namespace LatticeVeil.Launcher
                     _cachedSkinTex = tex;
                 _cachedSkinPath = path;
                 return _cachedSkinTex;
+            }
+
+            /// <summary>Reuses one BGRA buffer; the render itself stays cached per pose.</summary>
+            private PreviewBitmap GetOrCreatePreviewBitmap(string key)
+            {
+                if (!_previewCache.TryGetValue(key, out var bmp) || bmp == null)
+                {
+                    bmp = new PreviewBitmap
+                    {
+                        Width = PlayerSkinPreviewGenerator.PreviewWidth,
+                        Height = PlayerSkinPreviewGenerator.PreviewHeight,
+                        SkinPath = key,
+                        Pixels = new byte[PlayerSkinPreviewGenerator.PreviewWidth * PlayerSkinPreviewGenerator.PreviewHeight * 4],
+                    };
+                    _previewCache[key] = bmp;
+                }
+
+                var skinTex = LoadSkinTexture(_selectedSkinPath);
+                if (skinTex == null) return null;
+
+                if (PlayerSkinPreviewGenerator.TryBakePreviewBGRA(skinTex, _yaw, _pitch, _layers, _zoom, bmp.Pixels, out _, out _))
+                    return bmp;
+                return null;
             }
 
             private void DrawSkinRow(PanelUI ui, Rect row, string displayName, string path, bool isActive, string useText)

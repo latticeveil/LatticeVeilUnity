@@ -23,27 +23,37 @@ namespace LatticeVeil.Launcher
         public static int PreviewWidth => OutputWidth;
         public static int PreviewHeight => OutputHeight;
 
-        /// <summary>Latest output as a solid-color byte array (r,g,b,a = 0..255) ready to be
-        /// shipped straight into a 32bpp top-down GDI bitmap. Pass the same yaw/pitch/layers
-        /// as the matching GeneratePreview call. Returns null when the skin cannot render.</summary>
-        public static byte[] GetPreviewPixels(Texture2D skin, float yawDegrees, float pitchDegrees, bool showLayers, float zoom)
+        /// <summary>Renders the preview once and writes a 32bpp top-down BGRA buffer for GDI,
+        /// with the row flip and channel swap fused into a single pass (no intermediates).
+        /// Returns false when the skin cannot render; destination must be W*H*4 bytes.</summary>
+        public static bool TryBakePreviewBGRA(Texture2D skin, float yawDegrees, float pitchDegrees,
+            bool showLayers, float zoom, byte[] destination, out int width, out int height)
         {
+            width = PreviewWidth;
+            height = PreviewHeight;
+            if (destination == null || destination.Length < width * height * 4)
+                return false;
+
             var tex = GeneratePreview(skin, yawDegrees, pitchDegrees, showLayers, zoom);
-            if (tex == null) return null;
+            if (tex == null)
+                return false;
+
             var pixels = tex.GetPixels32();
-            var bytes = new byte[pixels.Length * 4];
-            for (int y = 0; y < tex.height; y++) // flip: Unity rows are bottom-up, GDI wants top-down
+            int w = tex.width, h = tex.height;
+            for (int y = 0; y < h; y++) // flip: Unity rows are bottom-up, GDI wants top-down
             {
-                var src = (tex.height - 1 - y) * tex.width;
-                for (int x = 0; x < tex.width; x++)
+                var src = (h - 1 - y) * w;
+                var dst = y * w * 4;
+                for (int x = 0; x < w; x++)
                 {
                     var c = pixels[src + x];
-                    int i = (y * tex.width + x) * 4;
-                    bytes[i + 0] = c.r; bytes[i + 1] = c.g; bytes[i + 2] = c.b; bytes[i + 3] = c.a;
+                    int i = dst + x * 4;
+                    destination[i + 0] = c.b; destination[i + 1] = c.g;
+                    destination[i + 2] = c.r; destination[i + 3] = c.a;
                 }
             }
             UnityEngine.Object.Destroy(tex);
-            return bytes;
+            return true;
         }
 
         public static Texture2D GeneratePreview(Texture2D skin, float yawDegrees = 0f)
@@ -252,7 +262,13 @@ namespace LatticeVeil.Launcher
                 int x = Mathf.RoundToInt(Mathf.Lerp(x0, x1, t));
                 int y = Mathf.RoundToInt(Mathf.Lerp(y0, y1, t));
                 if (x >= 0 && x < OutputWidth && y >= 0 && y < OutputHeight)
-                    pixels[y * OutputWidth + x] = color;
+                {
+                    // Input coords are top-down screen space (like the pedestal
+                    // shadow); the texture rasterizer is bottom-first, so flip
+                    // the row or the grid lands above the model's head.
+                    int ty = (OutputHeight - 1) - y;
+                    pixels[ty * OutputWidth + x] = color;
+                }
             }
         }
 

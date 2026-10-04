@@ -706,6 +706,11 @@ namespace LatticeVeil.Launcher
             [DllImport("user32.dll")]
             private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
 
+            // FillRect is exported by user32 (NOT gdi32) — wrong DLL here used to
+            // throw EntryPointNotFoundException from inside WndProc, crashing the player.
+            [DllImport("user32.dll")]
+            private static extern bool FillRect(IntPtr hdc, ref RECT lprc, IntPtr hbr);
+
             // ---- GDI ----
             [DllImport("gdi32.dll")]
             private static extern IntPtr CreateSolidBrush(uint crColor);
@@ -715,9 +720,6 @@ namespace LatticeVeil.Launcher
 
             [DllImport("gdi32.dll")]
             private static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
-
-            [DllImport("gdi32.dll")]
-            private static extern bool FillRect(IntPtr hdc, ref RECT lprc, IntPtr hbr);
 
             [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
             private static extern IntPtr CreateFontW(int cHeight, int cWidth, int cEscapement, int cOrientation,
@@ -892,6 +894,7 @@ namespace LatticeVeil.Launcher
                 if (w <= 0 || h <= 0) return;
 
                 EnsureBuffers(host._hwnd, w, h);
+                if (_memDc == IntPtr.Zero) return; // buffer setup failed; skip this frame
 
                 GetInput(out var mouse, out var clicked, out var wheelDelta);
 
@@ -1058,6 +1061,21 @@ namespace LatticeVeil.Launcher
             // ---------------- wndproc ----------------
 
             private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+            {
+                // A managed exception escaping this native-to-managed callback
+                // terminates the whole player, so nothing here may throw.
+                try
+                {
+                    return WndProcCore(hWnd, msg, wParam, lParam);
+                }
+                catch (System.Exception e)
+                {
+                    UnityEngine.Debug.LogException(e);
+                    return DefWindowProcW(hWnd, msg, wParam, lParam);
+                }
+            }
+
+            private static IntPtr WndProcCore(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
             {
                 switch (msg)
                 {

@@ -483,10 +483,7 @@ namespace LatticeVeil.Launcher
         public class SkinsPanel : PanelContent
         {
             // --- interactive 3D preview state (MonoGame parity) ---
-            // MonoGame uses previewYaw = 0.42 rad = 24.06 deg with
-            // rootYaw = 90 - yaw, i.e. a strong 3/4 view. Rest pose matches it.
-            private const float RestYaw = 24f;
-            private float _yaw = RestYaw;
+            private float _yaw = 0.42f;       // matches MonoGame default
             private float _pitch = 0f;
             private float _zoom = 1f;         // generator-relative; clamped 0.72..1.45 in DrawPreview
             private bool _layers = true;
@@ -495,7 +492,6 @@ namespace LatticeVeil.Launcher
             private string _selectedSkinPath;
             private string _statusMessage = "";
             private bool _uploadQueued;
-            private bool _bakePathLogged;
 
             // Last baked pose; the renderer only runs when this differs.
             private string _bakedKey;
@@ -579,7 +575,7 @@ namespace LatticeVeil.Launcher
                 var buttonRowY = previewRect.y + previewRect.height - 52;
                 if (ui.Button(new Rect(previewRect.x + 16, buttonRowY, 120, 38), "RECENTER", 12, BtnBg, BtnHover, Text))
                 {
-                    _yaw = RestYaw; _pitch = 0f; _zoom = 1f;
+                    _yaw = 0.42f; _pitch = 0f; _zoom = 1f;
                 }
                 if (ui.Button(new Rect(previewRect.x + 148, buttonRowY, 120, 38), _layers ? "LAYERS: ON" : "LAYERS: OFF", 12, BtnBg, BtnHover, Text))
                     _layers = !_layers;
@@ -631,21 +627,12 @@ namespace LatticeVeil.Launcher
                                        !Mathf.Approximately(_yaw, _lastBakedYaw) ||
                                        !Mathf.Approximately(_pitch, _lastBakedPitch) ||
                                        _bakedKey != key;
-                    bool throttle = rotateDrag && (Time.realtimeSinceStartup - _lastBakeTime) < 0.033f; // <=30 bakes/s
+                    bool throttle = rotateDrag && (Time.realtimeSinceStartup - _lastBakeTime) < 0.05f;
                     if (poseChanged && !throttle)
                     {
                         var bmp = GetOrCreatePreviewBitmap(key);
                         if (bmp != null)
                         {
-                            // Log which path actually produced the first bake.
-                            // (Checked after the bake: the GPU scene is ensured
-                            // lazily inside TryBakePreviewBGRA, so a pre-bake
-                            // Available check would always report CPU fallback.)
-                            if (!_bakePathLogged)
-                            {
-                                _bakePathLogged = true;
-                                Log?.Info($"Skin preview render path: {(PlayerSkinPreview3D.Available ? "GPU" : "CPU fallback")}");
-                            }
                             _bakedKey = key;
                             _lastBakedLayers = _layers; _lastBakedZoom = _zoom;
                             _lastBakedYaw = _yaw; _lastBakedPitch = _pitch;
@@ -712,9 +699,6 @@ namespace LatticeVeil.Launcher
                 var skinTex = LoadSkinTexture(_selectedSkinPath);
                 if (skinTex == null) return null;
 
-                if (PlayerSkinPreview3D.TryBakePreviewBGRA(skinTex, _yaw, _pitch, _layers, _zoom, bmp.Pixels, out _, out _))
-                    return bmp; // GPU: camera render + small readback
-                // GPU unavailable (shader stripped etc.) - CPU rasterizer fallback.
                 if (PlayerSkinPreviewGenerator.TryBakePreviewBGRA(skinTex, _yaw, _pitch, _layers, _zoom, bmp.Pixels, out _, out _))
                     return bmp;
                 return null;
@@ -762,18 +746,6 @@ namespace LatticeVeil.Launcher
                         catch { }
                     }
                 }
-            }
-
-            public override void Shutdown()
-            {
-                PlayerSkinPreview3D.Shutdown();
-                if (_cachedSkinTex != null)
-                {
-                    Destroy(_cachedSkinTex);
-                    _cachedSkinTex = null;
-                    _cachedSkinPath = null;
-                }
-                _previewCache.Clear();
             }
 
             private static string[] GetLocalSkinPaths()

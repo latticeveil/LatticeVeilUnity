@@ -483,9 +483,10 @@ namespace LatticeVeil.Launcher
         public class SkinsPanel : PanelContent
         {
             // --- interactive 3D preview state (MonoGame parity) ---
-            // rootYaw = 90 - yaw, so yaw = 90 is perfectly frontal; 75 gives a
-            // natural 3/4 view where the model clearly reads as 3D.
-            private float _yaw = 75f;
+            // MonoGame uses previewYaw = 0.42 rad = 24.06 deg with
+            // rootYaw = 90 - yaw, i.e. a strong 3/4 view. Rest pose matches it.
+            private const float RestYaw = 24f;
+            private float _yaw = RestYaw;
             private float _pitch = 0f;
             private float _zoom = 1f;         // generator-relative; clamped 0.72..1.45 in DrawPreview
             private bool _layers = true;
@@ -578,7 +579,7 @@ namespace LatticeVeil.Launcher
                 var buttonRowY = previewRect.y + previewRect.height - 52;
                 if (ui.Button(new Rect(previewRect.x + 16, buttonRowY, 120, 38), "RECENTER", 12, BtnBg, BtnHover, Text))
                 {
-                    _yaw = 75f; _pitch = 0f; _zoom = 1f;
+                    _yaw = RestYaw; _pitch = 0f; _zoom = 1f;
                 }
                 if (ui.Button(new Rect(previewRect.x + 148, buttonRowY, 120, 38), _layers ? "LAYERS: ON" : "LAYERS: OFF", 12, BtnBg, BtnHover, Text))
                     _layers = !_layers;
@@ -625,12 +626,6 @@ namespace LatticeVeil.Launcher
                 var skinTex = LoadSkinTexture(_selectedSkinPath);
                 if (skinTex != null)
                 {
-                    if (!_bakePathLogged)
-                    {
-                        _bakePathLogged = true;
-                        Log?.Info($"Skin preview render path: {(PlayerSkinPreview3D.Available ? "GPU" : "CPU fallback")}");
-                    }
-
                     var key = _selectedSkinPath ?? "default";
                     bool poseChanged = _layers != _lastBakedLayers || _zoom != _lastBakedZoom ||
                                        !Mathf.Approximately(_yaw, _lastBakedYaw) ||
@@ -642,6 +637,15 @@ namespace LatticeVeil.Launcher
                         var bmp = GetOrCreatePreviewBitmap(key);
                         if (bmp != null)
                         {
+                            // Log which path actually produced the first bake.
+                            // (Checked after the bake: the GPU scene is ensured
+                            // lazily inside TryBakePreviewBGRA, so a pre-bake
+                            // Available check would always report CPU fallback.)
+                            if (!_bakePathLogged)
+                            {
+                                _bakePathLogged = true;
+                                Log?.Info($"Skin preview render path: {(PlayerSkinPreview3D.Available ? "GPU" : "CPU fallback")}");
+                            }
                             _bakedKey = key;
                             _lastBakedLayers = _layers; _lastBakedZoom = _zoom;
                             _lastBakedYaw = _yaw; _lastBakedPitch = _pitch;

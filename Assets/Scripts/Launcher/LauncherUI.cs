@@ -119,9 +119,12 @@ namespace LatticeVeil.Launcher
         private bool _showSkinModal = false;
         private Texture2D _skin3DPreviewTexture;
         private string _skinStatusMessage = "";
-        private float _skinPreviewYaw = 0f;
+        // MonoGame parity: previewYaw = 0.42 rad = 24.06 deg (a strong 3/4 view;
+        // the renderer converts to rootYaw = 90 - yaw, so 0 deg would be edge-on).
+        private const float SkinPreviewRestYaw = 24.06f;
+        private float _skinPreviewYaw = SkinPreviewRestYaw;
         private float _skinPreviewPitch = 0f;
-        private float _skinPreviewTargetYaw = 0f;
+        private float _skinPreviewTargetYaw = SkinPreviewRestYaw;
         private float _skinPreviewTargetPitch = 0f;
         private float _skinPreviewYawVelocity = 0f;
         private float _skinPreviewPitchVelocity = 0f;
@@ -2246,9 +2249,9 @@ namespace LatticeVeil.Launcher
             var resetRotBtnRect = new Rect(previewBoxRect.x + 24, previewBoxRect.y + 386, previewBoxRect.width - 48, 32);
             if (GUI.Button(resetRotBtnRect, "Reset Position", _buttonStyle))
             {
-                _skinPreviewYaw = 0f;
+                _skinPreviewYaw = SkinPreviewRestYaw;
                 _skinPreviewPitch = 0f;
-                _skinPreviewTargetYaw = 0f;
+                _skinPreviewTargetYaw = SkinPreviewRestYaw;
                 _skinPreviewTargetPitch = 0f;
                 _skinPreviewYawVelocity = 0f;
                 _skinPreviewPitchVelocity = 0f;
@@ -3022,9 +3025,9 @@ namespace LatticeVeil.Launcher
 
         private void ResetSkinLibraryPreview()
         {
-            _skinPreviewYaw = 0f;
+            _skinPreviewYaw = SkinPreviewRestYaw;
             _skinPreviewPitch = 0f;
-            _skinPreviewTargetYaw = 0f;
+            _skinPreviewTargetYaw = SkinPreviewRestYaw;
             _skinPreviewTargetPitch = 0f;
             _skinPreviewYawVelocity = 0f;
             _skinPreviewPitchVelocity = 0f;

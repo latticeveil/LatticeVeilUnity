@@ -155,8 +155,9 @@ namespace LatticeVeil.Launcher
         private Texture2D _logoTexture;
         private Texture2D _avatarTexture;
         private Texture2D _skinHeadTexture;
-        private bool _avatarIsSkinFace;            // avatar box shows the active skin's face (no Veilnet avatar)
         private string _lastActiveSkinHashSeen;    // watches active.txt so faces update without a restart
+        private GUIStyle _avatarInitialsStyle;
+        private bool _veilnetProfileRefreshRunning;
         private Texture2D _greenBarTex;
         private Texture2D _amberBarTex;
         private Texture2D _redBarTex;
@@ -777,22 +778,128 @@ namespace LatticeVeil.Launcher
                         {
                             tex.filterMode = FilterMode.Bilinear;
                             _avatarTexture = tex;
-                            _avatarIsSkinFace = false;
                             return;
                         }
                     }
                 }
-
-                // No Veilnet avatar available: show the active skin's face so the
-                // profile picture always reflects the live skin.
-                var face = ExtractHeadTexture(SkinManager.LoadActiveSkinTexture());
-                if (face != null)
-                {
-                    _avatarTexture = face;
-                    _avatarIsSkinFace = true;
-                }
             }
             catch { }
+        }
+
+        /// <summary>MonoGame-parity initials for the avatar fallback tile.</summary>
+        private static string GetAvatarInitials(string username)
+        {
+            var value = (username ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(value)) return "?";
+            var parts = value.Split(new[] { ' ', '_', '-', '.' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2)
+                return string.Concat(parts[0][0], parts[1][0]).ToUpperInvariant();
+            return value.Length >= 2 ? value.Substring(0, 2).ToUpperInvariant() : value.ToUpperInvariant();
+        }
+
+        private GUIStyle AvatarInitialsStyle
+        {
+            get
+            {
+                if (_avatarInitialsStyle == null)
+                {
+                    _avatarInitialsStyle = new GUIStyle(GUI.skin.label)
+                    {
+                        alignment = TextAnchor.MiddleCenter,
+                        fontSize = 18,
+                        fontStyle = FontStyle.Bold,
+                    };
+                    _avatarInitialsStyle.normal.textColor = Color.white;
+                }
+                return _avatarInitialsStyle;
+            }
+        }
+
+        /// <summary>
+        /// Fetches the Veilnet profile (launcher-me) and downloads the profile
+        /// picture into the avatar cache so the LOGOUT avatar shows the user's
+        /// actual Veilnet profile image - never the skin face.
+        /// </summary>
+        private void StartVeilnetProfileRefresh()
+        {
+            if (_veilnetProfileRefreshRunning) return;
+            if (!_veilnetLoggedIn || string.IsNullOrWhiteSpace(_veilnetToken)) return;
+            _veilnetProfileRefreshRunning = true;
+
+            var functionsUrl = GetVeilnetFunctionsBaseUrl();
+            var anonKey = GetSupabaseAnonKey();
+            var token = _veilnetToken;
+            var fallbackUsername = _veilnetUsername;
+            var client = new VeilnetProfileClient(functionsUrl, anonKey, _httpClient);
+
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                VeilnetProfileClient.ProfileResult profile = null;
+                byte[] pictureBytes = null;
+                try
+                {
+                    profile = await client.GetProfileAsync(token).ConfigureAwait(false);
+                    if (profile.Ok && !string.IsNullOrWhiteSpace(profile.PictureUrl))
+                    {
+                        using (var resp = await _httpClient.GetAsync(profile.PictureUrl).ConfigureAwait(false))
+                        {
+                            if (resp.IsSuccessStatusCode)
+                                pictureBytes = await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log?.Warn($"[VeilnetProfile] refresh failed: {ex.Message}");
+                }
+
+                EnqueueMainThread(() => ApplyVeilnetProfile(profile, pictureBytes, fallbackUsername));
+            });
+        }
+
+        private void ApplyVeilnetProfile(VeilnetProfileClient.ProfileResult profile, byte[] pictureBytes, string fallbackUsername)
+        {
+            _veilnetProfileRefreshRunning = false;
+            try
+            {
+                if (profile == null || !profile.Ok)
+                {
+                    _log?.Warn($"[VeilnetProfile] lookup failed: {(profile != null ? profile.Error : "null")}");
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(profile.Username))
+                    _veilnetUsername = profile.Username.Trim();
+
+                if (pictureBytes == null || pictureBytes.Length == 0)
+                {
+                    _log?.Info($"[VeilnetProfile] no profile picture URL for {fallbackUsername}; keeping initials fallback.");
+                    return;
+                }
+
+                var dir = Path.GetDirectoryName(Paths.VeilnetAvatarCachePath);
+                if (!string.IsNullOrWhiteSpace(dir))
+                    Directory.CreateDirectory(dir);
+                File.WriteAllBytes(Paths.VeilnetAvatarCachePath, pictureBytes);
+
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (tex.LoadImage(pictureBytes))
+                {
+                    tex.filterMode = FilterMode.Bilinear;
+                    if (_avatarTexture != null) Destroy(_avatarTexture);
+                    _avatarTexture = tex;
+                    _log?.Info($"[VeilnetProfile] profile picture applied for {_veilnetUsername}.");
+                }
+                else
+                {
+                    UnityEngine.Object.Destroy(tex);
+                    _log?.Warn("[VeilnetProfile] downloaded profile picture could not be decoded.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _log?.Warn($"[VeilnetProfile] apply failed: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -811,13 +918,6 @@ namespace LatticeVeil.Launcher
 
                 if (_skinHeadTexture != null) Destroy(_skinHeadTexture);
                 LoadSkinHeadTexture();
-
-                if (_avatarIsSkinFace)
-                {
-                    if (_avatarTexture != null) Destroy(_avatarTexture);
-                    _avatarTexture = null;
-                    LoadAvatarTexture();
-                }
 
                 RefreshSkinModalPreview();
             }
@@ -1110,7 +1210,14 @@ namespace LatticeVeil.Launcher
             }
             else
             {
-                GUI.Label(avatarRect, "", _sectionHeaderStyle);
+                // MonoGame parity: initials tile while no profile picture is
+                // available (green when logged in, gray offline).
+                var inner = new Rect(avatarRect.x + 2, avatarRect.y + 2, 68, 68);
+                var prevColor = GUI.color;
+                GUI.color = _veilnetLoggedIn ? new Color(38f / 255f, 92f / 255f, 68f / 255f) : new Color(0.25f, 0.25f, 0.25f);
+                GUI.DrawTexture(inner, Texture2D.whiteTexture, ScaleMode.StretchToFill);
+                GUI.color = prevColor;
+                GUI.Label(inner, GetAvatarInitials(_veilnetLoggedIn ? _veilnetUsername : _profile.OfflineUsername), _avatarInitialsStyle);
             }
 
             var profileInfoX = avatarRect.x + avatarRect.width + 14;
@@ -3728,6 +3835,7 @@ namespace LatticeVeil.Launcher
                 _supabaseSkinClient = new SupabaseSkinClient(functionsUrl, anonKey, _veilnetToken, _httpClient);
                 _log?.Info($"[SupabaseSkin] Client ready (Functions: {functionsUrl})");
                 StartAutoSkinSync();
+                StartVeilnetProfileRefresh();
             }
             catch (Exception ex)
             {

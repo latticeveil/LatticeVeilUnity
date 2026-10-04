@@ -627,7 +627,7 @@ namespace LatticeVeil.Launcher
                                        !Mathf.Approximately(_yaw, _lastBakedYaw) ||
                                        !Mathf.Approximately(_pitch, _lastBakedPitch) ||
                                        _bakedKey != key;
-                    bool throttle = rotateDrag && (Time.realtimeSinceStartup - _lastBakeTime) < 0.05f;
+                    bool throttle = rotateDrag && (Time.realtimeSinceStartup - _lastBakeTime) < 0.033f; // <=30 bakes/s
                     if (poseChanged && !throttle)
                     {
                         var bmp = GetOrCreatePreviewBitmap(key);
@@ -699,6 +699,9 @@ namespace LatticeVeil.Launcher
                 var skinTex = LoadSkinTexture(_selectedSkinPath);
                 if (skinTex == null) return null;
 
+                if (PlayerSkinPreview3D.TryBakePreviewBGRA(skinTex, _yaw, _pitch, _layers, _zoom, bmp.Pixels, out _, out _))
+                    return bmp; // GPU: camera render + small readback
+                // GPU unavailable (shader stripped etc.) - CPU rasterizer fallback.
                 if (PlayerSkinPreviewGenerator.TryBakePreviewBGRA(skinTex, _yaw, _pitch, _layers, _zoom, bmp.Pixels, out _, out _))
                     return bmp;
                 return null;
@@ -746,6 +749,18 @@ namespace LatticeVeil.Launcher
                         catch { }
                     }
                 }
+            }
+
+            public override void Shutdown()
+            {
+                PlayerSkinPreview3D.Shutdown();
+                if (_cachedSkinTex != null)
+                {
+                    Destroy(_cachedSkinTex);
+                    _cachedSkinTex = null;
+                    _cachedSkinPath = null;
+                }
+                _previewCache.Clear();
             }
 
             private static string[] GetLocalSkinPaths()

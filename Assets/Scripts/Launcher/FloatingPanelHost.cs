@@ -505,7 +505,15 @@ namespace LatticeVeil.Launcher
                 public byte[] Pixels;      // BGRA, top-down, generator-sized
                 public int Width, Height;
                 public string SkinPath;    // identity of the baked source
+                public bool HasContent;    // false until the first async bake lands
             }
+
+            // --- async bake: render on a worker, publish in Tick, blit in paint ---
+            private volatile bool _bakeInFlight;
+            private volatile PreviewBitmap _pendingPublish;   // set by the worker
+            private byte[] _spareBgra;      // finished buffer handed back for reuse
+            private Color[] _workerPreview; // worker-owned scratch, reused per bake
+            private bool _bakeFailureLogged;
 
             private static readonly Dictionary<string, PreviewBitmap> _previewCache =
                 new Dictionary<string, PreviewBitmap>();
@@ -514,6 +522,29 @@ namespace LatticeVeil.Launcher
 
             public override void Tick()
             {
+                // Swap in the newest finished bake (written by the worker thread)
+                // before this frame's DrawFrame blits it. Runs on the main thread,
+                // so the handoff needs no locking beyond the volatile publish.
+                var published = _pendingPublish;
+                if (published != null)
+                {
+                    _pendingPublish = null;
+                    var bmp = GetOrCreatePreviewBitmap(published.SkinPath);
+                    if (bmp != null)
+                    {
+                        _spareBgra = bmp.Pixels; // old frame buffer becomes the next worker target
+                        bmp.Pixels = published.Pixels;
+                        bmp.Width = published.Width;
+                        bmp.Height = published.Height;
+                        bmp.SkinPath = published.SkinPath;
+                        bmp.HasContent = true;
+                    }
+                    else
+                    {
+                        _spareBgra = published.Pixels;
+                    }
+                }
+
                 if (_uploadQueued)
                 {
                     _uploadQueued = false;
@@ -590,8 +621,8 @@ namespace LatticeVeil.Launcher
             /// <summary>
             /// Interactive 3D player preview (MonoGame-parity software renderer).
             /// Drag (started inside the viewport) rotates; wheel zooms; RECENTER/LAYERS controls.
-            /// The render is baked into a BGRA bitmap only when the pose/selection changes,
-            /// throttled while dragging so the panel never floods the message pump.
+            /// Bakes run on a worker thread (single in-flight, latest pose wins); the paint
+            /// path only ever blits the latest finished bitmap, so dragging never blocks.
             /// </summary>
             private void DrawPreview(PanelUI ui, Rect viewport, Rect panelRect)
             {
@@ -627,26 +658,80 @@ namespace LatticeVeil.Launcher
                                        !Mathf.Approximately(_yaw, _lastBakedYaw) ||
                                        !Mathf.Approximately(_pitch, _lastBakedPitch) ||
                                        _bakedKey != key;
-                    bool throttle = rotateDrag && (Time.realtimeSinceStartup - _lastBakeTime) < 0.05f;
-                    if (poseChanged && !throttle)
+                    if (poseChanged && !_bakeInFlight)
                     {
-                        var bmp = GetOrCreatePreviewBitmap(key);
-                        if (bmp != null)
-                        {
-                            _bakedKey = key;
-                            _lastBakedLayers = _layers; _lastBakedZoom = _zoom;
-                            _lastBakedYaw = _yaw; _lastBakedPitch = _pitch;
-                            _lastBakeTime = Time.realtimeSinceStartup;
-                        }
+                        StartAsyncBake(key, skinTex);
+                        _bakedKey = key;
+                        _lastBakedLayers = _layers; _lastBakedZoom = _zoom;
+                        _lastBakedYaw = _yaw; _lastBakedPitch = _pitch;
+                        _lastBakeTime = Time.realtimeSinceStartup;
                     }
 
-                    if (_previewCache.TryGetValue(key, out var cached) && cached?.Pixels != null)
+                    if (_previewCache.TryGetValue(key, out var cached) && cached?.Pixels != null && cached.HasContent)
                     {
                         // Fit-preserve-aspect blit into the viewport.
                         var drawRect = FitInto(cached.Width, cached.Height, viewport);
                         PanelWin32.DrawPixelsScaled(ui.Hdc, drawRect, cached.Pixels, cached.Width, cached.Height);
                     }
                 }
+            }
+
+            /// <summary>
+            /// Renders the preview on a worker thread so drags stay smooth: the
+            /// paint path never blocks on the rasterizer. Skin pixels are decoded
+            /// here on the main thread; the render core (RenderPreviewBGRA) only
+            /// touches plain arrays and Unity math structs, which are thread-safe.
+            /// Single in-flight bake, latest pose wins - if the user keeps
+            /// dragging, the next bake picks up wherever the model is now.
+            /// </summary>
+            private void StartAsyncBake(string key, Texture2D skinTex)
+            {
+                var bmp = GetOrCreatePreviewBitmap(key);
+                if (bmp == null) return;
+
+                var target = _spareBgra;
+                _spareBgra = null;
+                if (target == null || target.Length < bmp.Width * bmp.Height * 4)
+                    target = new byte[bmp.Width * bmp.Height * 4];
+
+                var scratch = _workerPreview ??= new Color[
+                    PlayerSkinPreviewGenerator.PreviewWidth * PlayerSkinPreviewGenerator.PreviewHeight];
+
+                // Main-thread Unity API ends here; below is pure C#.
+                var skinPixels = skinTex.GetPixels();
+                int skinW = skinTex.width, skinH = skinTex.height;
+                float yaw = _yaw, pitch = _pitch, zoom = _zoom;
+                bool layers = _layers;
+
+                _bakeInFlight = true;
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    try
+                    {
+                        PlayerSkinPreviewGenerator.RenderPreviewBGRA(
+                            skinPixels, skinW, skinH, yaw, pitch, layers, zoom, scratch, target);
+                        _pendingPublish = new PreviewBitmap
+                        {
+                            Pixels = target,
+                            Width = PlayerSkinPreviewGenerator.PreviewWidth,
+                            Height = PlayerSkinPreviewGenerator.PreviewHeight,
+                            SkinPath = key,
+                            HasContent = true,
+                        };
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!_bakeFailureLogged)
+                        {
+                            _bakeFailureLogged = true;
+                            Log?.Warn($"Skin preview async bake failed: {ex.Message}");
+                        }
+                    }
+                    finally
+                    {
+                        _bakeInFlight = false;
+                    }
+                });
             }
 
             /// <summary>Aspect-preserving fit of a w×h image into r.</summary>
@@ -681,7 +766,7 @@ namespace LatticeVeil.Launcher
                 return _cachedSkinTex;
             }
 
-            /// <summary>Reuses one BGRA buffer; the render itself stays cached per pose.</summary>
+            /// <summary>Creates/reuses the cache entry for a skin; the worker fills its pixels.</summary>
             private PreviewBitmap GetOrCreatePreviewBitmap(string key)
             {
                 if (!_previewCache.TryGetValue(key, out var bmp) || bmp == null)
@@ -696,12 +781,7 @@ namespace LatticeVeil.Launcher
                     _previewCache[key] = bmp;
                 }
 
-                var skinTex = LoadSkinTexture(_selectedSkinPath);
-                if (skinTex == null) return null;
-
-                if (PlayerSkinPreviewGenerator.TryBakePreviewBGRA(skinTex, _yaw, _pitch, _layers, _zoom, bmp.Pixels, out _, out _))
-                    return bmp;
-                return null;
+                return bmp;
             }
 
             private void DrawSkinRow(PanelUI ui, Rect row, string displayName, string path, bool isActive, string useText)

@@ -83,18 +83,32 @@ namespace LatticeVeil.Launcher
             var preview = new Texture2D(OutputWidth, OutputHeight, TextureFormat.RGBA32, false);
             preview.filterMode = FilterMode.Point;
 
-            var pixels = new Color[OutputWidth * OutputHeight];
-            for (int i = 0; i < pixels.Length; i++)
-                pixels[i] = new Color(18f / 255f, 20f / 255f, 24f / 255f, 1f);
-
             if (skin == null)
             {
                 skin = DefaultPlayerSkinFactory.CreateTexture();
             }
 
             var skinPixels = skin.GetPixels();
-            var skinW = skin.width;
-            var skinH = skin.height;
+            var pixels = new Color[OutputWidth * OutputHeight];
+            RenderPreviewColors(skinPixels, skin.width, skin.height, yawDegrees, pitchDegrees, showLayers, zoom, pixels);
+
+            preview.SetPixels(pixels);
+            preview.Apply();
+            return preview;
+        }
+
+        /// <summary>
+        /// Renders the preview raster into `pixels` (OutputWidth x OutputHeight,
+        /// bottom-up rows). Pure C# over plain arrays and Unity math structs, so
+        /// it is safe to call from a worker thread as long as the skin pixel
+        /// array was decoded on the main thread. Shared by GeneratePreview and
+        /// the GDI fast path so both stay pixel-identical.
+        /// </summary>
+        private static void RenderPreviewColors(Color[] skinPixels, int skinW, int skinH,
+            float yawDegrees, float pitchDegrees, bool showLayers, float zoom, Color[] pixels)
+        {
+            for (int i = 0; i < pixels.Length; i++)
+                pixels[i] = new Color(18f / 255f, 20f / 255f, 24f / 255f, 1f);
 
             Color GetSkinPixel(int x, int y)
             {
@@ -109,10 +123,35 @@ namespace LatticeVeil.Launcher
             DrawPedestalShadow(pixels, OutputWidth / 2, OutputHeight - 58, 58, 14);
 
             RenderContinuousModel(pixels, GetSkinPixel, yawDegrees, pitchDegrees, showLayers, zoom);
+        }
 
-            preview.SetPixels(pixels);
-            preview.Apply();
-            return preview;
+        /// <summary>
+        /// Worker-thread-safe bake for the GDI panels: renders from a main-thread
+        /// decoded skin pixel array, then converts straight to a top-down BGRA
+        /// buffer in one fused pass. No UnityEngine.Object access here, so the
+        /// panel can blit the previous finished frame while this one renders.
+        /// </summary>
+        public static void RenderPreviewBGRA(Color[] skinPixels, int skinW, int skinH,
+            float yawDegrees, float pitchDegrees, bool showLayers, float zoom,
+            Color[] previewScratch, byte[] destBgra)
+        {
+            RenderPreviewColors(skinPixels, skinW, skinH, yawDegrees, pitchDegrees, showLayers, zoom, previewScratch);
+
+            int w = OutputWidth, h = OutputHeight;
+            for (int y = 0; y < h; y++) // flip: raster rows are bottom-up, GDI wants top-down
+            {
+                var src = (h - 1 - y) * w;
+                var dst = y * w * 4;
+                for (int x = 0; x < w; x++)
+                {
+                    var c = previewScratch[src + x];
+                    int i = dst + x * 4;
+                    destBgra[i + 0] = (byte)(Mathf.Clamp01(c.b) * 255f + 0.5f);
+                    destBgra[i + 1] = (byte)(Mathf.Clamp01(c.g) * 255f + 0.5f);
+                    destBgra[i + 2] = (byte)(Mathf.Clamp01(c.r) * 255f + 0.5f);
+                    destBgra[i + 3] = (byte)(Mathf.Clamp01(c.a) * 255f + 0.5f);
+                }
+            }
         }
 
 #if UNITY_EDITOR
@@ -344,9 +383,12 @@ namespace LatticeVeil.Launcher
             }
         }
 
+        [ThreadStatic] private static float[] _depthBuffer;
+
         private static void RenderContinuousModelInner(Color[] pixels, Func<int, int, Color> getPixel, List<PreviewFace> faces)
         {
-            var depthBuffer = new float[OutputWidth * OutputHeight];
+            // Reused per thread: skips a ~460KB allocation + GC churn per bake.
+            var depthBuffer = _depthBuffer ?? (_depthBuffer = new float[OutputWidth * OutputHeight]);
             for (int i = 0; i < depthBuffer.Length; i++) depthBuffer[i] = float.PositiveInfinity;
 
             foreach (var face in faces)

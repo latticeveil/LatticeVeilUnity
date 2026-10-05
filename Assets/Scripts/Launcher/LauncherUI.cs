@@ -386,11 +386,13 @@ namespace LatticeVeil.Launcher
                 }
             }
 
-            // Update log display periodically
+            // Update log display periodically (keep the same string instance
+            // while unchanged so log-text selection survives between frames).
             if (_log != null)
             {
                 var recentLogs = _log.GetRecentLogs(50);
-                _logContent = recentLogs;
+                if (recentLogs != _logContent)
+                    _logContent = recentLogs;
             }
 
             // Try to consume pending link codes
@@ -1398,10 +1400,14 @@ namespace LatticeVeil.Launcher
                 return;
             }
 
-            // Stream latest logs into UI
+            // Stream latest logs into UI. Only swap the string when the
+            // content actually changed — re-assigning a fresh instance every
+            // frame resets the TextArea's selection and breaks Ctrl+C.
             if (_log != null)
             {
-                _logContent = _log.GetRecentLogs(100);
+                var recentLogs = _log.GetRecentLogs(100);
+                if (recentLogs != _logContent)
+                    _logContent = recentLogs;
             }
 
             // Ensure styles are initialized

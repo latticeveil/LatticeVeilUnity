@@ -932,12 +932,19 @@ namespace LatticeVeil.Launcher
         {
             try
             {
-                if (!File.Exists(Paths.ActiveSkinHashPath)) return;
-                var hash = File.ReadAllText(Paths.ActiveSkinHashPath).Trim();
+                // Missing/empty active.txt means the DEFAULT skin is active:
+                // the logo must fall back to the default face instead of
+                // sticking on the last applied skin. Active skins applied
+                // from the ONLINE tab or auto-sync land in the runtime cache
+                // with active.txt, so this watcher covers them too.
+                var hash = string.Empty;
+                if (File.Exists(Paths.ActiveSkinHashPath))
+                    hash = File.ReadAllText(Paths.ActiveSkinHashPath).Trim();
                 if (string.Equals(hash, _lastActiveSkinHashSeen, StringComparison.Ordinal)) return;
                 _lastActiveSkinHashSeen = hash;
 
                 if (_skinHeadTexture != null) Destroy(_skinHeadTexture);
+                _skinHeadTexture = null;
                 LoadSkinHeadTexture();
 
                 RefreshSkinModalPreview();

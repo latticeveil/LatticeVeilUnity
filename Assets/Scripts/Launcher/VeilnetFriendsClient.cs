@@ -42,6 +42,8 @@ namespace LatticeVeil.Launcher
             public string PictureUrl;
             public string BannerUrl;
             public string AboutMe;
+            /// <summary>True for outgoing (sent) friend requests still awaiting a response.</summary>
+            public bool Pending;
         }
 
         public sealed class FriendListResult
@@ -138,7 +140,11 @@ namespace LatticeVeil.Launcher
                 foreach (var obj in ParseSection(body, "incomingRequests"))
                     result.IncomingRequests.Add(ParseUser(obj));
                 foreach (var obj in ParseSection(body, "outgoingRequests"))
-                    result.OutgoingRequests.Add(ParseUser(obj));
+                {
+                    var pending = ParseUser(obj);
+                    pending.Pending = true;
+                    result.OutgoingRequests.Add(pending);
+                }
                 result.Ok = true;
             }
             catch (Exception ex) { result.Error = ex.Message; }

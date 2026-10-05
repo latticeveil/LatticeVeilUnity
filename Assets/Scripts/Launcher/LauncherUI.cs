@@ -1041,19 +1041,23 @@ namespace LatticeVeil.Launcher
 
                     _friendsList.Clear();
                     _friendsList.AddRange(list.Friends);
+                    // Pending SENT requests appear in the same list, marked
+                    // PENDING, so the user sees who they've reached out to.
+                    _friendsList.AddRange(list.OutgoingRequests);
                     _presenceList.Clear();
                     if (presence != null && presence.Ok) _presenceList.AddRange(presence.Entries);
 
                     // Observable fetch diagnostics: banner/about-me come from
                     // the profiles table via friend-list; zero counts here
                     // mean the server response lacked them (deploy stale). 
-                    int banners = 0, abouts = 0;
+                    int banners = 0, abouts = 0, pending = 0;
                     foreach (var f in _friendsList)
                     {
                         if (!string.IsNullOrEmpty(f.BannerUrl)) banners++;
                         if (!string.IsNullOrEmpty(f.AboutMe)) abouts++;
+                        if (f.Pending) pending++;
                     }
-                    _log?.Info($"[Friends] {_friendsList.Count} friends loaded; {banners} banner(s), {abouts} about-me section(s) provided by the server.");
+                    _log?.Info($"[Friends] {_friendsList.Count} entries loaded ({pending} pending sent); {banners} banner(s), {abouts} about-me section(s) provided by the server.");
 
                     // Download avatars + banners for friends we have not cached yet.
                     foreach (var f in _friendsList)
@@ -2294,7 +2298,7 @@ namespace LatticeVeil.Launcher
             float tabY = modalRect.y + 52;
             var friendsTabRect = new Rect(modalRect.x + 18, tabY, 120, 30);
             var invitesTabRect = new Rect(modalRect.x + 146, tabY, 150, 30);
-            if (GUI.Button(friendsTabRect, $"FRIENDS ({_friendsList.Count})", _friendsTabIndex == 0 ? _logoutButtonStyle : _buttonStyle))
+            if (GUI.Button(friendsTabRect, $"FRIENDS ({_friendsList.Count(f => !f.Pending)})", _friendsTabIndex == 0 ? _logoutButtonStyle : _buttonStyle))
                 _friendsTabIndex = 0;
             if (GUI.Button(invitesTabRect, _pendingInviteCount > 0 ? $"INVITES \u25cf {_pendingInviteCount}" : "INVITES", _friendsTabIndex == 1 ? _logoutButtonStyle : _buttonStyle))
             {
@@ -2397,9 +2401,14 @@ namespace LatticeVeil.Launcher
             // Presence dot (green = online/launcher, purple = in world, grey = offline)
             var dotColor = OfflineDim;
             string statusText = "OFFLINE";
-            if (presence != null)
+            if (friend.Pending)
             {
-                if (presence.Status == "IN_WORLD") { dotColor = InWorldColor; statusText = presence.IsMultiplayer ? $"IN WORLD: {presence.WorldName}" : $"IN WORLD: {presence.WorldName}"; }
+                statusText = "PENDING \u2014 REQUEST SENT";
+                dotColor = new Color(0.95f, 0.72f, 0.3f); // warm amber, distinct from online/in-world
+            }
+            else if (presence != null)
+            {
+                if (presence.Status == "IN_WORLD") { dotColor = InWorldColor; statusText = $"IN WORLD: {presence.WorldName}"; }
                 else if (presence.Status == "MENU") { dotColor = OnlineGreen; statusText = "ONLINE \u2014 IN MENU"; }
                 else { dotColor = OnlineGreen; statusText = "ONLINE"; }
             }
@@ -2450,11 +2459,13 @@ namespace LatticeVeil.Launcher
             // Nameplate + status under the hero (avatar occupies the left).
             var nameY = detailRect.y + 150;
             GUI.Label(new Rect(detailRect.x + 120, nameY, detailRect.width - 136, 26), friend.Username, _switchLabelStyle);
-            var statusText = presence == null ? "Offline"
+            var statusText = friend.Pending ? "Friend request pending"
+                : presence == null ? "Offline"
                 : presence.Status == "IN_WORLD" ? $"In world: {presence.WorldName}"
                 : presence.Status == "MENU" ? "Online \u2014 in menu"
                 : "Online";
-            var statusColor = presence == null ? OfflineDim
+            var statusColor = friend.Pending ? new Color(0.95f, 0.72f, 0.3f)
+                : presence == null ? OfflineDim
                 : presence.Status == "IN_WORLD" ? InWorldColor : OnlineGreen;
             var prevColor = GUI.color;
             GUI.color = statusColor;
@@ -2472,15 +2483,42 @@ namespace LatticeVeil.Launcher
                 new GUIStyle(_switchSubLabelStyle) { wordWrap = true });
 
             var inviteRect = new Rect(detailRect.x + 20, detailRect.y + detailRect.height - 48, 150, 36);
-            bool canInvite = presence != null && presence.Status != "OFFLINE";
+            bool canInvite = !friend.Pending && presence != null && presence.Status != "OFFLINE";
             GUI.enabled = canInvite;
-            if (GUI.Button(inviteRect, canInvite ? "INVITE TO WORLD" : "OFFLINE", _logoutButtonStyle))
+            if (GUI.Button(inviteRect, canInvite ? "INVITE TO WORLD" : (friend.Pending ? "PENDING" : "OFFLINE"), _logoutButtonStyle))
                 BeginWorldInvite(friend);
             GUI.enabled = true;
 
             var removeRect = new Rect(detailRect.x + detailRect.width - 130, detailRect.y + detailRect.height - 48, 110, 36);
-            if (GUI.Button(removeRect, "REMOVE", _buttonStyle))
-                BeginFriendRemove(friend);
+            if (GUI.Button(removeRect, friend.Pending ? "CANCEL REQUEST" : "REMOVE", _buttonStyle))
+            {
+                if (friend.Pending) BeginFriendRequestCancel(friend);
+                else BeginFriendRemove(friend);
+            }
+        }
+
+        /// <summary>Cancels an outgoing (sent) friend request.</summary>
+        private void BeginFriendRequestCancel(VeilnetFriendsClient.FriendUser friend)
+        {
+            if (friend == null) return;
+            _friendsStatusMessage = $"Cancelling request to {friend.Username}\u2026";
+            var client = new VeilnetFriendsClient(GetVeilnetFunctionsBaseUrl(), GetSupabaseAnonKey(), _veilnetToken, _httpClient);
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                var result = await client.CancelFriendRequestAsync(friend.Id).ConfigureAwait(false);
+                EnqueueMainThread(() =>
+                {
+                    if (result.Ok)
+                    {
+                        _friendsList.RemoveAll(f => string.Equals(f.Id, friend.Id, StringComparison.OrdinalIgnoreCase));
+                        if (string.Equals(_selectedFriendId, friend.Id, StringComparison.OrdinalIgnoreCase))
+                            _selectedFriendId = "";
+                        _friendsStatusMessage = $"Request to {friend.Username} cancelled.";
+                    }
+                    else
+                        _friendsStatusMessage = $"Could not cancel: {result.Error}";
+                });
+            });
         }
 
         private void DrawInvitesTab(Rect modalRect, float bodyY, float bodyH)

@@ -625,30 +625,40 @@ namespace LatticeVeil.Launcher
         /// Generates a clean 24×24 pixel gear icon texture for the settings button.
         /// Drawn procedurally so no external asset file is needed.
         /// </summary>
-        /// <summary>Procedural white "two people" friends glyph for the top bar.</summary>
+        /// <summary>
+        /// Procedural white "party of three" friends glyph (Steam/Overwatch
+        /// party-icon style): one larger front figure flanked by two smaller
+        /// ones, drawn as head circles + shoulder arcs. Not AI-generated.
+        /// </summary>
         private static Texture2D CreateFriendsIconTexture()
         {
-            const int S = 24;
+            const int S = 48;
             var tex = new Texture2D(S, S, TextureFormat.RGBA32, false);
             tex.filterMode = FilterMode.Bilinear;
             var pix = new Color[S * S];
             for (int i = 0; i < pix.Length; i++) pix[i] = Color.clear;
             var white = new Color(0.95f, 0.95f, 0.95f, 1f);
 
-            for (int y = 0; y < S; y++)
-            for (int x = 0; x < S; x++)
+            // Party silhouette: center figure (x=24) + two side figures (x=11, x=37).
+            void Figure(float cx, float headCy, float headR, float shoulderCy, float shoulderRx)
             {
-                float fx = x, fy = y;
-                // Person 1 (front, left): head circle + shoulders arc
-                var d1h = Mathf.Sqrt((fx - 8.5f) * (fx - 8.5f) + (fy - 7.5f) * (fy - 7.5f));
-                var d1s = Mathf.Sqrt((fx - 8.5f) * (fx - 8.5f) + (fy - 19.0f) * (fy - 19.0f));
-                bool p1 = (d1h <= 3.4f && d1h >= 1.8f) || (fy > 13.5f && fy < 19.5f && d1s <= 6.4f && d1s >= 4.4f);
-                // Person 2 (back, right): slightly smaller, clipped by person 1
-                var d2h = Mathf.Sqrt((fx - 16.5f) * (fx - 16.5f) + (fy - 8.5f) * (fy - 8.5f));
-                var d2s = Mathf.Sqrt((fx - 16.5f) * (fx - 16.5f) + (fy - 19.5f) * (fy - 19.5f));
-                bool p2 = (d2h <= 2.9f && d2h >= 1.4f) || (fy > 14.5f && fy < 19.8f && d2s <= 5.6f && d2s >= 3.8f);
-                if (p1 || (p2 && fx > 12.2f)) pix[y * S + x] = white;
+                for (int y = 0; y < S; y++)
+                for (int x = 0; x < S; x++)
+                {
+                    var dh = Mathf.Sqrt((x - cx) * (x - cx) + (y - headCy) * (y - headCy));
+                    var ds = Mathf.Sqrt((x - cx) * (x - cx) + (y - shoulderCy) * (y - shoulderCy)) / shoulderRx;
+                    bool head = dh <= headR;
+                    bool shoulders = y > shoulderCy && y <= shoulderCy + headR * 1.6f && ds <= 1.0f;
+                    if (head || shoulders) pix[y * S + x] = white;
+                }
             }
+
+            // Side figures: smaller, slightly higher shoulders.
+            Figure(11f, 19.5f, 5.0f, 27.0f, 7.5f);
+            Figure(37f, 19.5f, 5.0f, 27.0f, 7.5f);
+            // Center figure: larger, overlaps in front.
+            Figure(24f, 17.0f, 6.5f, 26.0f, 10.0f);
+
             tex.SetPixels(pix);
             tex.Apply();
             return tex;
@@ -1347,8 +1357,8 @@ namespace LatticeVeil.Launcher
             var topBarRect = new Rect(launcherRect.x, launcherRect.y, launcherRect.width, topBarHeight);
 
             // Window drag — checked BEFORE GUI.enabled so it works regardless of any open modal or submenu.
-            // Excludes the right-most 206px reserved for friends + window control buttons.
-            var dragAreaRect = new Rect(topBarRect.x, topBarRect.y, topBarRect.width - 206f, topBarHeight);
+            // Excludes the right-most 160px reserved for window control buttons.
+            var dragAreaRect = new Rect(topBarRect.x, topBarRect.y, topBarRect.width - 160f, topBarHeight);
             if (Event.current.type == EventType.MouseDown && Event.current.button == 0)
             {
                 if (dragAreaRect.Contains(Event.current.mousePosition))
@@ -1387,40 +1397,6 @@ namespace LatticeVeil.Launcher
             // Top-right window controls: Settings (gear icon), Minimize (-), Close (X)
             // Settings and Minimize are disabled when modal is open, but MAIN X is ALWAYS ENABLED!
             GUI.enabled = !modalOpen;
-
-            // Friends button (person icon) + green bubble with pending invites.
-            if (_friendsIconTex == null) _friendsIconTex = CreateFriendsIconTexture();
-            if (_greenBubbleTex == null) _greenBubbleTex = CreateBubbleTexture(OnlineGreen);
-            var friendsBtnRect = new Rect(topBarRect.x + topBarRect.width - 192, topBarRect.y + 8, 44, 36);
-            var friendsBtnContent = _friendsIconTex != null ? new GUIContent(_friendsIconTex) : new GUIContent("F");
-            if (GUI.Button(friendsBtnRect, friendsBtnContent, _wrenchControlStyle))
-            {
-                _showFriendsModal = !_showFriendsModal;
-                if (_showFriendsModal)
-                {
-                    _showSkinModal = false;
-                    _showSettingsModal = false;
-                    _showVersionManagerModal = false;
-                    _showInstallPromptModal = false;
-                    _friendsStatusMessage = "";
-                }
-            }
-            // Green bubble badge — only when there are unread world invites.
-            if (_pendingInviteCount > 0)
-            {
-                var bubbleRect = new Rect(friendsBtnRect.x + 26, friendsBtnRect.y + 16, 18, 18);
-                GUI.DrawTexture(bubbleRect, _greenBubbleTex, ScaleMode.ScaleToFit);
-                var countLabel = _pendingInviteCount > 9 ? "9+" : _pendingInviteCount.ToString();
-                var prevColor = GUI.color;
-                GUI.color = Color.white;
-                GUI.Label(new Rect(bubbleRect.x, bubbleRect.y + 2, 18, 16), countLabel, new GUIStyle(GUI.skin.label)
-                {
-                    alignment = TextAnchor.MiddleCenter,
-                    fontSize = 10,
-                    fontStyle = FontStyle.Bold,
-                });
-                GUI.color = prevColor;
-            }
 
             var settingsBtnRect = new Rect(topBarRect.x + topBarRect.width - 146, topBarRect.y + 8, 44, 36);
             var settingsBtnContent = _settingsIconTex != null
@@ -1585,7 +1561,10 @@ namespace LatticeVeil.Launcher
                 GUI.Label(skinHeadRect, "", _sectionHeaderStyle);
             }
 
-            var skinsBtnRect = new Rect(profileInfoX, contentY, profileInfoWidth, 72);
+            // SKINS + FRIENDS share the profile row: skins shrinks to half,
+            // friends gets a big icon button to its right (game-party style).
+            float halfWidth = Mathf.Max(64, (profileInfoWidth - 12) * 0.5f);
+            var skinsBtnRect = new Rect(profileInfoX, contentY, halfWidth, 72);
             if (GUI.Button(skinsBtnRect, "SKINS", _skinsButtonStyle))
             {
                 // Floating panel: real always-on-top OS window over everything.
@@ -1606,6 +1585,36 @@ namespace LatticeVeil.Launcher
                     RefreshSkinModalPreview();
                     _log.Info("Skin library opened.");
                 }
+            }
+
+            // Big FRIENDS button: three-person party icon + green bubble badge.
+            if (_friendsIconTex == null) _friendsIconTex = CreateFriendsIconTexture();
+            if (_greenBubbleTex == null) _greenBubbleTex = CreateBubbleTexture(OnlineGreen);
+            var friendsBigRect = new Rect(profileInfoX + halfWidth + 12, contentY, Mathf.Max(64, profileInfoWidth - halfWidth - 12), 72);
+            if (GUI.Button(friendsBigRect, "", _skinsButtonStyle))
+            {
+                _showFriendsModal = !_showFriendsModal;
+                if (_showFriendsModal)
+                {
+                    _showSkinModal = false;
+                    _showSettingsModal = false;
+                    _showVersionManagerModal = false;
+                    _showInstallPromptModal = false;
+                    _friendsStatusMessage = "";
+                }
+            }
+            // Icon + label centered in the button.
+            var iconRect = new Rect(friendsBigRect.x + (friendsBigRect.width - 26) * 0.5f, friendsBigRect.y + 12, 26, 26);
+            GUI.DrawTexture(iconRect, _friendsIconTex, ScaleMode.ScaleToFit);
+            GUI.Label(new Rect(friendsBigRect.x, friendsBigRect.y + 42, friendsBigRect.width, 22), "FRIENDS",
+                new GUIStyle(_sectionHeaderStyle) { alignment = TextAnchor.MiddleCenter, fontSize = 13 });
+            // Green bubble — top-right corner of the button when invites are waiting.
+            if (_pendingInviteCount > 0)
+            {
+                var bubbleRect = new Rect(friendsBigRect.x + friendsBigRect.width - 26, friendsBigRect.y + 6, 20, 20);
+                GUI.DrawTexture(bubbleRect, _greenBubbleTex, ScaleMode.ScaleToFit);
+                GUI.Label(new Rect(bubbleRect.x, bubbleRect.y + 2, 20, 16), _pendingInviteCount > 9 ? "9+" : _pendingInviteCount.ToString(),
+                    new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 11, fontStyle = FontStyle.Bold });
             }
 
             // Offline Username Section

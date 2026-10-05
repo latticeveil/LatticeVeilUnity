@@ -130,6 +130,7 @@ namespace LatticeVeil.Launcher
         private readonly List<VeilnetFriendsClient.WorldInvite> _worldInvitesIn = new List<VeilnetFriendsClient.WorldInvite>();
         private readonly List<VeilnetFriendsClient.WorldInvite> _worldInvitesOut = new List<VeilnetFriendsClient.WorldInvite>();
         private bool _friendsRefreshRunning;
+        private bool _friendsPrefetched;
         private double _nextFriendsRefreshAt;       // realtime clock seconds
         private double _nextInvitePollAt;           // 0 = poll immediately on login
         private int _pendingInviteCount;            // green bubble on the top bar
@@ -987,6 +988,14 @@ namespace LatticeVeil.Launcher
             {
                 _nextInvitePollAt = now + 60.0;
                 StartInvitePoll();
+            }
+
+            // Prefetch the friends list once after login so the modal opens
+            // already populated (with avatars/banners downloading early too).
+            if (!_friendsPrefetched)
+            {
+                _friendsPrefetched = true;
+                StartFriendsRefresh();
             }
 
             // Friend list + presence refresh while the modal is open: every 45s,
@@ -2490,7 +2499,7 @@ namespace LatticeVeil.Launcher
             GUI.enabled = true;
 
             var removeRect = new Rect(detailRect.x + detailRect.width - 130, detailRect.y + detailRect.height - 48, 110, 36);
-            if (GUI.Button(removeRect, friend.Pending ? "CANCEL REQUEST" : "REMOVE", _buttonStyle))
+            if (GUI.Button(removeRect, friend.Pending ? "CANCEL" : "REMOVE", _buttonStyle))
             {
                 if (friend.Pending) BeginFriendRequestCancel(friend);
                 else BeginFriendRemove(friend);

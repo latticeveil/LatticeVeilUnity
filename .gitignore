@@ -39,3 +39,8 @@ config.json
 # ---- Unity auto-recovery scenes ----
 Assets/_Recovery/
 Assets/_Recovery.meta
+
+# ---- Internal notes / plans (never publish) ----
+Docs/00_AI_ENGINEERING_REFERENCE/
+Docs/01_PROJECT/
+Docs/10_PLANS/

@@ -3234,6 +3234,7 @@ namespace LatticeVeil.Launcher
             _profile.Save(_log);
             _selectedSkinLibraryPath = null;
             LoadSkinLibraryPreview(null);
+            _log?.Info("[SkinLibrary] Default skin activated.");
         }
 
         private void UseLocalSkinFromLibrary(string path)
@@ -3249,6 +3250,7 @@ namespace LatticeVeil.Launcher
             _profile.Save(_log);
             _selectedSkinLibraryPath = path;
             LoadSkinLibraryPreview(path);
+            _log?.Info($"[SkinLibrary] Applied local skin '{Path.GetFileName(path)}'.");
         }
 
         private void RemoveLocalSkinFromLibrary(string path)
@@ -3284,6 +3286,7 @@ namespace LatticeVeil.Launcher
             }
             _selectedSkinLibraryPath = Path.Combine(Paths.UserSkinsDir, $"{Path.GetFileNameWithoutExtension(path)}.png");
             LoadSkinLibraryPreview(_selectedSkinLibraryPath);
+            _log?.Info($"[SkinLibrary] Imported '{Path.GetFileName(path)}' into the library.");
         }
 
         private void OpenSkinLibraryFolder()

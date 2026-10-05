@@ -553,7 +553,29 @@ namespace LatticeVeil.Launcher
             private int _skinTab;             // 0 = LOCAL, 1 = ONLINE
             private bool _onlineFetchedOnce;  // fetch the account's skins on first ONLINE visit
             private string _selectedSkinPath;
-            private string _statusMessage = "";
+            private string _statusMessageText = "";
+
+            // Every panel status change is mirrored into the launcher log so
+            // skin library actions (preview, apply, upload, remove, backup,
+            // fetch) appear in the live log as they happen.
+            private string _statusMessage
+            {
+                get { return _statusMessageText; }
+                set
+                {
+                    _statusMessageText = value;
+                    if (string.IsNullOrEmpty(value)) return;
+                    var lower = value.ToLowerInvariant();
+                    if (lower.Contains("failed"))
+                        Log?.Error($"[Skins] {value}");
+                    else if (lower.Contains("blocked") || lower.Contains("could not") || lower.Contains("rejected")
+                        || lower.Contains("full") || lower.Contains("not valid") || lower.Contains("already"))
+                        Log?.Warn($"[Skins] {value}");
+                    else
+                        Log?.Info($"[Skins] {value}");
+                }
+            }
+
             private bool _uploadQueued;
 
             // Staged (preview-only) skin: shown in 3D but not applied. Closing
@@ -744,6 +766,7 @@ namespace LatticeVeil.Launcher
                 if (_syncBusy) { _onlineFetchQueued = true; return; }
 
                 _syncBusy = true;
+                Log?.Info("[Skins] Fetching account skins…");
                 var client = _syncClient ?? (_syncClient = VeilnetSession.CreateClient(auth));
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {
@@ -782,6 +805,7 @@ namespace LatticeVeil.Launcher
                 _onlineSkins.Clear();
                 _onlineSkins.AddRange(r.Skins ?? new List<OnlineSkin>());
                 _onlineIsDefault = _onlineSkins.Count == 0;
+                Log?.Info($"[Skins] Account fetch complete: {_onlineSkins.Count}/{SupabaseSkinClient.MaxSkinsPerUser} slots used.");
 
                 // Cache each skin's PNG for row thumbnails / previews.
                 try { Directory.CreateDirectory(Core.Paths.RuntimeSkinsDir); } catch { }
@@ -1233,6 +1257,7 @@ namespace LatticeVeil.Launcher
                 if (_syncBusy) { _statusMessage = "Another sync operation is running; try again in a moment."; return false; }
                 _syncBusy = true;
                 _uploadPending = true;
+                Log?.Info($"[Skins] Uploading {(fileName ?? "skin")} to online slot {slot + 1} ({png.Length} bytes)…");
                 var client = _syncClient ?? (_syncClient = VeilnetSession.CreateClient(auth));
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {
@@ -1709,6 +1734,7 @@ namespace LatticeVeil.Launcher
 
                 _syncBusy = true;
                 _uploadPending = true;
+                Log?.Info($"[Skins] Removing {skin.Name} from online slot {skin.Slot + 1}…");
                 var client = _syncClient ?? (_syncClient = VeilnetSession.CreateClient(auth));
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {

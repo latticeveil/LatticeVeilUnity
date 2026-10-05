@@ -147,6 +147,13 @@ namespace LatticeVeil.Launcher
         private bool _showRevertChoiceDialog;
         private bool _revertVeilnetInProgress;
 
+        // Quit confirmation when a skin is still only previewed (not applied)
+        // in the floating skins panel: offers APPLY & QUIT / QUIT ANYWAY.
+        private bool _showQuitApplyConfirm;
+        private bool _quitAfterApply;
+        private bool _quitConfirmedNoApply;
+        private bool _skinApplyUploadWasInFlight;
+
 
         private readonly string[] _settingsTabs = new[] { "General", "Updates", "Cleanup", "Status" };
         private int _settingsTabIndex = 0;
@@ -234,6 +241,20 @@ namespace LatticeVeil.Launcher
 
         private void Update()
         {
+            // A quit was held for APPLY & QUIT: once the staged skin is applied
+            // (and its upload settled, if any), continue quitting.
+            if (_quitAfterApply)
+            {
+                if (FloatingPanelHost.IsUploadInFlight) return;
+                if (FloatingPanelHost.HasActiveStagedSkin)
+                {
+                    FloatingPanelHost.ApplyActiveStagedSkin();
+                    return; // upload may now be in flight; finish on a later frame
+                }
+                _quitAfterApply = false;
+                if (_skinApplyUploadWasInFlight) return; // upload settled this frame
+                ProceedWithQuit();
+            }
             while (_mainThreadQueue.TryDequeue(out var action))
             {
                 try
@@ -1013,7 +1034,14 @@ namespace LatticeVeil.Launcher
 
         private void OnGUI()
         {
-            if (!_launcherVisible) return;
+            if (!_launcherVisible)
+            {
+                // Quit flow: the dialog must render even when the main window
+                // is hidden (e.g. parked while the game runs).
+                if (_showQuitApplyConfirm || _quitAfterApply)
+                    DrawQuitApplyConfirmDialog();
+                return;
+            }
 
             // Stream latest logs into UI
             if (_log != null)
@@ -4382,6 +4410,13 @@ namespace LatticeVeil.Launcher
                     // the job instead so the game outlives the launcher.
                     if (_settings.InstantQuitEnabled)
                     {
+                        // Hold the quit while a previewed skin awaits a decision.
+                        if (!ConfirmOrProceedQuit())
+                        {
+                            _isLaunching = false;
+                            _log.Info("Instant quit deferred: a staged skin is awaiting apply/discard.");
+                            return;
+                        }
                         _log.Info("InstantQuitEnabled is on; quitting launcher process (game keeps running).");
                         GameProcessJob.ReleaseForInstantQuit();
                         _settings.Save(_log);
@@ -4627,7 +4662,88 @@ namespace LatticeVeil.Launcher
         private void HandleLauncherCloseButtonRequest()
         {
             _log.Info("Launcher close requested.");
+            if (!ConfirmOrProceedQuit()) return;
             Application.Quit();
+        }
+
+        /// <summary>
+        /// Intercepts quitting while a skin is only previewed in the skins
+        /// panel: shows a confirm dialog offering APPLY & QUIT. Returns true
+        /// when the caller should proceed with Application.Quit() now.
+        /// </summary>
+        private bool ConfirmOrProceedQuit()
+        {
+            if (_quitConfirmedNoApply) return true;
+            if (FloatingPanelHost.HasActiveStagedSkin && !_showQuitApplyConfirm)
+            {
+                _showQuitApplyConfirm = true;
+                _quitAfterApply = false;
+                return false;
+            }
+            return !_showQuitApplyConfirm;
+        }
+
+        /// <summary>Runs after the staged-skin decision: performs the real quit.</summary>
+        private void ProceedWithQuit()
+        {
+            _showQuitApplyConfirm = false;
+            _quitConfirmedNoApply = true;
+            Application.Quit();
+        }
+
+        /// <summary>
+        /// Quit confirmation: "You're previewing X" with the skin shown, plus
+        /// APPLY & QUIT / QUIT ANYWAY. Rendered even when the launcher window
+        /// is hidden so the parked/instant-quit paths still get an answer.
+        /// </summary>
+        private void DrawQuitApplyConfirmDialog()
+        {
+            const float w = 460f, h = 220f;
+            var rect = new Rect((Screen.width - w) * 0.5f, (Screen.height - h) * 0.5f, w, h);
+            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "", _dimmerStyle ?? GUI.skin.box);
+            GUI.Box(rect, "", _boxStyle ?? GUI.skin.box);
+
+            GUI.Label(new Rect(rect.x + 18, rect.y + 14, w - 36, 26), "APPLY SKIN BEFORE QUITTING?", _titleStyle ?? GUI.skin.label);
+
+            var stagedPath = FloatingPanelHost.ActiveStagedSkinPath;
+            var stagedName = FloatingPanelHost.ActiveStagedSkinName ?? "a skin";
+            const float thumb = 72f;
+            Texture2D thumbTex = null;
+            if (!string.IsNullOrEmpty(stagedPath) && File.Exists(stagedPath))
+            {
+                try
+                {
+                    thumbTex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                    if (!thumbTex.LoadImage(File.ReadAllBytes(stagedPath))) thumbTex = null;
+                }
+                catch { thumbTex = null; }
+            }
+
+            if (thumbTex != null)
+                GUI.DrawTexture(new Rect(rect.x + 18, rect.y + 50, thumb, thumb), thumbTex, ScaleMode.ScaleToFit);
+            var textX = rect.x + 18 + (thumbTex != null ? thumb + 14 : 0);
+            GUI.Label(new Rect(textX, rect.y + 50, w - 36 - (thumbTex != null ? thumb + 14 : 0), 90),
+                $"You are previewing {stagedName}.\n\nApply it so it goes live on your Veilnet account, or quit without applying.",
+                _switchSubLabelStyle ?? GUI.skin.label);
+
+            float by = rect.y + h - 52;
+            if (GUI.Button(new Rect(rect.x + 18, by, 170, 36), "APPLY & QUIT", _buttonStyle ?? GUI.skin.button))
+            {
+                _showQuitApplyConfirm = false;
+                _skinApplyUploadWasInFlight = FloatingPanelHost.IsUploadInFlight;
+                _quitAfterApply = true;
+            }
+            if (GUI.Button(new Rect(rect.x + 200, by, 170, 36), "QUIT ANYWAY", _buttonStyle ?? GUI.skin.button))
+            {
+                FloatingPanelHost.DiscardActiveStagedSkin();
+                ProceedWithQuit();
+            }
+            if (GUI.Button(new Rect(rect.x + w - 42, rect.y + 10, 28, 24), "X", _modalCloseBtnStyle ?? GUI.skin.button))
+            {
+                // Stay in the launcher.
+                _showQuitApplyConfirm = false;
+                _quitAfterApply = false;
+            }
         }
 
         private void OnDestroy()

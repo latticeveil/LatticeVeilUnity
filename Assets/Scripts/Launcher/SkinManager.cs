@@ -217,6 +217,39 @@ namespace LatticeVeil.Launcher
             }
         }
 
+        /// <summary>
+        /// Adds a skin PNG to the user's Skins folder WITHOUT activating it.
+        /// Used by the import > preview > apply flow: nothing changes in-game
+        /// until the user explicitly applies the skin.
+        /// </summary>
+        public static bool ImportSkinToLibrary(string sourceFilePath, out string error, string userFileName = null)
+        {
+            error = null;
+            try
+            {
+                if (!ValidateSkinFile(sourceFilePath, out var tex, out var hash, out error))
+                    return false;
+                if (tex != null) UnityEngine.Object.Destroy(tex);
+
+                var bytes = File.ReadAllBytes(sourceFilePath);
+                var userSkinsDir = Paths.UserSkinsDir;
+                Directory.CreateDirectory(userSkinsDir);
+
+                var destName = userFileName;
+                if (string.IsNullOrWhiteSpace(destName)) destName = hash;
+                var cleanName = Path.GetFileNameWithoutExtension(destName).Trim();
+                if (string.IsNullOrWhiteSpace(cleanName)) cleanName = hash;
+
+                WriteAllBytesResilient(Path.Combine(userSkinsDir, $"{cleanName}.png"), bytes);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
         public static bool ImportAndSetActiveSkin(string sourceFilePath, out string error, out string computedHash, string userFileName = null)
         {
             error = null;

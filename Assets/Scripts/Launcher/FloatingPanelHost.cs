@@ -153,6 +153,65 @@ namespace LatticeVeil.Launcher
             }
         }
 
+        // ------------- static hooks for the launcher quit flow -------------
+
+        /// <summary>True when the open panel holds an unapplied preview skin.</summary>
+        public static bool HasActiveStagedSkin
+        {
+            get
+            {
+                var p = _active?._content as SkinsPanel;
+                return p != null && p.HasUnappliedStagedSkin;
+            }
+        }
+
+        /// <summary>Applies the staged skin on the open panel, if any.</summary>
+        public static bool ApplyActiveStagedSkin()
+        {
+            var p = _active?._content as SkinsPanel;
+            if (p == null || !p.HasUnappliedStagedSkin) return false;
+            p.ApplyStagedSkin();
+            return !p.HasUnappliedStagedSkin;
+        }
+
+        /// <summary>Discards the staged skin on the open panel, if any.</summary>
+        public static void DiscardActiveStagedSkin()
+        {
+            var p = _active?._content as SkinsPanel;
+            p?.ClearStagedSkin();
+        }
+
+        /// <summary>File path of the staged skin on the open panel (null when none/default).</summary>
+        public static string ActiveStagedSkinPath
+        {
+            get
+            {
+                var p = _active?._content as SkinsPanel;
+                return (p != null && !p._stagedWasDefault) ? p._stagedSkinPath : null;
+            }
+        }
+
+        /// <summary>Display name of the staged skin on the open panel (null when none).</summary>
+        public static string ActiveStagedSkinName
+        {
+            get
+            {
+                var p = _active?._content as SkinsPanel;
+                if (p == null || !p.HasUnappliedStagedSkin) return null;
+                return p.StagedDisplayName;
+            }
+        }
+
+        /// <summary>True while a Veilnet upload or sync is in flight on the open panel.</summary>
+        public static bool IsUploadInFlight
+        {
+            get
+            {
+                var p = _active?._content as SkinsPanel;
+                return p != null && (p._uploadPending || p._syncBusy);
+            }
+        }
+
         // ======================= tiny UI toolkit =======================
 
         /// <summary>Input + GDI draw helpers for panel content. Hit-testing
@@ -257,7 +316,7 @@ namespace LatticeVeil.Launcher
 
             public virtual void Shutdown() { }
 
-            public void RequestClose() => _closeRequested = true;
+            public virtual void RequestClose() => _closeRequested = true;
             public bool ConsumeClose() { var v = _closeRequested; _closeRequested = false; return v; }
 
             // Shared colors
@@ -496,6 +555,17 @@ namespace LatticeVeil.Launcher
             private string _statusMessage = "";
             private bool _uploadQueued;
 
+            // Staged (preview-only) skin: shown in 3D but not applied. Closing
+            // the panel prompts the user to apply or discard it.
+            public string _stagedSkinPath;         // null = default skin staged
+            public string _stagedSkinName;
+            public bool _stagedWasDefault;
+            public bool _stagedFromOnline;
+            private bool _applyConfirmOpen;
+            private bool _forceCloseAfterConfirm;
+            private bool _closeAfterApply;
+            public bool _uploadPending;
+
             // Last baked pose; the renderer only runs when this differs.
             private string _bakedKey;
             private bool _lastBakedLayers = true;
@@ -523,7 +593,7 @@ namespace LatticeVeil.Launcher
             private bool _onlineFetchQueued = true;          // check once when the panel opens
             private volatile OnlineResult _pendingOnline;    // worker -> Tick
             private volatile UploadResult _pendingUpload;    // worker -> Tick
-            private volatile bool _syncBusy;
+            public volatile bool _syncBusy;
             private bool _syncCheckRequested;                // SYNC button was pressed
             private bool _syncDialogOpen;                    // local-vs-online mismatch prompt
             private byte[] _onlinePngBytes;                  // bytes of the fetched online skin
@@ -583,13 +653,17 @@ namespace LatticeVeil.Launcher
                     var filePath = SkinManager.PromptSelectSkinFile();
                     if (!string.IsNullOrEmpty(filePath))
                     {
-                        if (SkinManager.ImportAndSetActiveSkin(filePath, out _, out var importedHash, Path.GetFileNameWithoutExtension(filePath)))
+                        if (SkinManager.ImportSkinToLibrary(filePath, out var importError, Path.GetFileNameWithoutExtension(filePath)))
                         {
-                            _statusMessage = "Skin imported. Uploading to Veilnet…";
-                            QueueUploadActiveSkin(importedHash, filePath);
+                            _skinPaths = GetLocalSkinPaths();
+                            _hashCache.Remove(Path.GetFullPath(filePath));
+                            _hashCache.Remove(filePath);
+                            // Upload flow: import > preview updates > apply.
+                            StageSkinForPreview(filePath, Path.GetFileNameWithoutExtension(filePath));
+                            _statusMessage = "Imported. Preview it, then press APPLY to use and upload it.";
                         }
                         else
-                            _statusMessage = $"Invalid skin: could not import.";
+                            _statusMessage = $"Invalid skin: {importError}";
                     }
                 }
 
@@ -609,6 +683,15 @@ namespace LatticeVeil.Launcher
                 }
                 if (_onlineFetchQueued)
                     QueueOnlineFetch();
+
+                // Closing the panel after an APPLY that needed an upload:
+                // close once the upload settles (or immediately when none
+                // was queued, e.g. logged out).
+                if (_closeAfterApply && !_uploadPending)
+                {
+                    _closeAfterApply = false;
+                    base.RequestClose();
+                }
             }
 
             // ---------------- Veilnet online-skin sync ----------------
@@ -813,6 +896,198 @@ namespace LatticeVeil.Launcher
                 return null;
             }
 
+            // ---------------- Preview > APPLY flow ----------------
+
+            /// <summary>
+            /// Shows a skin in the 3D preview WITHOUT applying it. When the
+            /// preview already shows this skin the stage is cleared (toggle).
+            /// </summary>
+            private void StageSkinForPreview(string path, string displayName)
+            {
+                if (string.Equals(_selectedSkinPath, path, StringComparison.OrdinalIgnoreCase)
+                    && _stagedSkinPath == _selectedSkinPath)
+                {
+                    ClearStagedSkin();
+                    _statusMessage = "Preview cleared.";
+                    return;
+                }
+
+                _stagedSkinPath = path;
+                _stagedSkinName = displayName;
+                _stagedWasDefault = false;
+                _selectedSkinPath = path;
+                _bakedKey = null;
+                _statusMessage = $"Previewing {displayName} — press APPLY to use it.";
+            }
+
+            /// <summary>Stages the default skin for preview (USE DEFAULT replacement).</summary>
+            private void StageDefaultForPreview()
+            {
+                if (_selectedSkinPath == null && _stagedSkinPath == null)
+                {
+                    ClearStagedSkin();
+                    _statusMessage = "Preview cleared.";
+                    return;
+                }
+
+                _stagedSkinPath = null;
+                _stagedSkinName = "the default skin";
+                _stagedWasDefault = true;
+                _selectedSkinPath = null;
+                _bakedKey = null;
+                _statusMessage = "Previewing the default skin — press APPLY to use it.";
+            }
+
+            /// <summary>Clears any staged (preview-only) skin.</summary>
+            public void ClearStagedSkin()
+            {
+                _stagedSkinPath = null;
+                _stagedSkinName = null;
+                _stagedWasDefault = false;
+                _stagedFromOnline = false;
+            }
+
+            /// <summary>Stages the ONLINE tab's account skin for preview.</summary>
+            private void StageOnlineForPreview()
+            {
+                if (_onlinePngPath == null)
+                {
+                    _statusMessage = "No online skin fetched yet; press SYNC.";
+                    return;
+                }
+                if (_stagedFromOnline && string.Equals(_selectedSkinPath, _onlinePngPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    ClearStagedSkin();
+                    _statusMessage = "Preview cleared.";
+                    return;
+                }
+
+                _stagedSkinPath = _onlinePngPath;
+                _stagedSkinName = string.IsNullOrWhiteSpace(_onlineName) ? "your online skin" : _onlineName;
+                _stagedWasDefault = false;
+                _stagedFromOnline = true;
+                _selectedSkinPath = _onlinePngPath;
+                _bakedKey = null;
+                _statusMessage = "Previewing your online skin — press APPLY to use it.";
+            }
+
+            /// <summary>True when the preview shows a skin that is not applied.</summary>
+            public bool HasUnappliedStagedSkin => _stagedSkinPath != null || _stagedWasDefault;
+
+            /// <summary>
+            /// Applies the staged skin: activates it locally (runtime cache +
+            /// library entry for new imports) and pushes it to the Veilnet
+            /// account in the background when logged in.
+            /// </summary>
+            public void ApplyStagedSkin()
+            {
+                if (_stagedFromOnline)
+                {
+                    ApplyOnlineAsLatest();
+                    ClearStagedSkin();
+                    return;
+                }
+                if (_stagedWasDefault)
+                {
+                    SkinManager.ClearActiveSkin();
+                    SelectDefaultPreview();
+                    ClearStagedSkin();
+                    _statusMessage = "Reverted to the default skin.";
+                    return;
+                }
+                if (string.IsNullOrEmpty(_stagedSkinPath)) return;
+
+                var path = _stagedSkinPath;
+                var name = _stagedSkinName;
+                if (!File.Exists(path))
+                {
+                    _statusMessage = $"{name} is no longer on disk.";
+                    ClearStagedSkin();
+                    return;
+                }
+
+                if (SkinManager.ImportAndSetActiveSkin(path, out var error, out var hash,
+                        Path.GetFileNameWithoutExtension(path)))
+                {
+                    _selectedSkinPath = path;
+                    _bakedKey = null;
+                    ClearStagedSkin();
+                    _statusMessage = "Applied locally. Uploading to Veilnet…";
+                    QueueUploadActiveSkin(hash, path);
+                }
+                else
+                {
+                    _statusMessage = $"Could not apply skin: {error}";
+                }
+            }
+
+            /// <summary>
+            /// APPLY clicked on a row: stages (if needed) then applies
+            /// immediately — the "already in the list" shortcut.
+            /// </summary>
+            private void ApplyRowSkin(string path, string displayName)
+            {
+                StageSkinForPreview(path, displayName);
+                if (string.Equals(_stagedSkinPath, path, StringComparison.OrdinalIgnoreCase))
+                    ApplyStagedSkin();
+            }
+
+            public string StagedDisplayName
+                => _stagedWasDefault ? "the default skin" : (_stagedSkinName ?? "a skin");
+
+            /// <summary>Number of skins staged for preview (0 or 1).</summary>
+            private int ActiveStagedCount => HasUnappliedStagedSkin ? 1 : 0;
+
+            public override void RequestClose()
+            {
+                // Closing with an unapplied staged skin asks the user first:
+                // apply it, or throw the preview away.
+                if (HasUnappliedStagedSkin && !_applyConfirmOpen)
+                {
+                    _applyConfirmOpen = true;
+                    _closeAfterApply = false;
+                    return;
+                }
+                _applyConfirmOpen = false;
+                base.RequestClose();
+            }
+
+            /// <summary>Confirm dialog shown when closing with a staged skin.</summary>
+            private void DrawApplyConfirmDialog(PanelUI ui, Rect panelRect)
+            {
+                const float w = 430f, h = 190f;
+                var box = new Rect((panelRect.width - w) * 0.5f, (panelRect.height - h) * 0.5f, w, h);
+                ui.Fill(box, new Color(0.12f, 0.12f, 0.14f));
+                ui.Frame(box, Accent);
+
+                ui.Label(new Rect(box.x + 16, box.y + 14, w - 32, 24), "APPLY THIS SKIN?", 13, Text, bold: true);
+
+                const float thumb = 64f;
+                bool hasThumb = !_stagedWasDefault && !string.IsNullOrEmpty(_stagedSkinPath)
+                    && File.Exists(_stagedSkinPath);
+                if (hasThumb)
+                    ui.Image(new Rect(box.x + 16, box.y + 46, thumb, thumb), _stagedSkinPath);
+                var textX = box.x + 16 + (hasThumb ? thumb + 12 : 0);
+                ui.Label(new Rect(textX, box.y + 46, w - 32 - (hasThumb ? thumb + 12 : 0), 60),
+                    $"You are previewing {StagedDisplayName}.\n\nApply it before closing, or discard the preview.", 11, Dim);
+
+                float by = box.y + h - 44;
+                if (ui.Button(new Rect(box.x + 16, by, 150, 32), "APPLY & CLOSE", 11, BtnBg, BtnHover, Text))
+                {
+                    _applyConfirmOpen = false;
+                    _closeAfterApply = true;
+                    ApplyStagedSkin();
+                }
+                if (ui.Button(new Rect(box.x + 178, by, 190, 32), "CLOSE WITHOUT APPLYING", 11, BtnBg, BtnHover, Text))
+                {
+                    _applyConfirmOpen = false;
+                    ClearStagedSkin();
+                    RequestClose();
+                }
+                if (ui.Button(new Rect(box.x + w - 44, box.y + 10, 28, 24), "X", 11, BtnBg, BtnHover, Text))
+                    _applyConfirmOpen = false; // stay in the panel
+            }
+
             /// <summary>
             /// REMOVE on the ONLINE row: saves the account skin into the local
             /// library (never overwriting a different skin under the same name)
@@ -881,12 +1156,14 @@ namespace LatticeVeil.Launcher
             {
                 if (_syncBusy) { _statusMessage = "Another sync operation is running; try again in a moment."; return; }
                 _syncBusy = true;
+                _uploadPending = true;
                 var client = _syncClient ?? (_syncClient = VeilnetSession.CreateClient(auth));
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {
                     var (ok, error) = client.UploadSkinAsync(hash, png).GetAwaiter().GetResult();
                     _pendingUpload = new UploadResult { Ok = ok, Error = error, Hash = hash };
                     _syncBusy = false;
+                    _uploadPending = false;
                 });
             }
 
@@ -995,7 +1272,7 @@ namespace LatticeVeil.Launcher
 
                     float rowY = list.y + 4;
                     DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), "DEFAULT SKIN", null,
-                        string.IsNullOrWhiteSpace(activeHash), "USE DEFAULT",
+                        string.IsNullOrWhiteSpace(activeHash), SkinRowMode.Default,
                         defaultUploaded ? "UPLOADED" : null);
                     rowY += rowH;
 
@@ -1017,7 +1294,7 @@ namespace LatticeVeil.Launcher
                             rowBadge = string.Equals(rowHash, uploadedMarker, StringComparison.OrdinalIgnoreCase) ? "UPLOADED" : "DOWNLOADED";
                         else if (string.IsNullOrEmpty(_onlineHash) && !string.IsNullOrEmpty(uploadedMarker) && string.Equals(rowHash, uploadedMarker, StringComparison.OrdinalIgnoreCase))
                             rowBadge = "UPLOADED";
-                        DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), name, path, isActive, "USE",
+                        DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), name, path, isActive, SkinRowMode.Local,
                             rowBadge);
                         rowY += rowH;
                     }
@@ -1072,6 +1349,8 @@ namespace LatticeVeil.Launcher
 
                 if (_syncDialogOpen)
                     DrawSyncDialog(ui, panelRect);
+                if (_applyConfirmOpen)
+                    DrawApplyConfirmDialog(ui, panelRect);
             }
 
             /// <summary>"Local and online differ" prompt: the user picks which one is the latest.</summary>
@@ -1310,12 +1589,12 @@ namespace LatticeVeil.Launcher
                     DrawSkinRow(ui, rowRect, "DEFAULT SKIN (ONLINE)", null,
                         string.IsNullOrWhiteSpace(activeHash)
                             || string.Equals(activeHash, "default_skin", StringComparison.OrdinalIgnoreCase),
-                        "USE DEFAULT", "UPLOADED");
+                        SkinRowMode.OnlineDefault, "UPLOADED");
                 }
                 else if (_onlinePngPath != null)
                 {
                     var onlineIsActive = string.Equals(activeHash, _onlineHash, StringComparison.OrdinalIgnoreCase);
-                    DrawSkinRow(ui, rowRect, _onlineName, _onlinePngPath, onlineIsActive, "USE", "UPLOADED");
+                    DrawSkinRow(ui, rowRect, _onlineName, _onlinePngPath, onlineIsActive, SkinRowMode.Online, "UPLOADED");
                 }
                 else
                 {
@@ -1325,49 +1604,69 @@ namespace LatticeVeil.Launcher
                 ui.EndList();
             }
 
-            private void DrawSkinRow(PanelUI ui, Rect row, string displayName, string path, bool isActive, string useText, string badge = null)
+            /// <summary>Which button set a skin row shows.</summary>
+            private enum SkinRowMode { Local, Default, Online, OnlineDefault }
+
+            private void DrawSkinRow(PanelUI ui, Rect row, string displayName, string path, bool isActive, SkinRowMode mode, string badge = null)
             {
                 bool hover = row.Contains(ui.Mouse);
+                bool isOnlineRow = mode == SkinRowMode.Online || mode == SkinRowMode.OnlineDefault;
                 if (hover && ui.Clicked && path != null) _selectedSkinPath = path;
-                bool isOnlineRow = path != null && path == _onlinePngPath;
                 ui.Fill(row, hover ? RowHover : RowBg);
                 ui.Frame(row, new Color(0.18f, 0.18f, 0.20f));
 
                 if (path != null)
                     ui.Image(new Rect(row.x + 8, row.y + 8, 58, 58), path);
 
-                ui.Label(new Rect(row.x + 74, row.y + 8, row.width - 190, 22), displayName, 14, Text, bold: true);
-                var status = isActive ? "ACTIVE" : "";
+                // Highlight when this row is the staged (preview-only) skin.
+                bool isStaged = (mode == SkinRowMode.Default && _stagedWasDefault)
+                    || (!isOnlineRow && path != null && string.Equals(_stagedSkinPath, path, StringComparison.OrdinalIgnoreCase));
+
+                float textW = row.width - 320; // leave room for PREVIEW/APPLY/REMOVE
+                ui.Label(new Rect(row.x + 74, row.y + 8, textW, 22), displayName, 14,
+                    isStaged ? Accent : Text, bold: true);
+                var status = isActive ? "ACTIVE" : (isStaged ? "PREVIEWING" : "");
                 if (badge != null)
                     status = string.IsNullOrEmpty(status) ? badge : status + "  ·  " + badge;
-                ui.Label(new Rect(row.x + 74, row.y + 32, row.width - 190, 18), status, 11,
-                    isActive ? Accent : OnlineGreen);
+                ui.Label(new Rect(row.x + 74, row.y + 32, textW, 18), status, 11,
+                    isActive ? Accent : (isStaged ? Accent : OnlineGreen));
 
-                var useRect = new Rect(row.x + row.width - 106, row.y + 8, 96, 28);
-                if (ui.Button(useRect, useText, 11, BtnBg, BtnHover, Text) && !isActive)
+                float bx = row.x + row.width - 226;
+
+                // PREVIEW: shows the skin in the 3D pane (no changes made).
+                var previewRect = new Rect(bx, row.y + 8, 96, 28);
+                if (ui.Button(previewRect, "PREVIEW", 11, BtnBg, BtnHover, Text))
                 {
-                    if (path == null)
+                    if (path == null) StageDefaultForPreview();
+                    else if (isOnlineRow) StageOnlineForPreview();
+                    else StageSkinForPreview(path, displayName);
+                }
+
+                // APPLY: puts the skin into use (local + upload to account).
+                var applyRect = new Rect(bx, row.y + 40, 96, 24);
+                string applyLabel = isActive ? "APPLIED" : "APPLY";
+                if (ui.Button(applyRect, applyLabel, 10, BtnBg, BtnHover, Text) && !isActive)
+                {
+                    if (mode == SkinRowMode.Default)
                     {
                         SkinManager.ClearActiveSkin();
                         SelectDefaultPreview();
+                        ClearStagedSkin();
                         _statusMessage = "Reverted to the default skin.";
                     }
                     else if (isOnlineRow)
                     {
-                        // The ONLINE row's USE downloads/applies through the
-                        // dedupe-aware path (no duplicate library entries).
                         ApplyOnlineAsLatest();
                     }
                     else
                     {
-                        var applied = SkinManager.ImportAndSetActiveSkin(path, out var importError, out _, Path.GetFileNameWithoutExtension(path));
-                        _statusMessage = applied ? $"Applied {displayName}." : $"Could not apply skin: {importError}";
+                        ApplyRowSkin(path, displayName);
                     }
                 }
 
                 if (path != null)
                 {
-                    var removeRect = new Rect(row.x + row.width - 106, row.y + 40, 96, 24);
+                    var removeRect = new Rect(row.x + row.width - 106, row.y + 8, 96, 28);
                     if (ui.Button(removeRect, "REMOVE", 11, BtnBg, BtnHover, Text))
                     {
                         if (isOnlineRow)
@@ -1383,6 +1682,8 @@ namespace LatticeVeil.Launcher
                             {
                                 File.Delete(path);
                                 if (string.Equals(_selectedSkinPath, path)) _selectedSkinPath = null;
+                                if (string.Equals(_stagedSkinPath, path, StringComparison.OrdinalIgnoreCase)) ClearStagedSkin();
+                                _skinPaths = GetLocalSkinPaths();
                                 _statusMessage = $"Removed {displayName}.";
                             }
                             catch

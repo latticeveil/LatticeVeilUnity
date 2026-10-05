@@ -163,6 +163,7 @@ namespace LatticeVeil.Launcher
         private Texture2D _avatarTexture;
         private Texture2D _skinHeadTexture;
         private string _lastActiveSkinHashSeen;    // watches active.txt so faces update without a restart
+        private bool _skinWatcherSeeded;           // first watcher read adopts the file state (no spurious change)
         private GUIStyle _avatarInitialsStyle;
         private bool _veilnetProfileRefreshRunning;
         private Texture2D _greenBarTex;
@@ -940,6 +941,16 @@ namespace LatticeVeil.Launcher
                 var hash = string.Empty;
                 if (File.Exists(Paths.ActiveSkinHashPath))
                     hash = File.ReadAllText(Paths.ActiveSkinHashPath).Trim();
+                if (!_skinWatcherSeeded)
+                {
+                    // First tick: adopt whatever active.txt already contains
+                    // (auto-sync may have applied a skin before this watcher
+                    // started) instead of firing a spurious change. The head
+                    // texture is loaded separately at startup.
+                    _skinWatcherSeeded = true;
+                    _lastActiveSkinHashSeen = hash;
+                    return;
+                }
                 if (string.Equals(hash, _lastActiveSkinHashSeen, StringComparison.Ordinal)) return;
                 _lastActiveSkinHashSeen = hash;
 
@@ -2298,12 +2309,12 @@ namespace LatticeVeil.Launcher
             {
                 var autoUpdatesText = _settings.AutoUpdateChecksEnabled ? "Automatic Update Checks: Enabled" : "Automatic Update Checks: Disabled";
                 GUI.Label(new Rect(contentX, tabBodyY, contentWidth, 28), autoUpdatesText, _sectionHeaderStyle);
-                GUI.Label(new Rect(contentX, tabBodyY + 34, contentWidth, 24), _settings.AutoInstallUpdatesEnabled
+                GUI.Label(new Rect(contentX, tabBodyY + 42, contentWidth, 24), _settings.AutoInstallUpdatesEnabled
                     ? "Automatic Update Install: Enabled (latest version installs silently)"
                     : "Automatic Update Install: Disabled (prompt on new release)", _labelStyle);
-                GUI.Label(new Rect(contentX, tabBodyY + 62, contentWidth, 28), $"Current Channel: {(Paths.IsDevBuild ? "DEV" : "Release")}", _labelStyle);
-                GUI.Label(new Rect(contentX, tabBodyY + 94, contentWidth, 28), $"Build Hash: {(_hashVerified ? "Verified Official" : "Unverified")}", _labelStyle);
-                GUI.Label(new Rect(contentX, tabBodyY + 130, contentWidth, 28), $"Texture Downloads: {(_settings.AutoTextureDownloadsEnabled ? "Automatic Sync" : "Manual / Preserved")}", _labelStyle);
+                GUI.Label(new Rect(contentX, tabBodyY + 74, contentWidth, 28), $"Current Channel: {(Paths.IsDevBuild ? "DEV" : "Release")}", _labelStyle);
+                GUI.Label(new Rect(contentX, tabBodyY + 106, contentWidth, 28), $"Build Hash: {(_hashVerified ? "Verified Official" : "Unverified")}", _labelStyle);
+                GUI.Label(new Rect(contentX, tabBodyY + 142, contentWidth, 28), $"Texture Downloads: {(_settings.AutoTextureDownloadsEnabled ? "Automatic Sync" : "Manual / Preserved")}", _labelStyle);
             }
             else if (_settingsTabIndex == 2) // Cleanup Tab
             {
@@ -3012,7 +3023,7 @@ namespace LatticeVeil.Launcher
             var listContent = new Rect(listRect.x + 8, listRect.y + 8, listRect.width - 16, 74 + ((skinPaths.Length + 1) * 82));
             _skinLibraryScroll = GUI.BeginScrollView(listRect, _skinLibraryScroll, listContent, false, true);
             var rowY = listContent.y;
-            DrawSkinLibraryRow(new Rect(listContent.x, rowY, listContent.width, 74), "DEFAULT SKIN", null, string.IsNullOrWhiteSpace(activeHash), "DEFAULT", "USE DEFAULT");
+            DrawSkinLibraryRow(new Rect(listContent.x, rowY, listContent.width, 74), "DEFAULT SKIN", null, string.IsNullOrWhiteSpace(activeHash), "DEFAULT", "APPLY");
             rowY += 82;
             foreach (var path in skinPaths)
             {
@@ -3020,7 +3031,7 @@ namespace LatticeVeil.Launcher
                 var hash = name.Length >= 12 ? name.Substring(0, 12).ToUpperInvariant() : name.ToUpperInvariant();
                 var isActive = string.Equals(name, activeHash, StringComparison.OrdinalIgnoreCase);
                 var status = isActive ? "ACTIVE" : (IsLayeredSkin(path) ? "LAYERED" : "");
-                DrawSkinLibraryRow(new Rect(listContent.x, rowY, listContent.width, 74), name, path, isActive, status, "USE");
+                DrawSkinLibraryRow(new Rect(listContent.x, rowY, listContent.width, 74), name, path, isActive, status, "APPLY");
                 rowY += 82;
             }
             GUI.EndScrollView();
@@ -3057,10 +3068,10 @@ namespace LatticeVeil.Launcher
             }
 
             var footerY = modalRect.y + 476;
-            var uploadRect = new Rect(modalRect.x + 18, footerY, 110, 38);
-            if (GUI.Button(uploadRect, "UPLOAD", _buttonStyle))
+            var uploadRect = new Rect(modalRect.x + 18, footerY, 132, 38);
+            if (GUI.Button(uploadRect, "+ ADD SKIN", _buttonStyle))
                 ImportSkinIntoLibrary();
-            var folderRect = new Rect(modalRect.x + 140, footerY, 110, 38);
+            var folderRect = new Rect(modalRect.x + 158, footerY, 110, 38);
             if (GUI.Button(folderRect, "FOLDER", _buttonStyle))
                 OpenSkinLibraryFolder();
             GUI.Label(new Rect(modalRect.x + 18, modalRect.y + 456, 360, 18), "Drop a 64x64 PNG here to import it.", _switchSubLabelStyle);
@@ -3264,12 +3275,14 @@ namespace LatticeVeil.Launcher
         {
             var path = SkinManager.PromptSelectSkinFile();
             if (string.IsNullOrWhiteSpace(path)) return;
-            if (!SkinManager.ImportAndSetActiveSkin(path, out var error, out var hash, null))
+            // Parity with the floating panel's "+ ADD SKIN": import only —
+            // the new skin is shown in the preview; APPLY activates it.
+            if (!SkinManager.ImportSkinToLibrary(path, out var error, Path.GetFileNameWithoutExtension(path)))
             {
                 _skinStatusMessage = $"Skin import failed: {error}";
                 return;
             }
-            _selectedSkinLibraryPath = Path.Combine(Paths.UserSkinsDir, $"{hash}.png");
+            _selectedSkinLibraryPath = Path.Combine(Paths.UserSkinsDir, $"{Path.GetFileNameWithoutExtension(path)}.png");
             LoadSkinLibraryPreview(_selectedSkinLibraryPath);
         }
 

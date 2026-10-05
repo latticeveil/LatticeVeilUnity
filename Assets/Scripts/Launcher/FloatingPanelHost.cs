@@ -795,6 +795,18 @@ namespace LatticeVeil.Launcher
                     catch { s.CachedPath = null; }
                 }
 
+                // Prune cache PNGs for slots that no longer exist on the
+                // account (e.g. removed on the website or another PC).
+                try
+                {
+                    var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var s in _onlineSkins)
+                        if (s.CachedPath != null) keep.Add(s.CachedPath);
+                    foreach (var f in Directory.GetFiles(Core.Paths.RuntimeSkinsDir, "Veilnet_online_*.png"))
+                        if (!keep.Contains(f)) File.Delete(f);
+                }
+                catch { }
+
                 // Primary skin (slot 0, or lowest present) keeps the legacy single-skin fields.
                 var primary = _onlineSkins.Count > 0 ? _onlineSkins[0] : null;
                 _onlineHash = primary?.Hash ?? "";
@@ -1241,6 +1253,14 @@ namespace LatticeVeil.Launcher
                     if (r.Ok)
                     {
                         _onlineSkins.RemoveAll(s => s.Slot == r.Slot);
+                        // Drop the removed slot's runtime cache PNG so it
+                        // doesn't linger as an orphan.
+                        try
+                        {
+                            var cache = Path.Combine(Core.Paths.RuntimeSkinsDir, $"Veilnet_online_{r.Slot}.png");
+                            if (File.Exists(cache)) File.Delete(cache);
+                        }
+                        catch { }
                         _onlineIsDefault = _onlineSkins.Count == 0;
                         _onlineFetchQueued = true;
                         _statusMessage = $"Removed {removedName} from your account ({_onlineSkins.Count}/{SupabaseSkinClient.MaxSkinsPerUser} still used).";
@@ -1291,10 +1311,15 @@ namespace LatticeVeil.Launcher
                         + "Remove one on the Veilnet website to free a slot.";
                     _uploadInfoOpen = true;
                     _statusMessage = "Upload blocked — online library is full (5/5).";
+                    // The slot count this upload was computed from may be stale.
+                    _onlineFetchQueued = true;
                     return;
                 }
 
                 _statusMessage = $"Upload failed: {r.Error}";
+                // Failed upload: the free slot computed before the attempt is
+                // stale — re-fetch so a retry targets a fresh slot.
+                _onlineFetchQueued = true;
             }
 
             /// <summary>
@@ -1529,7 +1554,7 @@ namespace LatticeVeil.Launcher
                 DrawPreview(ui, previewViewport, panelRect);
 
                 if (!string.IsNullOrEmpty(_statusMessage))
-                    ui.Label(new Rect(16, panelRect.height - 40, panelRect.width - 32, 26), _statusMessage, 12, Dim);
+                    ui.Label(new Rect(16, panelRect.height - 48, panelRect.width - 32, 40), _statusMessage, 12, Dim, wrap: true);
 
                 // Bottom-left: tab-dependent action — "+ ADD SKIN" imports
                 // into the local library, UPLOAD ships a file straight to the
@@ -1539,7 +1564,7 @@ namespace LatticeVeil.Launcher
                 if (onlineTab)
                 {
                     var uploadRect = new Rect(16, actionY, 150, 38);
-                    if (ui.Button(uploadRect, "UPLOAD", 11, BtnBg, BtnHover, Text))
+                    if (ui.Button(uploadRect, "UPLOAD", 11, Accent, BtnHover, Text))
                         _onlineUploadQueued = true;
                     var syncRect = new Rect(174, actionY, 110, 38);
                     if (ui.Button(syncRect, _syncBusy ? "…" : "SYNC", 11, BtnBg, BtnHover, Text))
@@ -1591,7 +1616,7 @@ namespace LatticeVeil.Launcher
             /// </summary>
             private void DrawRemoveConfirmDialog(PanelUI ui, Rect panelRect)
             {
-                const float w = 470f, h = 230f;
+                const float w = 470f, h = 268f;
                 var box = new Rect((panelRect.width - w) * 0.5f, (panelRect.height - h) * 0.5f, w, h);
                 ui.Fill(box, new Color(0.14f, 0.09f, 0.07f));
                 ui.Frame(box, new Color(0.95f, 0.55f, 0.25f)); // warning orange
@@ -1605,9 +1630,15 @@ namespace LatticeVeil.Launcher
                 if (hasThumb)
                     ui.Image(new Rect(box.x + 16, box.y + 48, thumb, thumb), _removeTarget.CachedPath);
                 var textX = box.x + 16 + (hasThumb ? thumb + 12 : 0);
-                ui.Label(new Rect(textX, box.y + 48, w - 32 - (hasThumb ? thumb + 12 : 0), 90),
-                    "Removing the ONLINE copy ends its sync: it disappears from every device logged into your account, and its slot frees up.\n\n"
-                    + "Any device currently wearing it keeps it until a new skin is applied.", 11, Text, wrap: true);
+                // Slot 1 (slot 0) is the primary skin: the game and the
+                // website use it as the player's active skin.
+                bool isPrimary = _removeTarget != null && _removeTarget.Slot == 0;
+                var removeInfo = "Removing the ONLINE copy ends its sync: it disappears from every device logged into your account, and its slot frees up.\n\n"
+                    + "Any device currently wearing it keeps it until a new skin is applied.";
+                if (isPrimary)
+                    removeInfo += "\n\nNOTE: This is your PRIMARY skin (slot 1) — the game and your website profile use it as your active skin until you pick another.";
+                ui.Label(new Rect(textX, box.y + 48, w - 32 - (hasThumb ? thumb + 12 : 0), 150),
+                    removeInfo, 11, Text, wrap: true);
 
                 float by = box.y + h - 44;
                 if (ui.Button(new Rect(box.x + 16, by, 200, 32), "BACKUP TO LOCAL + REMOVE", 10, BtnBg, BtnHover, Text))
@@ -1641,10 +1672,17 @@ namespace LatticeVeil.Launcher
                     }
 
                     Directory.CreateDirectory(Core.Paths.UserSkinsDir);
-                    var dest = Path.Combine(Core.Paths.UserSkinsDir, "Veilnet_backup.png");
+                    // Named backup: "MCSKIN_backup.png" instead of an
+                    // anonymous "Veilnet_backup.png".
+                    var clean = (skin.Name ?? string.Empty).Trim();
+                    foreach (var ch in Path.GetInvalidFileNameChars())
+                        clean = clean.Replace(ch, '_');
+                    if (string.IsNullOrWhiteSpace(clean.Replace("_", string.Empty)))
+                        clean = "Veilnet";
+                    var dest = Path.Combine(Core.Paths.UserSkinsDir, $"{clean}_backup.png");
                     for (int i = 2; File.Exists(dest)
                          && !string.Equals(GetSkinHashCached(dest), skin.Hash, StringComparison.OrdinalIgnoreCase); i++)
-                        dest = Path.Combine(Core.Paths.UserSkinsDir, $"Veilnet_backup_{i}.png");
+                        dest = Path.Combine(Core.Paths.UserSkinsDir, $"{clean}_backup_{i}.png");
 
                     File.WriteAllBytes(dest, bytes);
                     _skinPaths = GetLocalSkinPaths();
@@ -1948,11 +1986,11 @@ namespace LatticeVeil.Launcher
                 float contentH = 8 + (maxSkins + 1) * rowH;
                 var list = ui.BeginList(listRect, contentH, ref _onlineScroll);
 
-                // Slot usage indicator: "3/5 SKINS USED".
+                // Slot usage indicator: "X/5 SKINS USED".
                 var used = _onlineSkins.Count;
                 var meterColor = used >= maxSkins ? OnlineGreen : Accent;
                 ui.Label(new Rect(list.x + 8, list.y + 2, list.width - 16, 22),
-                    $"{used}/{maxSkins} SKINS USED" + (_onlineIsDefault ? "   ·   NOTHING UPLOADED YET" : ""),
+                    $"{used}/{maxSkins} SKINS USED",
                     12, meterColor, bold: true);
 
                 float rowY = list.y + 26;
@@ -1965,21 +2003,32 @@ namespace LatticeVeil.Launcher
                     rowY += rowH;
                 }
 
-                // Empty slots stay visible so the 5-slot capacity is obvious.
-                for (int slot = 0; slot < maxSkins; slot++)
+                // While the first fetch is in flight, say so instead of
+                // showing empty slots (they read as "nothing uploaded").
+                if (_syncBusy && used == 0)
                 {
-                    if (_onlineSkins.FindIndex(s => s.Slot == slot) >= 0) continue;
-                    var rowRect = new Rect(4, rowY, list.width - 10, rowH - 6);
-                    ui.Fill(rowRect, RowBg);
-                    ui.Frame(rowRect, new Color(0.14f, 0.14f, 0.16f));
-                    ui.Label(new Rect(rowRect.x + 74, rowRect.y + 8, rowRect.width - 90, 22),
-                        $"EMPTY SLOT {slot + 1}", 13, Dim);
-                    ui.Label(new Rect(rowRect.x + 74, rowRect.y + 32, rowRect.width - 90, 18),
-                        "Upload a skin from the LOCAL tab (APPLY)", 11, Dim);
+                    ui.Label(new Rect(4, rowY + 14, list.width - 20, 24),
+                        "FETCHING YOUR SKINS…", 13, Accent, bold: true);
                     rowY += rowH;
                 }
+                else
+                {
+                    // Empty slots stay visible so the 5-slot capacity is obvious.
+                    for (int slot = 0; slot < maxSkins; slot++)
+                    {
+                        if (_onlineSkins.FindIndex(s => s.Slot == slot) >= 0) continue;
+                        var rowRect = new Rect(4, rowY, list.width - 10, rowH - 6);
+                        ui.Fill(rowRect, RowBg);
+                        ui.Frame(rowRect, new Color(0.14f, 0.14f, 0.16f));
+                        ui.Label(new Rect(rowRect.x + 74, rowRect.y + 8, rowRect.width - 90, 22),
+                            $"EMPTY SLOT {slot + 1}", 13, Dim);
+                        ui.Label(new Rect(rowRect.x + 74, rowRect.y + 32, rowRect.width - 90, 18),
+                            "Press UPLOAD (bottom-left) to add a skin to this slot", 11, Dim);
+                        rowY += rowH;
+                    }
+                }
 
-                if (used == 0)
+                if (used == 0 && !_syncBusy)
                     ui.Label(new Rect(list.x + 8, rowY + 4, list.width - 16, 22),
                         "Nothing fetched yet — press SYNC to load your account's skins.", 11, Dim);
                 ui.EndList();

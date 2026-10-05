@@ -244,6 +244,9 @@ namespace LatticeVeil.Launcher
         private GUIStyle _friendsLabelStyle;
         private GUIStyle _friendsSubLabelStyle;
         private GUIStyle _friendsHeaderStyle;
+        private GUIStyle _skinsLabelStyle;
+        private GUIStyle _skinsSubLabelStyle;
+        private GUIStyle _skinsHeaderStyle;
         private GUIStyle _logStyle;
         private GUIStyle _topBarStyle;
         private GUIStyle _textFieldStyle;
@@ -3232,14 +3235,14 @@ namespace LatticeVeil.Launcher
             }
             else
             {
-                GUI.Label(previewImgRect, "Generating 3D Preview...", _labelStyle);
+                GUI.Label(previewImgRect, "Generating 3D Preview...", _skinsSubLabelStyle);
             }
 
             var previewBadgeRect = new Rect(previewBoxRect.x + 10, previewBoxRect.y + 330, previewBoxRect.width - 20, 22);
             GUI.Label(previewBadgeRect, "3D MODEL PREVIEW", _versionSubtitleStyle);
 
             var previewSubRect = new Rect(previewBoxRect.x + 10, previewBoxRect.y + 354, previewBoxRect.width - 20, 20);
-            GUI.Label(previewSubRect, "Drag with mouse to rotate model", _switchSubLabelStyle);
+            GUI.Label(previewSubRect, "Drag with mouse to rotate model", _skinsSubLabelStyle);
 
             // Reset Rotation / Position button
             var resetRotBtnRect = new Rect(previewBoxRect.x + 24, previewBoxRect.y + 386, previewBoxRect.width - 48, 32);
@@ -3260,7 +3263,7 @@ namespace LatticeVeil.Launcher
             var rightColWidth = modalRect.width - (rightColX - modalRect.x) - 24;
             var rightColY = contentY;
 
-            GUI.Label(new Rect(rightColX, rightColY, rightColWidth, 26), "ACTIVE CHARACTER SKIN", _sectionHeaderStyle);
+            GUI.Label(new Rect(rightColX, rightColY, rightColWidth, 26), "ACTIVE CHARACTER SKIN", _skinsHeaderStyle);
             rightColY += 30;
 
             // Info box
@@ -3268,11 +3271,11 @@ namespace LatticeVeil.Launcher
             GUI.Box(infoBoxRect, "", _boxStyle);
 
             var hasBackup = SkinManager.HasBackup();
-            GUI.Label(new Rect(infoBoxRect.x + 12, infoBoxRect.y + 10, infoBoxRect.width - 24, 20), $"Backup State: {(hasBackup ? "Previous skin backup saved (Reversible)" : "No backup saved")}", _labelStyle);
+            GUI.Label(new Rect(infoBoxRect.x + 12, infoBoxRect.y + 10, infoBoxRect.width - 24, 20), $"Backup State: {(hasBackup ? "Previous skin backup saved (Reversible)" : "No backup saved")}", _skinsLabelStyle);
             var statusMsg = !string.IsNullOrEmpty(_skinSyncStatusMessage)
                 ? _skinSyncStatusMessage
                 : (string.IsNullOrEmpty(_skinStatusMessage) ? "Ready to customize." : _skinStatusMessage);
-            GUI.Label(new Rect(infoBoxRect.x + 12, infoBoxRect.y + 34, infoBoxRect.width - 24, 24), $"Status: {statusMsg}", _switchSubLabelStyle);
+            GUI.Label(new Rect(infoBoxRect.x + 12, infoBoxRect.y + 34, infoBoxRect.width - 24, 24), $"Status: {statusMsg}", _skinsSubLabelStyle);
             rightColY += 78;
 
             // Action Buttons
@@ -3473,7 +3476,7 @@ namespace LatticeVeil.Launcher
             rightColY += btnHeight + 14;
 
             var noteRect = new Rect(rightColX, rightColY, rightColWidth, 38);
-            GUI.Label(noteRect, "Skins are saved in your LatticeVeil profile and synchronized across all worlds.", _labelStyle);
+            GUI.Label(noteRect, "Skins are saved in your LatticeVeil profile and synchronized across all worlds.", _skinsLabelStyle);
 
             // Confirmation Popup Modal (Apply / Reset)
             if (_showSkinApplyConfirmDialog)
@@ -3510,7 +3513,7 @@ namespace LatticeVeil.Launcher
                     GUI.Label(cTitleRect, "Reset Character Skin", _titleStyle);
                     GUI.Label(cMsgRect,
                         "Notice: This will reset your active character skin to the baseline default skin and synchronize this reset with your Veilnet cloud profile.\n\nAre you sure you want to apply this reset?",
-                        _labelStyle);
+                        _skinsLabelStyle);
 
                     if (GUI.Button(confirmBtnRect, "CONFIRM & RESET", _logoutButtonStyle))
                     {
@@ -3560,7 +3563,7 @@ namespace LatticeVeil.Launcher
                     GUI.Label(cTitleRect, "Apply Character Skin", _titleStyle);
                     GUI.Label(cMsgRect,
                         "Apply this skin to your profile? This will save it locally and synchronize it with your Veilnet cloud profile.",
-                        _labelStyle);
+                        _skinsLabelStyle);
 
                     if (GUI.Button(confirmBtnRect, "CONFIRM & APPLY", _logoutButtonStyle))
                     {
@@ -3656,7 +3659,7 @@ namespace LatticeVeil.Launcher
                 GUI.Label(rTitleRect, "Revert Character Skin", _titleStyle);
                 GUI.Label(rMsgRect,
                     "Choose which version of your skin you would like to restore:\n\n• LOCAL BACKUP: Restores the previous backup saved on this machine.\n• VEILNET (ONLINE): Restores the skin currently stored in your Veilnet account.",
-                    _labelStyle);
+                    _skinsLabelStyle);
 
                 var rBtnW = (revertRect.width - 52) / 3f;
                 var localBtnRect = new Rect(revertRect.x + 16, revertRect.y + revertH - 52, rBtnW, 38);
@@ -3877,7 +3880,7 @@ namespace LatticeVeil.Launcher
             var folderRect = new Rect(modalRect.x + 158, footerY, 110, 38);
             if (GUI.Button(folderRect, "FOLDER", _buttonStyle))
                 OpenSkinLibraryFolder();
-            GUI.Label(new Rect(modalRect.x + 18, modalRect.y + 456, 360, 18), "Drop a 64x64 PNG here to import it.", _switchSubLabelStyle);
+            GUI.Label(new Rect(modalRect.x + 18, modalRect.y + 456, 360, 20), "Drop a 64x64 PNG here to import it.", _skinsSubLabelStyle);
 
             HandleSkinLibraryDrag(previewRect);
         }
@@ -3889,7 +3892,7 @@ namespace LatticeVeil.Launcher
             var thumb = LoadSkinLibraryThumb(path);
             if (thumb != null)
                 GUI.DrawTexture(thumbRect, thumb, ScaleMode.ScaleToFit);
-            GUI.Label(new Rect(rowRect.x + 74, rowRect.y + 8, 150, 22), displayName, _switchLabelStyle);
+            GUI.Label(new Rect(rowRect.x + 74, rowRect.y + 7, 170, 24), displayName, _skinsLabelStyle);
             GUI.Label(new Rect(rowRect.x + 74, rowRect.y + 32, 150, 18), status, _versionSubtitleStyle);
 
             var useRect = new Rect(rowRect.x + rowRect.width - 112, rowRect.y + 8, 100, 28);
@@ -4439,6 +4442,11 @@ namespace LatticeVeil.Launcher
             _friendsHeaderStyle.fontStyle = FontStyle.Bold;
             _friendsHeaderStyle.normal.textColor = new Color(1f, 1f, 1f, 1f);
             _friendsHeaderStyle.alignment = TextAnchor.MiddleLeft;
+
+            // Skins text styles: same enlarged/bold/bright treatment as friends.
+            _skinsLabelStyle = new GUIStyle(_friendsLabelStyle);
+            _skinsSubLabelStyle = new GUIStyle(_friendsSubLabelStyle);
+            _skinsHeaderStyle = new GUIStyle(_friendsHeaderStyle);
         }
 
         private Texture2D MakeTexture(int width, int height, Color col)

@@ -252,6 +252,7 @@ namespace LatticeVeil.Launcher
         private bool _logContextMenuOpen;
         private Rect _logContextMenuRect;
         private Rect _logTextAreaScreenRect;
+        private bool _logStickToBottom = true;
         private GUIStyle _topBarStyle;
         private GUIStyle _textFieldStyle;
         private GUIStyle _dropdownStyle;
@@ -1535,9 +1536,12 @@ namespace LatticeVeil.Launcher
             GUI.Box(logBoxRect, "", _boxStyle);
 
             // Log copy controls (top-right inside the log box)
-            var copyAllRect = new Rect(logBoxRect.x + logBoxRect.width - 100, logBoxRect.y + 8, 92, 26);
+            var copyAllRect = new Rect(logBoxRect.x + logBoxRect.width - 124, logBoxRect.y + 8, 116, 26);
             if (GUI.Button(copyAllRect, "COPY ALL", _friendsGhostButtonStyle))
-                GUIUtility.systemCopyBuffer = _logContent;
+                GUIUtility.systemCopyBuffer = _log.GetRecentLogs(int.MaxValue);
+            var scrollEndRect = new Rect(logBoxRect.x + logBoxRect.width - 282, logBoxRect.y + 8, 150, 26);
+            if (GUI.Button(scrollEndRect, "SCROLL TO END", _friendsGhostButtonStyle))
+                _logStickToBottom = true;
 
             // Scrollable log text — TextArea so log lines can be selected and
             // copied (Ctrl+C) like any Windows text box. Edits are discarded:
@@ -1546,10 +1550,30 @@ namespace LatticeVeil.Launcher
             var scrollAreaRect = new Rect(logBoxRect.x + 6, logBoxRect.y + logTopOffset, logBoxRect.width - 12, logBoxRect.height - logTopOffset - 6);
             var logLineCount = _logContent.Length == 0 ? 1 : _logContent.Count(c => c == '\n') + 1;
             var textHeight = Mathf.Max(scrollAreaRect.height, logLineCount * 24f);
+            if (_logStickToBottom)
+                _scrollPosition.y = Mathf.Max(0, textHeight - scrollAreaRect.height);
             _scrollPosition = GUI.BeginScrollView(scrollAreaRect, _scrollPosition, new Rect(0, 0, scrollAreaRect.width - 20, textHeight));
             _logTextAreaScreenRect = new Rect(4, 4, scrollAreaRect.width - 24, textHeight);
             GUI.TextArea(_logTextAreaScreenRect, _logContent, _logTextAreaStyle);
+
+            // Ctrl+A: select the entire log while the text area has focus.
+            if (Event.current.type == EventType.KeyDown && Event.current.control
+                && Event.current.keyCode == KeyCode.A)
+            {
+                var editor = (TextEditor)GUIUtility.GetStateObject(typeof(TextEditor), GUIUtility.keyboardControl);
+                if (editor != null && editor.text == _logContent)
+                {
+                    editor.selectIndex = 0;
+                    editor.cursorIndex = editor.text.Length;
+                    Event.current.Use();
+                }
+            }
+
             GUI.EndScrollView();
+
+            // Stick to the bottom when the user is already scrolled down;
+            // scrolling up unpins so they can read history in peace.
+            _logStickToBottom = _scrollPosition.y >= textHeight - scrollAreaRect.height - 40f;
 
             DrawLogContextMenu(scrollAreaRect);
 
@@ -3026,7 +3050,7 @@ namespace LatticeVeil.Launcher
             GUI.enabled = true;
             if (GUI.Button(new Rect(_logContextMenuRect.x + 6, _logContextMenuRect.y + 40, _logContextMenuRect.width - 12, 28), "COPY WHOLE LOG", _friendsGhostButtonStyle))
             {
-                GUIUtility.systemCopyBuffer = _logContent;
+                GUIUtility.systemCopyBuffer = _log.GetRecentLogs(int.MaxValue);
                 _logContextMenuOpen = false;
             }
         }

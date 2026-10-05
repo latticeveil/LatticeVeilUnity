@@ -263,7 +263,7 @@ namespace LatticeVeil.Launcher
             // Shared colors
             protected static readonly Color Bg = new Color(0.07f, 0.07f, 0.08f);
             protected static readonly Color HeaderBg = new Color(0.10f, 0.10f, 0.11f);
-            protected static readonly Color Accent = new Color(1f, 0.82f, 0.45f);
+            protected static readonly Color Accent = new Color(0.62f, 0.55f, 1f); // blue-purple
             protected static readonly Color Text = new Color(0.95f, 0.95f, 0.95f);
             protected static readonly Color Dim = new Color(0.70f, 0.70f, 0.70f);
             protected static readonly Color RowBg = new Color(0.11f, 0.11f, 0.12f);

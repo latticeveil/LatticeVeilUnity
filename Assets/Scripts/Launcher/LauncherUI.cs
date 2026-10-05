@@ -1044,6 +1044,17 @@ namespace LatticeVeil.Launcher
                     _presenceList.Clear();
                     if (presence != null && presence.Ok) _presenceList.AddRange(presence.Entries);
 
+                    // Observable fetch diagnostics: banner/about-me come from
+                    // the profiles table via friend-list; zero counts here
+                    // mean the server response lacked them (deploy stale). 
+                    int banners = 0, abouts = 0;
+                    foreach (var f in _friendsList)
+                    {
+                        if (!string.IsNullOrEmpty(f.BannerUrl)) banners++;
+                        if (!string.IsNullOrEmpty(f.AboutMe)) abouts++;
+                    }
+                    _log?.Info($"[Friends] {_friendsList.Count} friends loaded; {banners} banner(s), {abouts} about-me section(s) provided by the server.");
+
                     // Download avatars + banners for friends we have not cached yet.
                     foreach (var f in _friendsList)
                     {

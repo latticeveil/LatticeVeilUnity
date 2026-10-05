@@ -490,6 +490,8 @@ namespace LatticeVeil.Launcher
             private bool _layers = true;
             private string[] _skinPaths = Array.Empty<string>();
             private Vector2 _skinScroll = Vector2.zero;
+            private Vector2 _onlineScroll = Vector2.zero;
+            private int _skinTab;             // 0 = LOCAL, 1 = ONLINE
             private string _selectedSkinPath;
             private string _statusMessage = "";
             private bool _uploadQueued;
@@ -971,63 +973,59 @@ namespace LatticeVeil.Launcher
                     _selectedSkinPath = FindActiveSkinPath(activeHash);
                 }
 
-                var listRect = new Rect(16, HeaderH + 12, 400, panelRect.height - HeaderH - 24);
+                // LOCAL / ONLINE tabs keep the two skin sources separate.
+                var tabRect = new Rect(16, HeaderH + 12, 400, 30);
+                bool onlineTab = DrawSkinTabs(ui, tabRect);
+                var listRect = new Rect(16, HeaderH + 46, 400, panelRect.height - HeaderH - 24 - 34);
                 float rowH = 74f;
-                // Once a local library skin matches the online hash, the skin
-                // displays once (that row) — no separate ONLINE entry.
-                bool onlineMatchesLibrary = !string.IsNullOrEmpty(_onlineHash)
-                    && FindLibrarySkinByHash(_onlineHash) != null;
-                bool onlineRowVisible = _onlinePngPath != null && !onlineMatchesLibrary;
-                float contentH = 8 + (_skinPaths.Length + (onlineRowVisible ? 2 : 1)) * rowH;
-                var list = ui.BeginList(listRect, contentH, ref _skinScroll);
 
                 string uploadedMarker = ReadUploadedHashSafe();
-                bool defaultUploaded = _onlineIsDefault
-                    || string.Equals(_onlineHash, "default_skin", StringComparison.OrdinalIgnoreCase)
-                    || (!onlineRowVisible && string.Equals(uploadedMarker, "default_skin", StringComparison.OrdinalIgnoreCase));
-
-                float rowY = list.y + 4;
-                DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), "DEFAULT SKIN", null,
-                    string.IsNullOrWhiteSpace(activeHash), "USE DEFAULT",
-                    defaultUploaded ? "UPLOADED" : null);
-                rowY += rowH;
-
-                // The fetched online skin, shown as its own row so the user can
-                // always see (preview/apply) exactly what is uploaded right now.
-                if (onlineRowVisible)
+                if (onlineTab)
                 {
-                    var onlineIsActive = string.Equals(activeHash, _onlineHash, StringComparison.OrdinalIgnoreCase);
-                    DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), _onlineName, _onlinePngPath,
-                        onlineIsActive, "USE", "UPLOADED");
-                    rowY += rowH;
+                    DrawOnlineTab(ui, listRect, activeHash, rowH);
                 }
-
-                bool anyRowActive = false;
-                foreach (var path in _skinPaths)
+                else
                 {
-                    var name = Path.GetFileNameWithoutExtension(path);
-                    // Imported skins keep their friendly filename (hashes live in
-                    // active.txt), so a name match is preferred but a direct hash
-                    // file still matches too.
-                    var rowHash = GetSkinHashCached(path);
-                    var isActive = string.Equals(name, activeHash, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(rowHash, activeHash, StringComparison.OrdinalIgnoreCase);
-                    if (isActive) anyRowActive = true;
-                    // Badge: the account skin shows UPLOADED if that library
-                    // copy is the one uploaded, DOWNLOADED if it was fetched.
-                    string rowBadge = null;
-                    if (!string.IsNullOrEmpty(_onlineHash) && string.Equals(rowHash, _onlineHash, StringComparison.OrdinalIgnoreCase))
-                        rowBadge = string.Equals(rowHash, uploadedMarker, StringComparison.OrdinalIgnoreCase) ? "UPLOADED" : "DOWNLOADED";
-                    else if (string.IsNullOrEmpty(_onlineHash) && !string.IsNullOrEmpty(uploadedMarker) && string.Equals(rowHash, uploadedMarker, StringComparison.OrdinalIgnoreCase))
-                        rowBadge = "UPLOADED";
-                    DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), name, path, isActive, "USE",
-                        rowBadge);
+                    float contentH = 8 + (_skinPaths.Length + 1) * rowH;
+                    var list = ui.BeginList(listRect, contentH, ref _skinScroll);
+
+                    bool defaultUploaded = _onlineIsDefault
+                        || string.Equals(_onlineHash, "default_skin", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(uploadedMarker, "default_skin", StringComparison.OrdinalIgnoreCase);
+
+                    float rowY = list.y + 4;
+                    DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), "DEFAULT SKIN", null,
+                        string.IsNullOrWhiteSpace(activeHash), "USE DEFAULT",
+                        defaultUploaded ? "UPLOADED" : null);
                     rowY += rowH;
+
+                    bool anyRowActive = false;
+                    foreach (var path in _skinPaths)
+                    {
+                        var name = Path.GetFileNameWithoutExtension(path);
+                        // Imported skins keep their friendly filename (hashes live in
+                        // active.txt), so a name match is preferred but a direct hash
+                        // file still matches too.
+                        var rowHash = GetSkinHashCached(path);
+                        var isActive = string.Equals(name, activeHash, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(rowHash, activeHash, StringComparison.OrdinalIgnoreCase);
+                        if (isActive) anyRowActive = true;
+                        // Badge: the account skin shows UPLOADED if that library
+                        // copy is the one uploaded, DOWNLOADED if it was fetched.
+                        string rowBadge = null;
+                        if (!string.IsNullOrEmpty(_onlineHash) && string.Equals(rowHash, _onlineHash, StringComparison.OrdinalIgnoreCase))
+                            rowBadge = string.Equals(rowHash, uploadedMarker, StringComparison.OrdinalIgnoreCase) ? "UPLOADED" : "DOWNLOADED";
+                        else if (string.IsNullOrEmpty(_onlineHash) && !string.IsNullOrEmpty(uploadedMarker) && string.Equals(rowHash, uploadedMarker, StringComparison.OrdinalIgnoreCase))
+                            rowBadge = "UPLOADED";
+                        DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), name, path, isActive, "USE",
+                            rowBadge);
+                        rowY += rowH;
+                    }
+                    if (!anyRowActive && !string.IsNullOrWhiteSpace(activeHash) && !string.Equals("DEFAULT SKIN", activeHash, StringComparison.OrdinalIgnoreCase))
+                        ui.Label(new Rect(list.x + 4, rowY + 4, list.width - 10, 22),
+                            $"Active skin hash: {activeHash}", 11, Accent);
+                    ui.EndList();
                 }
-                if (!anyRowActive && !string.IsNullOrWhiteSpace(activeHash) && !string.Equals("DEFAULT SKIN", activeHash, StringComparison.OrdinalIgnoreCase))
-                    ui.Label(new Rect(list.x + 4, rowY + 4, list.width - 10, 22),
-                        $"Active skin hash: {activeHash}", 11, Accent);
-                ui.EndList();
 
                 // Right column: preview + actions
                 var previewRect = new Rect(432, HeaderH + 12, panelRect.width - 448, panelRect.height - HeaderH - 24);
@@ -1281,6 +1279,50 @@ namespace LatticeVeil.Launcher
                 _bakedKey = null;
                 _lastBakedYaw = float.NaN;
                 _lastBakedPitch = float.NaN;
+            }
+
+            /// <summary>Draws the LOCAL / ONLINE tab strip. Returns true when the ONLINE tab is active.</summary>
+            private bool DrawSkinTabs(PanelUI ui, Rect rect)
+            {
+                float w = (rect.width - 8) * 0.5f;
+                var localRect = new Rect(rect.x, rect.y, w, rect.height);
+                var onlineRect = new Rect(rect.x + w + 8, rect.y, w, rect.height);
+                if (ui.Button(localRect, "LOCAL SKINS", 11, _skinTab == 0 ? Accent : BtnBg, BtnHover, Text))
+                    _skinTab = 0;
+                if (ui.Button(onlineRect, "ONLINE SKINS", 11, _skinTab == 1 ? Accent : BtnBg, BtnHover, Text))
+                    _skinTab = 1;
+                return _skinTab == 1;
+            }
+
+            /// <summary>
+            /// ONLINE tab: the skin currently on the Veilnet account, shown on
+            /// its own so it can never be confused with local library copies.
+            /// </summary>
+            private void DrawOnlineTab(PanelUI ui, Rect listRect, string activeHash, float rowH)
+            {
+                float contentH = 8 + 2 * rowH;
+                var list = ui.BeginList(listRect, contentH, ref _onlineScroll);
+                float rowY = list.y + 4;
+                var rowRect = new Rect(4, rowY, list.width - 10, rowH - 6);
+
+                if (_onlineIsDefault)
+                {
+                    DrawSkinRow(ui, rowRect, "DEFAULT SKIN (ONLINE)", null,
+                        string.IsNullOrWhiteSpace(activeHash)
+                            || string.Equals(activeHash, "default_skin", StringComparison.OrdinalIgnoreCase),
+                        "USE DEFAULT", "UPLOADED");
+                }
+                else if (_onlinePngPath != null)
+                {
+                    var onlineIsActive = string.Equals(activeHash, _onlineHash, StringComparison.OrdinalIgnoreCase);
+                    DrawSkinRow(ui, rowRect, _onlineName, _onlinePngPath, onlineIsActive, "USE", "UPLOADED");
+                }
+                else
+                {
+                    ui.Label(new Rect(list.x + 8, list.y + 12, list.width - 16, 44),
+                        "No online skin fetched yet.\nPress SYNC to load the skin on your Veilnet account.", 11, Dim);
+                }
+                ui.EndList();
             }
 
             private void DrawSkinRow(PanelUI ui, Rect row, string displayName, string path, bool isActive, string useText, string badge = null)

@@ -241,6 +241,9 @@ namespace LatticeVeil.Launcher
         private GUIStyle _friendsPanelStyle;
         private GUIStyle _friendsAccentButtonStyle;
         private GUIStyle _friendsGhostButtonStyle;
+        private GUIStyle _friendsLabelStyle;
+        private GUIStyle _friendsSubLabelStyle;
+        private GUIStyle _friendsHeaderStyle;
         private GUIStyle _logStyle;
         private GUIStyle _topBarStyle;
         private GUIStyle _textFieldStyle;
@@ -2306,7 +2309,7 @@ namespace LatticeVeil.Launcher
             if (!_veilnetLoggedIn)
             {
                 GUI.Label(new Rect(modalRect.x + 18, modalRect.y + 60, modalRect.width - 36, 60),
-                    "Log in to Veilnet to see your friends, their status, and world invites.", _switchLabelStyle);
+                    "Log in to Veilnet to see your friends, their status, and world invites.", _friendsLabelStyle);
                 return;
             }
 
@@ -2333,7 +2336,7 @@ namespace LatticeVeil.Launcher
             // Status line (wraps, bottom of the modal)
             if (!string.IsNullOrEmpty(_friendsStatusMessage))
                 GUI.Label(new Rect(modalRect.x + 18, modalRect.y + modalRect.height - 40, modalRect.width - 36, 32),
-                    _friendsStatusMessage, _switchSubLabelStyle);
+                    _friendsStatusMessage, _friendsSubLabelStyle);
         }
 
         private void DrawFriendsTab(Rect modalRect, float bodyY, float bodyH)
@@ -2365,7 +2368,7 @@ namespace LatticeVeil.Launcher
             }
             if (_friendsList.Count == 0)
                 GUI.Label(new Rect(12, 20, content.width - 20, 60),
-                    _friendsRefreshRunning ? "Loading friends\u2026" : "No friends yet.\nAdd someone by their Veilnet username above.", _switchSubLabelStyle);
+                    _friendsRefreshRunning ? "Loading friends\u2026" : "No friends yet.\nAdd someone by their Veilnet username above.", _friendsSubLabelStyle);
             GUI.EndScrollView();
 
             // Right column: selected friend profile (Discord-style detail card)
@@ -2375,7 +2378,7 @@ namespace LatticeVeil.Launcher
             if (selected == null)
             {
                 GUI.Label(new Rect(detailRect.x + 16, detailRect.y + 20, detailRect.width - 32, 80),
-                    "Select a friend to see their profile, status, and world.", _switchSubLabelStyle);
+                    "Select a friend to see their profile, status, and world.", _friendsSubLabelStyle);
             }
             else
             {
@@ -2430,13 +2433,13 @@ namespace LatticeVeil.Launcher
             }
 
             // Name + status
-            GUI.Label(new Rect(row.x + 58, row.y + 7, row.width - 66, 22), friend.Username, _switchLabelStyle);
+            GUI.Label(new Rect(row.x + 58, row.y + 6, row.width - 66, 24), friend.Username, _friendsLabelStyle);
             var dotRect = new Rect(row.x + 58, row.y + 32, 9, 9);
             var prevColor = GUI.color;
             GUI.color = dotColor;
             GUI.DrawTexture(dotRect, Texture2D.whiteTexture, ScaleMode.StretchToFill);
             GUI.color = prevColor;
-            GUI.Label(new Rect(row.x + 72, row.y + 29, row.width - 80, 18), statusText, _switchSubLabelStyle);
+            GUI.Label(new Rect(row.x + 72, row.y + 30, row.width - 80, 20), statusText, _friendsSubLabelStyle);
 
             // Click to select
             if (Event.current.type == EventType.MouseDown && row.Contains(Event.current.mousePosition) && Event.current.button == 0)
@@ -2479,7 +2482,7 @@ namespace LatticeVeil.Launcher
 
             // Nameplate + status under the hero (avatar occupies the left).
             var nameY = detailRect.y + 150;
-            GUI.Label(new Rect(detailRect.x + 120, nameY, detailRect.width - 136, 26), friend.Username, _switchLabelStyle);
+            GUI.Label(new Rect(detailRect.x + 120, nameY, detailRect.width - 136, 28), friend.Username, _friendsLabelStyle);
             var statusText = friend.Pending ? "Friend request pending"
                 : presence == null ? "Offline"
                 : presence.Status == "IN_WORLD" ? $"In world: {presence.WorldName}"
@@ -2492,16 +2495,16 @@ namespace LatticeVeil.Launcher
             GUI.color = statusColor;
             GUI.DrawTexture(new Rect(detailRect.x + 120, nameY + 30, 9, 9), Texture2D.whiteTexture, ScaleMode.StretchToFill);
             GUI.color = prevColor;
-            GUI.Label(new Rect(detailRect.x + 134, nameY + 27, detailRect.width - 150, 20), statusText, _switchSubLabelStyle);
+            GUI.Label(new Rect(detailRect.x + 134, nameY + 29, detailRect.width - 150, 22), statusText, _friendsSubLabelStyle);
 
             // About Me section (website parity: pre-wrap, muted).
             var aboutHeaderY = nameY + 56;
-            GUI.Label(new Rect(detailRect.x + 20, aboutHeaderY, detailRect.width - 40, 20), "ABOUT ME", _sectionHeaderStyle);
+            GUI.Label(new Rect(detailRect.x + 20, aboutHeaderY, detailRect.width - 40, 22), "ABOUT ME", _friendsHeaderStyle);
             var aboutY = aboutHeaderY + 24;
             var aboutH = detailRect.height - (aboutY - detailRect.y) - 56;
             GUI.Label(new Rect(detailRect.x + 20, aboutY, detailRect.width - 40, Mathf.Max(20, aboutH)),
                 string.IsNullOrEmpty(friend.AboutMe) ? "No about me yet." : friend.AboutMe,
-                new GUIStyle(_switchSubLabelStyle) { wordWrap = true });
+                new GUIStyle(_friendsSubLabelStyle) { wordWrap = true });
 
             var inviteRect = new Rect(detailRect.x + 20, detailRect.y + detailRect.height - 48, 180, 36);
             bool canInvite = !friend.Pending && presence != null && presence.Status != "OFFLINE";
@@ -2554,7 +2557,7 @@ namespace LatticeVeil.Launcher
             float rowY = 3;
             if (_worldInvitesIn.Count > 0)
             {
-                GUI.Label(new Rect(10, rowY, content.width - 20, 20), "INCOMING", _sectionHeaderStyle);
+                GUI.Label(new Rect(10, rowY, content.width - 20, 22), "INCOMING", _friendsHeaderStyle);
                 rowY += 24;
                 foreach (var invite in _worldInvitesIn)
                 {
@@ -2565,7 +2568,7 @@ namespace LatticeVeil.Launcher
             }
             if (_worldInvitesOut.Count > 0)
             {
-                GUI.Label(new Rect(10, rowY, content.width - 20, 20), "SENT", _sectionHeaderStyle);
+                GUI.Label(new Rect(10, rowY, content.width - 20, 22), "SENT", _friendsHeaderStyle);
                 rowY += 24;
                 foreach (var invite in _worldInvitesOut)
                 {
@@ -2575,7 +2578,7 @@ namespace LatticeVeil.Launcher
             }
             if (count == 0)
                 GUI.Label(new Rect(12, 20, content.width - 20, 60),
-                    _friendsRefreshRunning ? "Checking invites\u2026" : "No world invites right now.", _switchSubLabelStyle);
+                    _friendsRefreshRunning ? "Checking invites\u2026" : "No world invites right now.", _friendsSubLabelStyle);
             GUI.EndScrollView();
         }
 
@@ -2591,9 +2594,9 @@ namespace LatticeVeil.Launcher
                 GUI.DrawTexture(avatarRect, initials, ScaleMode.ScaleToFit);
 
             GUI.Label(new Rect(row.x + 58, row.y + 7, row.width - 250, 22),
-                incoming ? $"{invite.SenderName} invited you" : $"You invited {invite.SenderName}", _switchLabelStyle);
+                incoming ? $"{invite.SenderName} invited you" : $"You invited {invite.SenderName}", _friendsLabelStyle);
             GUI.Label(new Rect(row.x + 58, row.y + 31, row.width - 250, 18),
-                $"World: {invite.WorldName}{(string.IsNullOrEmpty(invite.GameMode) ? "" : "  \u00b7  " + invite.GameMode)}", _switchSubLabelStyle);
+                $"World: {invite.WorldName}{(string.IsNullOrEmpty(invite.GameMode) ? "" : "  \u00b7  " + invite.GameMode)}", _friendsSubLabelStyle);
 
             if (incoming)
             {
@@ -4416,6 +4419,26 @@ namespace LatticeVeil.Launcher
             _friendsGhostButtonStyle.hover.background = CreateBorderedTexture(new Color(0.16f, 0.19f, 0.17f, 1f), new Color(0.30f, 0.38f, 0.33f, 1f), 16, 16, 1);
             _friendsGhostButtonStyle.active.background = CreateBorderedTexture(new Color(0.20f, 0.24f, 0.22f, 1f), greenAccent, 16, 16, 1);
             _friendsGhostButtonStyle.alignment = TextAnchor.MiddleCenter;
+
+            // Friends text styles: larger + bold + brighter than the shared
+            // switch styles, tuned for readability inside the friends modal.
+            _friendsLabelStyle = new GUIStyle(GUI.skin.label);
+            _friendsLabelStyle.fontSize = 15;
+            _friendsLabelStyle.fontStyle = FontStyle.Bold;
+            _friendsLabelStyle.normal.textColor = new Color(1f, 1f, 1f, 1f);
+            _friendsLabelStyle.alignment = TextAnchor.MiddleLeft;
+
+            _friendsSubLabelStyle = new GUIStyle(GUI.skin.label);
+            _friendsSubLabelStyle.fontSize = 13;
+            _friendsSubLabelStyle.fontStyle = FontStyle.Bold;
+            _friendsSubLabelStyle.normal.textColor = new Color(0.82f, 0.86f, 0.83f, 1f);
+            _friendsSubLabelStyle.alignment = TextAnchor.MiddleLeft;
+
+            _friendsHeaderStyle = new GUIStyle(GUI.skin.label);
+            _friendsHeaderStyle.fontSize = 15;
+            _friendsHeaderStyle.fontStyle = FontStyle.Bold;
+            _friendsHeaderStyle.normal.textColor = new Color(1f, 1f, 1f, 1f);
+            _friendsHeaderStyle.alignment = TextAnchor.MiddleLeft;
         }
 
         private Texture2D MakeTexture(int width, int height, Color col)

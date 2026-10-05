@@ -1,0 +1,24 @@
+name: No Codebuff trailers
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  block-codebuff-attribution:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject any Codebuff attribution in commit messages
+        shell: bash
+        run: |
+          set -e
+          RANGE="${{ github.event.before }}..${{ github.sha }}"
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
+            RANGE=$(git rev-list --max-parents=0 HEAD)
+          fi
+          if git log --format=%B "$RANGE" | grep -qiE 'generated with codebuff|co-authored-by:[[:space:]]*codebuff'; then
+            echo "  ✖ FORBIDDEN ATTRIBUTION FOUND in pushed commits."
+            echo "  'Generated with Codebuff' / 'Co-Authored-By: Codebuff' trailers are banned on this repository."
+            exit 1
+          fi
+          echo "OK: no Codebuff attribution in $(git rev-list --count "$RANGE") commit(s)."

@@ -129,8 +129,24 @@ namespace LatticeVeil.Launcher
                     return false;
                 }
 
-                var bytes = File.ReadAllBytes(sourceFilePath);
-                if (bytes.Length == 0 || bytes.Length > 64 * 1024)
+                return ValidateSkinBytes(File.ReadAllBytes(sourceFilePath), out texture, out hash, out error);
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        public static bool ValidateSkinBytes(byte[] bytes, out Texture2D texture, out string hash, out string error)
+        {
+            texture = null;
+            hash = null;
+            error = null;
+
+            try
+            {
+                if (bytes == null || bytes.Length == 0 || bytes.Length > 64 * 1024)
                 {
                     error = "Invalid skin file size (must be <= 64KB).";
                     return false;
@@ -160,6 +176,38 @@ namespace LatticeVeil.Launcher
                     hash = sb.ToString();
                 }
 
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Applies skin bytes to the game's runtime cache ONLY: runtime
+        /// {hash}.png, active.txt, change signal. Never touches the user's
+        /// Skins folder, so auto-syncing the account skin adds no entry to
+        /// the skins list — the game still loads it from the runtime cache.
+        /// </summary>
+        public static bool ApplyRuntimeSkin(byte[] png, out string error, out string computedHash)
+        {
+            error = null;
+            computedHash = null;
+            try
+            {
+                if (!ValidateSkinBytes(png, out _, out var hash, out error))
+                    return false;
+
+                computedHash = hash;
+                BackupCurrentSkin();
+
+                var runtimeSkinsDir = Paths.RuntimeSkinsDir;
+                Directory.CreateDirectory(runtimeSkinsDir);
+                WriteAllBytesResilient(Path.Combine(runtimeSkinsDir, $"{hash}.png"), png);
+                WriteAllTextResilient(Paths.ActiveSkinHashPath, hash);
+                try { WriteAllTextResilient(Paths.SkinChangeSignalPath, hash); } catch { }
                 return true;
             }
             catch (Exception ex)

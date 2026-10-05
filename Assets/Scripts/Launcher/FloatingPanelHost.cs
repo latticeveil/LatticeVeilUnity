@@ -744,9 +744,7 @@ namespace LatticeVeil.Launcher
 
                 _statusMessage = "Uploading local skin to Veilnet…";
                 QueueUpload(auth, activeHash, png);
-            }
-
-            /// <summary>"USE ONLINE": downloads/applies the online skin locally.</summary>
+            }            /// <summary>"USE ONLINE": downloads/applies the online skin locally.</summary>
             private void ApplyOnlineAsLatest()
             {
                 if (_onlineIsDefault)
@@ -755,10 +753,25 @@ namespace LatticeVeil.Launcher
                     SelectDefaultPreview();
                     _statusMessage = "Switched to the default (online) skin.";
                     return;
- }
+                }
                 if (_onlinePngBytes == null || _onlinePngBytes.Length == 0)
                 {
                     _statusMessage = "Online skin data unavailable; press SYNC to re-fetch.";
+                    return;
+                }
+
+                // Already in the local library? Apply that copy instead of
+                // adding a duplicate entry.
+                var existing = FindLibrarySkinByHash(_onlineHash);
+                if (existing != null)
+                {
+                    if (SkinManager.ImportAndSetActiveSkin(existing, out var reuseError, out _, Path.GetFileNameWithoutExtension(existing)))
+                    {
+                        _selectedSkinPath = existing;
+                        _statusMessage = "Online skin already downloaded — applied the local copy.";
+                    }
+                    else
+                        _statusMessage = $"Could not apply skin: {reuseError}";
                     return;
                 }
 
@@ -770,7 +783,10 @@ namespace LatticeVeil.Launcher
                     {
                         File.WriteAllBytes(tempPath, _onlinePngBytes);
                         if (SkinManager.ImportAndSetActiveSkin(tempPath, out var importError, out _, "Veilnet_skin"))
-                            _statusMessage = "Online skin applied — local now matches the uploaded skin.";
+                        {
+                            _selectedSkinPath = Path.Combine(Core.Paths.UserSkinsDir, "Veilnet_skin.png");
+                            _statusMessage = "Downloaded the online skin locally and applied it.";
+                        }
                         else
                             _statusMessage = $"Failed to import online skin: {importError}";
                     }
@@ -783,6 +799,16 @@ namespace LatticeVeil.Launcher
                 {
                     _statusMessage = $"Failed to apply online skin: {ex.Message}";
                 }
+            }
+
+            /// <summary>Library (Skins folder) path whose hash matches, or null.</summary>
+            private string FindLibrarySkinByHash(string hash)
+            {
+                if (string.IsNullOrEmpty(hash)) return null;
+                foreach (var p in _skinPaths)
+                    if (string.Equals(GetSkinHashCached(p), hash, StringComparison.OrdinalIgnoreCase))
+                        return p;
+                return null;
             }
 
             /// <summary>Uploads the just-imported skin to Veilnet in the background (UPLOAD button).</summary>
@@ -910,7 +936,11 @@ namespace LatticeVeil.Launcher
 
                 var listRect = new Rect(16, HeaderH + 12, 400, panelRect.height - HeaderH - 24);
                 float rowH = 74f;
-                bool onlineRowVisible = _onlinePngPath != null;
+                // Once a local library skin matches the online hash, the skin
+                // displays once (that row) — no separate ONLINE entry.
+                bool onlineMatchesLibrary = !string.IsNullOrEmpty(_onlineHash)
+                    && FindLibrarySkinByHash(_onlineHash) != null;
+                bool onlineRowVisible = _onlinePngPath != null && !onlineMatchesLibrary;
                 float contentH = 8 + (_skinPaths.Length + (onlineRowVisible ? 2 : 1)) * rowH;
                 var list = ui.BeginList(listRect, contentH, ref _skinScroll);
 
@@ -942,13 +972,19 @@ namespace LatticeVeil.Launcher
                     // Imported skins keep their friendly filename (hashes live in
                     // active.txt), so a name match is preferred but a direct hash
                     // file still matches too.
-                    var isActive = string.Equals(name, activeHash, StringComparison.OrdinalIgnoreCase);
-                    if (isActive) anyRowActive = true;
                     var rowHash = GetSkinHashCached(path);
-                    bool isUploaded = (!string.IsNullOrEmpty(_onlineHash) && string.Equals(rowHash, _onlineHash, StringComparison.OrdinalIgnoreCase))
-                        || (string.IsNullOrEmpty(_onlineHash) && !string.IsNullOrEmpty(uploadedMarker) && string.Equals(rowHash, uploadedMarker, StringComparison.OrdinalIgnoreCase));
+                    var isActive = string.Equals(name, activeHash, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(rowHash, activeHash, StringComparison.OrdinalIgnoreCase);
+                    if (isActive) anyRowActive = true;
+                    // Badge: the account skin shows UPLOADED if that library
+                    // copy is the one uploaded, DOWNLOADED if it was fetched.
+                    string rowBadge = null;
+                    if (!string.IsNullOrEmpty(_onlineHash) && string.Equals(rowHash, _onlineHash, StringComparison.OrdinalIgnoreCase))
+                        rowBadge = string.Equals(rowHash, uploadedMarker, StringComparison.OrdinalIgnoreCase) ? "UPLOADED" : "DOWNLOADED";
+                    else if (string.IsNullOrEmpty(_onlineHash) && !string.IsNullOrEmpty(uploadedMarker) && string.Equals(rowHash, uploadedMarker, StringComparison.OrdinalIgnoreCase))
+                        rowBadge = "UPLOADED";
                     DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), name, path, isActive, "USE",
-                        isUploaded ? "UPLOADED" : null);
+                        rowBadge);
                     rowY += rowH;
                 }
                 if (!anyRowActive && !string.IsNullOrWhiteSpace(activeHash) && !string.Equals("DEFAULT SKIN", activeHash, StringComparison.OrdinalIgnoreCase))
@@ -1214,6 +1250,7 @@ namespace LatticeVeil.Launcher
             {
                 bool hover = row.Contains(ui.Mouse);
                 if (hover && ui.Clicked && path != null) _selectedSkinPath = path;
+                bool isOnlineRow = path != null && path == _onlinePngPath;
                 ui.Fill(row, hover ? RowHover : RowBg);
                 ui.Frame(row, new Color(0.18f, 0.18f, 0.20f));
 
@@ -1235,6 +1272,12 @@ namespace LatticeVeil.Launcher
                         SkinManager.ClearActiveSkin();
                         SelectDefaultPreview();
                         _statusMessage = "Reverted to the default skin.";
+                    }
+                    else if (isOnlineRow)
+                    {
+                        // The ONLINE row's USE downloads/applies through the
+                        // dedupe-aware path (no duplicate library entries).
+                        ApplyOnlineAsLatest();
                     }
                     else
                     {

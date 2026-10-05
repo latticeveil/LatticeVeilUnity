@@ -3923,26 +3923,18 @@ namespace LatticeVeil.Launcher
                     return;
                 }
 
-                Directory.CreateDirectory(Paths.UserSkinsDir);
-                var tempPath = Path.Combine(Paths.UserSkinsDir, ".temp_veilnet_skin.png");
-                try
+                // Runtime cache only: never add a Skins-folder entry for the
+                // account skin (the skins list shows it via the ONLINE row).
+                if (SkinManager.ApplyRuntimeSkin(fetch.PngBytes, out var applyErr, out _))
                 {
-                    File.WriteAllBytes(tempPath, fetch.PngBytes);
-                    if (SkinManager.ImportAndSetActiveSkin(tempPath, out var importErr, out _, "Veilnet_skin"))
-                    {
-                        SkinManager.MarkSkinUploaded(onlineHash);
-                        _skinStatusMessage = "Online skin fetched and applied automatically.";
-                        RefreshSkinModalPreview();
-                        _log?.Info($"[SupabaseSkin] Auto-sync applied online skin: {onlineHash}");
-                    }
-                    else
-                    {
-                        _log?.Warn($"[SupabaseSkin] Auto-sync import failed: {importErr}");
-                    }
+                    SkinManager.MarkSkinUploaded(onlineHash);
+                    _skinStatusMessage = "Online skin fetched and applied automatically.";
+                    RefreshSkinModalPreview();
+                    _log?.Info($"[SupabaseSkin] Auto-sync applied online skin to runtime cache: {onlineHash}");
                 }
-                finally
+                else
                 {
-                    try { File.Delete(tempPath); } catch { }
+                    _log?.Warn($"[SupabaseSkin] Auto-sync apply failed: {applyErr}");
                 }
             }
             catch (Exception ex)

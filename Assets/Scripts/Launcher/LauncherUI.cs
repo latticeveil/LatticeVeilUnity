@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -117,6 +118,28 @@ namespace LatticeVeil.Launcher
         private bool _launchModeDropdownOpen = false;
         private bool _showSettingsModal = false;
         private bool _showSkinModal = false;
+
+        // Friends panel state (in-window modal, Discord-inspired)
+        private bool _showFriendsModal;
+        private int _friendsTabIndex;               // 0 = FRIENDS, 1 = INVITES
+        private string _friendsStatusMessage = "";
+        private string _addFriendInput = "";
+        private Vector2 _friendsScroll;
+        private readonly List<VeilnetFriendsClient.FriendUser> _friendsList = new List<VeilnetFriendsClient.FriendUser>();
+        private readonly List<VeilnetFriendsClient.PresenceEntry> _presenceList = new List<VeilnetFriendsClient.PresenceEntry>();
+        private readonly List<VeilnetFriendsClient.WorldInvite> _worldInvitesIn = new List<VeilnetFriendsClient.WorldInvite>();
+        private readonly List<VeilnetFriendsClient.WorldInvite> _worldInvitesOut = new List<VeilnetFriendsClient.WorldInvite>();
+        private bool _friendsRefreshRunning;
+        private double _nextFriendsRefreshAt;       // realtime clock seconds
+        private double _nextInvitePollAt;           // 0 = poll immediately on login
+        private int _pendingInviteCount;            // green bubble on the top bar
+        private readonly Dictionary<string, Texture2D> _friendAvatarCache = new Dictionary<string, Texture2D>();
+        private readonly Dictionary<string, Texture2D> _friendInitialsCache = new Dictionary<string, Texture2D>();
+        private Texture2D _friendsIconTex;
+        private Texture2D _greenBubbleTex;
+        private static readonly Color OnlineGreen = new Color(0.36f, 0.80f, 0.44f);
+        private static readonly Color InWorldColor = new Color(0.62f, 0.55f, 1f);
+        private static readonly Color OfflineDim = new Color(0.55f, 0.57f, 0.60f);
         private Texture2D _skin3DPreviewTexture;
         private string _skinStatusMessage = "";
         private float _skinPreviewYaw = 0f;
@@ -269,6 +292,10 @@ namespace LatticeVeil.Launcher
             }
 
             CheckActiveSkinChanged();
+
+            // Friends panel: poll invites shortly after launch and periodically;
+            // refresh the friend list + presence while the modal is open.
+            TickFriendsSocial();
 
             if (_showSkinModal)
             {
@@ -598,6 +625,54 @@ namespace LatticeVeil.Launcher
         /// Generates a clean 24×24 pixel gear icon texture for the settings button.
         /// Drawn procedurally so no external asset file is needed.
         /// </summary>
+        /// <summary>Procedural white "two people" friends glyph for the top bar.</summary>
+        private static Texture2D CreateFriendsIconTexture()
+        {
+            const int S = 24;
+            var tex = new Texture2D(S, S, TextureFormat.RGBA32, false);
+            tex.filterMode = FilterMode.Bilinear;
+            var pix = new Color[S * S];
+            for (int i = 0; i < pix.Length; i++) pix[i] = Color.clear;
+            var white = new Color(0.95f, 0.95f, 0.95f, 1f);
+
+            for (int y = 0; y < S; y++)
+            for (int x = 0; x < S; x++)
+            {
+                float fx = x, fy = y;
+                // Person 1 (front, left): head circle + shoulders arc
+                var d1h = Mathf.Sqrt((fx - 8.5f) * (fx - 8.5f) + (fy - 7.5f) * (fy - 7.5f));
+                var d1s = Mathf.Sqrt((fx - 8.5f) * (fx - 8.5f) + (fy - 19.0f) * (fy - 19.0f));
+                bool p1 = (d1h <= 3.4f && d1h >= 1.8f) || (fy > 13.5f && fy < 19.5f && d1s <= 6.4f && d1s >= 4.4f);
+                // Person 2 (back, right): slightly smaller, clipped by person 1
+                var d2h = Mathf.Sqrt((fx - 16.5f) * (fx - 16.5f) + (fy - 8.5f) * (fy - 8.5f));
+                var d2s = Mathf.Sqrt((fx - 16.5f) * (fx - 16.5f) + (fy - 19.5f) * (fy - 19.5f));
+                bool p2 = (d2h <= 2.9f && d2h >= 1.4f) || (fy > 14.5f && fy < 19.8f && d2s <= 5.6f && d2s >= 3.8f);
+                if (p1 || (p2 && fx > 12.2f)) pix[y * S + x] = white;
+            }
+            tex.SetPixels(pix);
+            tex.Apply();
+            return tex;
+        }
+
+        /// <summary>Soft filled circle used for the green invite-count bubble.</summary>
+        private static Texture2D CreateBubbleTexture(Color color)
+        {
+            const int S = 18;
+            var tex = new Texture2D(S, S, TextureFormat.RGBA32, false);
+            tex.filterMode = FilterMode.Bilinear;
+            var pix = new Color[S * S];
+            float c = (S - 1) * 0.5f;
+            for (int y = 0; y < S; y++)
+            for (int x = 0; x < S; x++)
+            {
+                float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c));
+                pix[y * S + x] = d <= c ? color : Color.clear;
+            }
+            tex.SetPixels(pix);
+            tex.Apply();
+            return tex;
+        }
+
         private static Texture2D CreateGearIconTexture()
         {
             const int S = 24;
@@ -879,6 +954,175 @@ namespace LatticeVeil.Launcher
             });
         }
 
+        // ======================= Friends & invites =======================
+
+        /// <summary>
+        /// Runs every frame from Update. Polls world invites while logged in
+        /// (drives the green bubble on the top bar) and keeps the friends
+        /// list + presence fresh while the friends modal is open.
+        /// </summary>
+        private void TickFriendsSocial()
+        {
+            if (!_veilnetLoggedIn || string.IsNullOrWhiteSpace(_veilnetToken))
+            {
+                if (_pendingInviteCount != 0) _pendingInviteCount = 0;
+                return;
+            }
+
+            var now = Time.realtimeSinceStartupAsDouble;
+
+            // Invite polling: immediately after login, then every 60s.
+            if (now >= _nextInvitePollAt)
+            {
+                _nextInvitePollAt = now + 60.0;
+                StartInvitePoll();
+            }
+
+            // Friend list + presence refresh while the modal is open: every 45s,
+            // or immediately when the modal is (re)opened.
+            if (_showFriendsModal && !_friendsRefreshRunning && now >= _nextFriendsRefreshAt)
+            {
+                _nextFriendsRefreshAt = now + 45.0;
+                StartFriendsRefresh();
+            }
+        }
+
+        private void StartInvitePoll()
+        {
+            var client = new VeilnetFriendsClient(GetVeilnetFunctionsBaseUrl(), GetSupabaseAnonKey(), _veilnetToken, _httpClient);
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                var invites = await client.GetWorldInvitesAsync().ConfigureAwait(false);
+                EnqueueMainThread(() =>
+                {
+                    if (invites.Ok)
+                    {
+                        _worldInvitesIn.Clear(); _worldInvitesIn.AddRange(invites.Incoming);
+                        _worldInvitesOut.Clear(); _worldInvitesOut.AddRange(invites.Outgoing);
+                        _pendingInviteCount = _worldInvitesIn.Count;
+                    }
+                });
+            });
+        }
+
+        private void StartFriendsRefresh()
+        {
+            if (_friendsRefreshRunning) return;
+            _friendsRefreshRunning = true;
+            var token = _veilnetToken;
+            var client = new VeilnetFriendsClient(GetVeilnetFunctionsBaseUrl(), GetSupabaseAnonKey(), token, _httpClient);
+
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                var list = await client.GetFriendListAsync().ConfigureAwait(false);
+                var presence = list.Ok && list.Friends.Count > 0
+                    ? await QueryPresenceSafeAsync(client, list.Friends).ConfigureAwait(false)
+                    : null;
+
+                EnqueueMainThread(() =>
+                {
+                    _friendsRefreshRunning = false;
+                    if (!list.Ok)
+                    {
+                        _friendsStatusMessage = $"Could not load friends: {list.Error}";
+                        return;
+                    }
+
+                    _friendsList.Clear();
+                    _friendsList.AddRange(list.Friends);
+                    _presenceList.Clear();
+                    if (presence != null && presence.Ok) _presenceList.AddRange(presence.Entries);
+
+                    // Download avatars for friends we have not cached yet.
+                    foreach (var f in _friendsList)
+                        StartFriendAvatarDownload(f);
+
+                    _friendsStatusMessage = _friendsList.Count == 0
+                        ? "No friends yet — add someone by their username."
+                        : "";
+                });
+            });
+        }
+
+        private static async Task<VeilnetFriendsClient.PresenceResult> QueryPresenceSafeAsync(
+            VeilnetFriendsClient client, List<VeilnetFriendsClient.FriendUser> friends)
+        {
+            var ids = new List<string>();
+            foreach (var f in friends) ids.Add(f.Id);
+            return await client.QueryPresenceAsync(ids).ConfigureAwait(false);
+        }
+
+        /// <summary>Downloads a friend's profile picture into the avatar cache (IMGUI texture).</summary>
+        private void StartFriendAvatarDownload(VeilnetFriendsClient.FriendUser friend)
+        {
+            if (friend == null || string.IsNullOrWhiteSpace(friend.PictureUrl)) return;
+            if (_friendAvatarCache.ContainsKey(friend.Id)) return; // cached or already downloading
+            _friendAvatarCache[friend.Id] = null; // reserve
+
+            var url = friend.PictureUrl;
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                byte[] bytes = null;
+                try
+                {
+                    using (var resp = await _httpClient.GetAsync(url).ConfigureAwait(false))
+                        if (resp.IsSuccessStatusCode)
+                            bytes = await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                }
+                catch { }
+
+                EnqueueMainThread(() =>
+                {
+                    if (bytes == null || bytes.Length == 0)
+                    {
+                        _friendAvatarCache.Remove(friend.Id); // allow retry on next refresh
+                        return;
+                    }
+                    var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                    if (!tex.LoadImage(bytes))
+                    {
+                        Destroy(tex);
+                        _friendAvatarCache.Remove(friend.Id);
+                        return;
+                    }
+                    _friendAvatarCache[friend.Id] = tex;
+                });
+            });
+        }
+
+        /// <summary>IMGUI-safe colored tile with the friend's initials (no per-frame allocs).</summary>
+        private Texture2D GetFriendInitialsTexture(VeilnetFriendsClient.FriendUser friend)
+        {
+            if (friend == null) return null;
+            if (_friendInitialsCache.TryGetValue(friend.Id, out var cached) && cached != null) return cached;
+
+            const int S = 40;
+            var tex = new Texture2D(S, S, TextureFormat.RGBA32, false);
+            tex.filterMode = FilterMode.Bilinear;
+            var pix = new Color[S * S];
+            float c = (S - 1) * 0.5f;
+            var baseHue = (Mathf.Abs(friend.Id.GetHashCode()) % 360) / 360f;
+            var tile = Color.HSVToRGB(baseHue, 0.45f, 0.55f);
+            for (int y = 0; y < S; y++)
+            for (int x = 0; x < S; x++)
+            {
+                float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c));
+                pix[y * S + x] = d <= c ? tile : Color.clear;
+            }
+            tex.SetPixels(pix);
+            tex.Apply();
+            _friendInitialsCache[friend.Id] = tex;
+            return tex;
+        }
+
+        private VeilnetFriendsClient.PresenceEntry GetPresence(string userId)
+        {
+            foreach (var p in _presenceList)
+                if (string.Equals(p.UserId, userId, StringComparison.OrdinalIgnoreCase))
+                    return p;
+            return null;
+        }
+
         private void ApplyVeilnetProfile(VeilnetProfileClient.ProfileResult profile, byte[] pictureBytes, string fallbackUsername)
         {
             _veilnetProfileRefreshRunning = false;
@@ -1081,7 +1325,7 @@ namespace LatticeVeil.Launcher
             // Reveal window on first OnGUI paint
             LauncherWindowInitializer.ShowLauncherWindow();
 
-            bool modalOpen = _showSettingsModal || _showSkinModal || _showVersionManagerModal || _showInstallPromptModal;
+            bool modalOpen = _showSettingsModal || _showSkinModal || _showVersionManagerModal || _showInstallPromptModal || _showFriendsModal;
 
             // Hover tooltip state — anchored to the hovered control, not the cursor,
             // so the tooltip can never stick to the mouse or linger after leaving.
@@ -1103,8 +1347,8 @@ namespace LatticeVeil.Launcher
             var topBarRect = new Rect(launcherRect.x, launcherRect.y, launcherRect.width, topBarHeight);
 
             // Window drag — checked BEFORE GUI.enabled so it works regardless of any open modal or submenu.
-            // Excludes the right-most 160px reserved for window control buttons.
-            var dragAreaRect = new Rect(topBarRect.x, topBarRect.y, topBarRect.width - 160f, topBarHeight);
+            // Excludes the right-most 206px reserved for friends + window control buttons.
+            var dragAreaRect = new Rect(topBarRect.x, topBarRect.y, topBarRect.width - 206f, topBarHeight);
             if (Event.current.type == EventType.MouseDown && Event.current.button == 0)
             {
                 if (dragAreaRect.Contains(Event.current.mousePosition))
@@ -1144,6 +1388,40 @@ namespace LatticeVeil.Launcher
             // Settings and Minimize are disabled when modal is open, but MAIN X is ALWAYS ENABLED!
             GUI.enabled = !modalOpen;
 
+            // Friends button (person icon) + green bubble with pending invites.
+            if (_friendsIconTex == null) _friendsIconTex = CreateFriendsIconTexture();
+            if (_greenBubbleTex == null) _greenBubbleTex = CreateBubbleTexture(OnlineGreen);
+            var friendsBtnRect = new Rect(topBarRect.x + topBarRect.width - 192, topBarRect.y + 8, 44, 36);
+            var friendsBtnContent = _friendsIconTex != null ? new GUIContent(_friendsIconTex) : new GUIContent("F");
+            if (GUI.Button(friendsBtnRect, friendsBtnContent, _wrenchControlStyle))
+            {
+                _showFriendsModal = !_showFriendsModal;
+                if (_showFriendsModal)
+                {
+                    _showSkinModal = false;
+                    _showSettingsModal = false;
+                    _showVersionManagerModal = false;
+                    _showInstallPromptModal = false;
+                    _friendsStatusMessage = "";
+                }
+            }
+            // Green bubble badge — only when there are unread world invites.
+            if (_pendingInviteCount > 0)
+            {
+                var bubbleRect = new Rect(friendsBtnRect.x + 26, friendsBtnRect.y + 16, 18, 18);
+                GUI.DrawTexture(bubbleRect, _greenBubbleTex, ScaleMode.ScaleToFit);
+                var countLabel = _pendingInviteCount > 9 ? "9+" : _pendingInviteCount.ToString();
+                var prevColor = GUI.color;
+                GUI.color = Color.white;
+                GUI.Label(new Rect(bubbleRect.x, bubbleRect.y + 2, 18, 16), countLabel, new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    fontSize = 10,
+                    fontStyle = FontStyle.Bold,
+                });
+                GUI.color = prevColor;
+            }
+
             var settingsBtnRect = new Rect(topBarRect.x + topBarRect.width - 146, topBarRect.y + 8, 44, 36);
             var settingsBtnContent = _settingsIconTex != null
                 ? new GUIContent(_settingsIconTex)
@@ -1156,6 +1434,7 @@ namespace LatticeVeil.Launcher
                     _showSkinModal = false;
                     _showVersionManagerModal = false;
                     _showInstallPromptModal = false;
+                    _showFriendsModal = false;
                 }
             }
 
@@ -1618,6 +1897,10 @@ namespace LatticeVeil.Launcher
             {
                 DrawSettingsModal(launcherRect);
             }
+            else if (_showFriendsModal)
+            {
+                DrawFriendsModal(launcherRect);
+            }
             else if (_showSkinModal)
             {
                 DrawSkinModal(launcherRect);
@@ -1906,6 +2189,372 @@ namespace LatticeVeil.Launcher
         /// Movable Version Manager overlay: every GitHub release with a zip asset,
         /// its update notes, and install/reinstall/uninstall actions.
         /// </summary>
+        // ----------------------- Friends modal -----------------------
+
+        /// <summary>
+        /// Discord-inspired (not cloned) social panel: left column is the
+        /// friends list with avatars + colored presence dots; right column
+        /// shows the selected friend's profile with INVITE / REMOVE. The
+        /// INVITES tab lists incoming/outgoing world invites.
+        /// </summary>
+        private void DrawFriendsModal(Rect screenRect)
+        {
+            GUI.Box(screenRect, "", _dimmerStyle);
+
+            const float modalWidth = 880f;
+            const float modalHeight = 560f;
+            var modalRect = new Rect((screenRect.width - modalWidth) * 0.5f + _skinModalOffset.x, (screenRect.height - modalHeight) * 0.5f + _skinModalOffset.y, modalWidth, modalHeight);
+            GUI.Box(modalRect, "", _boxStyle);
+
+            // Draggable header + close button
+            var headerRect = new Rect(modalRect.x + 8, modalRect.y + 8, modalRect.width - 70, 36);
+            var friendsDragDelta = GetModalDragDelta(headerRect, ref _draggingSkinModal);
+            _skinModalOffset += friendsDragDelta;
+            modalRect.x += friendsDragDelta.x;
+            modalRect.y += friendsDragDelta.y;
+            var closeRect = new Rect(modalRect.x + modalRect.width - 48, modalRect.y + 8, 34, 30);
+            if (GUI.Button(closeRect, "X", _modalCloseBtnStyle))
+            {
+                _showFriendsModal = false;
+                Event.current.Use();
+                return;
+            }
+            GUI.Label(new Rect(modalRect.x + 18, modalRect.y + 12, 260, 30), "FRIENDS", _titleStyle);
+
+            if (!_veilnetLoggedIn)
+            {
+                GUI.Label(new Rect(modalRect.x + 18, modalRect.y + 60, modalRect.width - 36, 60),
+                    "Log in to Veilnet to see your friends, their status, and world invites.", _switchLabelStyle);
+                return;
+            }
+
+            // Tabs: FRIENDS | INVITES (with green bubble count)
+            float tabY = modalRect.y + 52;
+            var friendsTabRect = new Rect(modalRect.x + 18, tabY, 120, 30);
+            var invitesTabRect = new Rect(modalRect.x + 146, tabY, 150, 30);
+            if (GUI.Button(friendsTabRect, $"FRIENDS ({_friendsList.Count})", _friendsTabIndex == 0 ? _logoutButtonStyle : _buttonStyle))
+                _friendsTabIndex = 0;
+            if (GUI.Button(invitesTabRect, _pendingInviteCount > 0 ? $"INVITES \u25cf {_pendingInviteCount}" : "INVITES", _friendsTabIndex == 1 ? _logoutButtonStyle : _buttonStyle))
+            {
+                _friendsTabIndex = 1;
+                _pendingInviteCount = 0; // viewed: bubble clears
+            }
+
+            float bodyY = tabY + 40;
+            float bodyH = modalRect.height - (bodyY - modalRect.y) - 46;
+
+            if (_friendsTabIndex == 0)
+                DrawFriendsTab(modalRect, bodyY, bodyH);
+            else
+                DrawInvitesTab(modalRect, bodyY, bodyH);
+
+            // Status line (wraps, bottom of the modal)
+            if (!string.IsNullOrEmpty(_friendsStatusMessage))
+                GUI.Label(new Rect(modalRect.x + 18, modalRect.y + modalRect.height - 40, modalRect.width - 36, 32),
+                    _friendsStatusMessage, _switchSubLabelStyle);
+        }
+
+        private void DrawFriendsTab(Rect modalRect, float bodyY, float bodyH)
+        {
+            // Add-friend bar
+            var inputRect = new Rect(modalRect.x + 18, bodyY, 280, 32);
+            _addFriendInput = GUI.TextField(inputRect, _addFriendInput, _textFieldStyle);
+            var addBtnRect = new Rect(modalRect.x + 306, bodyY, 110, 32);
+            if (GUI.Button(addBtnRect, "ADD FRIEND", _buttonStyle))
+            {
+                if (string.IsNullOrWhiteSpace(_addFriendInput))
+                    _friendsStatusMessage = "Enter a username to send a friend request.";
+                else
+                    BeginFriendRequest(_addFriendInput.Trim());
+            }
+
+            // Left column: friends list
+            var listRect = new Rect(modalRect.x + 18, bodyY + 42, 400, bodyH - 42);
+            GUI.Box(listRect, "", _panelBoxStyle);
+            var rowH = 62f;
+            var content = new Rect(0, 0, listRect.width - 14, 6 + _friendsList.Count * rowH);
+            _friendsScroll = GUI.BeginScrollView(listRect, _friendsScroll, content, false, true);
+
+            float rowY = 3;
+            foreach (var friend in _friendsList)
+            {
+                DrawFriendRow(new Rect(4, rowY, content.width - 8, rowH - 5), friend);
+                rowY += rowH;
+            }
+            if (_friendsList.Count == 0)
+                GUI.Label(new Rect(12, 20, content.width - 20, 60),
+                    _friendsRefreshRunning ? "Loading friends\u2026" : "No friends yet.\nAdd someone by their Veilnet username above.", _switchSubLabelStyle);
+            GUI.EndScrollView();
+
+            // Right column: selected friend profile (Discord-style detail card)
+            var detailRect = new Rect(modalRect.x + 430, bodyY + 42, modalRect.width - 448, bodyH - 42);
+            GUI.Box(detailRect, "", _panelBoxStyle);
+            var selected = FindFriend(_selectedFriendId);
+            if (selected == null)
+            {
+                GUI.Label(new Rect(detailRect.x + 16, detailRect.y + 20, detailRect.width - 32, 80),
+                    "Select a friend to see their profile, status, and world.", _switchSubLabelStyle);
+            }
+            else
+            {
+                DrawFriendDetail(detailRect, selected);
+            }
+        }
+
+        private string _selectedFriendId = "";
+
+        private VeilnetFriendsClient.FriendUser FindFriend(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            foreach (var f in _friendsList)
+                if (string.Equals(f.Id, id, StringComparison.OrdinalIgnoreCase))
+                    return f;
+            return null;
+        }
+
+        private void DrawFriendRow(Rect row, VeilnetFriendsClient.FriendUser friend)
+        {
+            var presence = GetPresence(friend.Id);
+            bool selected = string.Equals(_selectedFriendId, friend.Id, StringComparison.OrdinalIgnoreCase);
+            bool hover = row.Contains(Event.current.mousePosition);
+
+            var bg = selected ? new Color(0.24f, 0.26f, 0.32f) : hover ? new Color(0.18f, 0.20f, 0.25f) : new Color(0.14f, 0.15f, 0.19f);
+            var prevBg = GUI.backgroundColor;
+            GUI.backgroundColor = bg;
+            GUI.Box(row, "", _boxStyle);
+            GUI.backgroundColor = prevBg;
+
+            // Avatar (profile image or initials fallback)
+            var avatarRect = new Rect(row.x + 8, row.y + 9, 40, 40);
+            var avatar = _friendAvatarCache.TryGetValue(friend.Id, out var tex) && tex != null
+                ? tex
+                : GetFriendInitialsTexture(friend);
+            if (avatar != null)
+                GUI.DrawTexture(avatarRect, avatar, ScaleMode.ScaleToFit);
+
+            // Presence dot (green = online/launcher, purple = in world, grey = offline)
+            var dotColor = OfflineDim;
+            string statusText = "OFFLINE";
+            if (presence != null)
+            {
+                if (presence.Status == "IN_WORLD") { dotColor = InWorldColor; statusText = presence.IsMultiplayer ? $"IN WORLD: {presence.WorldName}" : $"IN WORLD: {presence.WorldName}"; }
+                else if (presence.Status == "MENU") { dotColor = OnlineGreen; statusText = "ONLINE \u2014 IN MENU"; }
+                else { dotColor = OnlineGreen; statusText = "ONLINE"; }
+            }
+
+            // Name + status
+            GUI.Label(new Rect(row.x + 58, row.y + 7, row.width - 66, 22), friend.Username, _switchLabelStyle);
+            var dotRect = new Rect(row.x + 58, row.y + 32, 9, 9);
+            var prevColor = GUI.color;
+            GUI.color = dotColor;
+            GUI.DrawTexture(dotRect, Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = prevColor;
+            GUI.Label(new Rect(row.x + 72, row.y + 29, row.width - 80, 18), statusText, _switchSubLabelStyle);
+
+            // Click to select
+            if (Event.current.type == EventType.MouseDown && row.Contains(Event.current.mousePosition) && Event.current.button == 0)
+            {
+                _selectedFriendId = friend.Id;
+                Event.current.Use();
+            }
+        }
+
+        private void DrawFriendDetail(Rect detailRect, VeilnetFriendsClient.FriendUser friend)
+        {
+            var presence = GetPresence(friend.Id);
+            var bigAvatarRect = new Rect(detailRect.x + (detailRect.width - 96) * 0.5f, detailRect.y + 20, 96, 96);
+            var avatar = _friendAvatarCache.TryGetValue(friend.Id, out var tex) && tex != null
+                ? tex
+                : GetFriendInitialsTexture(friend);
+            if (avatar != null)
+                GUI.DrawTexture(bigAvatarRect, avatar, ScaleMode.ScaleToFit);
+
+            GUI.Label(new Rect(detailRect.x + 16, detailRect.y + 124, detailRect.width - 32, 26), friend.Username, _switchLabelStyle);
+            var statusText = presence == null ? "Offline"
+                : presence.Status == "IN_WORLD" ? $"In world: {presence.WorldName}"
+                : presence.Status == "MENU" ? "Online \u2014 in menu"
+                : "Online";
+            GUI.Label(new Rect(detailRect.x + 16, detailRect.y + 150, detailRect.width - 32, 20), statusText, _switchSubLabelStyle);
+
+            if (!string.IsNullOrEmpty(friend.FriendCode))
+                GUI.Label(new Rect(detailRect.x + 16, detailRect.y + 172, detailRect.width - 32, 20), $"Friend code: {friend.FriendCode}", _switchSubLabelStyle);
+
+            var inviteRect = new Rect(detailRect.x + 16, detailRect.y + detailRect.height - 64, 150, 36);
+            bool canInvite = presence != null && presence.Status != "OFFLINE";
+            GUI.enabled = canInvite;
+            if (GUI.Button(inviteRect, canInvite ? "INVITE TO WORLD" : "OFFLINE", _logoutButtonStyle))
+                BeginWorldInvite(friend);
+            GUI.enabled = true;
+
+            var removeRect = new Rect(detailRect.x + detailRect.width - 126, detailRect.y + detailRect.height - 64, 110, 36);
+            if (GUI.Button(removeRect, "REMOVE", _buttonStyle))
+                BeginFriendRemove(friend);
+        }
+
+        private void DrawInvitesTab(Rect modalRect, float bodyY, float bodyH)
+        {
+            var listRect = new Rect(modalRect.x + 18, bodyY, modalRect.width - 36, bodyH);
+            GUI.Box(listRect, "", _panelBoxStyle);
+            var rowH = 66f;
+            var count = _worldInvitesIn.Count + _worldInvitesOut.Count;
+            var content = new Rect(0, 0, listRect.width - 14, 6 + count * rowH);
+            _friendsScroll = GUI.BeginScrollView(listRect, _friendsScroll, content, false, true);
+
+            float rowY = 3;
+            if (_worldInvitesIn.Count > 0)
+            {
+                GUI.Label(new Rect(10, rowY, content.width - 20, 20), "INCOMING", _sectionHeaderStyle);
+                rowY += 24;
+                foreach (var invite in _worldInvitesIn)
+                {
+                    DrawWorldInviteRow(new Rect(4, rowY, content.width - 8, rowH - 5), invite, incoming: true);
+                    rowY += rowH;
+                }
+                rowY += 6;
+            }
+            if (_worldInvitesOut.Count > 0)
+            {
+                GUI.Label(new Rect(10, rowY, content.width - 20, 20), "SENT", _sectionHeaderStyle);
+                rowY += 24;
+                foreach (var invite in _worldInvitesOut)
+                {
+                    DrawWorldInviteRow(new Rect(4, rowY, content.width - 8, rowH - 5), invite, incoming: false);
+                    rowY += rowH;
+                }
+            }
+            if (count == 0)
+                GUI.Label(new Rect(12, 20, content.width - 20, 60),
+                    _friendsRefreshRunning ? "Checking invites\u2026" : "No world invites right now.", _switchSubLabelStyle);
+            GUI.EndScrollView();
+        }
+
+        private void DrawWorldInviteRow(Rect row, VeilnetFriendsClient.WorldInvite invite, bool incoming)
+        {
+            GUI.Box(row, "", _boxStyle);
+
+            var avatarRect = new Rect(row.x + 8, row.y + 11, 40, 40);
+            if (!string.IsNullOrEmpty(invite.SenderPictureUrl)
+                && _friendAvatarCache.TryGetValue(invite.SenderId, out var tex) && tex != null)
+                GUI.DrawTexture(avatarRect, tex, ScaleMode.ScaleToFit);
+            else if (!incoming && _friendInitialsCache.TryGetValue(invite.SenderId, out var initials) && initials != null)
+                GUI.DrawTexture(avatarRect, initials, ScaleMode.ScaleToFit);
+
+            GUI.Label(new Rect(row.x + 58, row.y + 7, row.width - 250, 22),
+                incoming ? $"{invite.SenderName} invited you" : $"You invited {invite.SenderName}", _switchLabelStyle);
+            GUI.Label(new Rect(row.x + 58, row.y + 31, row.width - 250, 18),
+                $"World: {invite.WorldName}{(string.IsNullOrEmpty(invite.GameMode) ? "" : "  \u00b7  " + invite.GameMode)}", _switchSubLabelStyle);
+
+            if (incoming)
+            {
+                var acceptRect = new Rect(row.x + row.width - 186, row.y + 16, 86, 30);
+                if (GUI.Button(acceptRect, "JOIN", _logoutButtonStyle))
+                    BeginInviteRespond(invite, true);
+                var declineRect = new Rect(row.x + row.width - 94, row.y + 16, 86, 30);
+                if (GUI.Button(declineRect, "DECLINE", _buttonStyle))
+                    BeginInviteRespond(invite, false);
+            }
+            else
+            {
+                var cancelRect = new Rect(row.x + row.width - 94, row.y + 16, 86, 30);
+                if (GUI.Button(cancelRect, "CANCEL", _buttonStyle))
+                    BeginInviteRevokeAll();
+            }
+        }
+
+        // ----------------------- Friends actions -----------------------
+
+        private void BeginFriendRequest(string username)
+        {
+            if (!_veilnetLoggedIn || string.IsNullOrWhiteSpace(_veilnetToken)) return;
+            _friendsStatusMessage = $"Sending friend request to {username}\u2026";
+            var client = new VeilnetFriendsClient(GetVeilnetFunctionsBaseUrl(), GetSupabaseAnonKey(), _veilnetToken, _httpClient);
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                var result = await client.RequestFriendAsync(username).ConfigureAwait(false);
+                EnqueueMainThread(() =>
+                {
+                    _friendsStatusMessage = result.Ok
+                        ? (result.Message ?? "Request sent.")
+                        : $"Could not add {username}: {result.Error}";
+                    if (result.Ok) { _addFriendInput = ""; _nextFriendsRefreshAt = 0; }
+                });
+            });
+        }
+
+        private void BeginFriendRemove(VeilnetFriendsClient.FriendUser friend)
+        {
+            if (friend == null) return;
+            _friendsStatusMessage = $"Removing {friend.Username}\u2026";
+            var client = new VeilnetFriendsClient(GetVeilnetFunctionsBaseUrl(), GetSupabaseAnonKey(), _veilnetToken, _httpClient);
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                var result = await client.RemoveFriendAsync(friend.Id).ConfigureAwait(false);
+                EnqueueMainThread(() =>
+                {
+                    if (result.Ok)
+                    {
+                        _friendsList.RemoveAll(f => string.Equals(f.Id, friend.Id, StringComparison.OrdinalIgnoreCase));
+                        if (string.Equals(_selectedFriendId, friend.Id, StringComparison.OrdinalIgnoreCase))
+                            _selectedFriendId = "";
+                        _friendsStatusMessage = $"Removed {friend.Username}.";
+                    }
+                    else
+                        _friendsStatusMessage = $"Could not remove {friend.Username}: {result.Error}";
+                });
+            });
+        }
+
+        private void BeginWorldInvite(VeilnetFriendsClient.FriendUser friend)
+        {
+            if (friend == null) return;
+            _friendsStatusMessage = $"Inviting {friend.Username} to your world\u2026";
+            var client = new VeilnetFriendsClient(GetVeilnetFunctionsBaseUrl(), GetSupabaseAnonKey(), _veilnetToken, _httpClient);
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                var result = await client.SendWorldInviteAsync(friend.Id).ConfigureAwait(false);
+                EnqueueMainThread(() =>
+                {
+                    _friendsStatusMessage = result.Ok
+                        ? (result.Message ?? $"Invite sent to {friend.Username}.")
+                        : $"Invite failed: {result.Error}";
+                    if (result.Ok) StartInvitePoll();
+                });
+            });
+        }
+
+        private void BeginInviteRespond(VeilnetFriendsClient.WorldInvite invite, bool accepted)
+        {
+            if (invite == null) return;
+            _friendsStatusMessage = accepted ? $"Joining {invite.SenderName}'s world\u2026" : "Declining invite\u2026";
+            var client = new VeilnetFriendsClient(GetVeilnetFunctionsBaseUrl(), GetSupabaseAnonKey(), _veilnetToken, _httpClient);
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                var result = await client.RespondWorldInviteAsync(invite.SenderId, accepted).ConfigureAwait(false);
+                EnqueueMainThread(() =>
+                {
+                    _friendsStatusMessage = result.Ok
+                        ? (accepted ? "Invite accepted \u2014 see the game to join." : "Invite declined.")
+                        : $"Invite response failed: {result.Error}";
+                    if (result.Ok) StartInvitePoll();
+                });
+            });
+        }
+
+        private void BeginInviteRevokeAll()
+        {
+            _friendsStatusMessage = "Cancelling sent invites\u2026";
+            var client = new VeilnetFriendsClient(GetVeilnetFunctionsBaseUrl(), GetSupabaseAnonKey(), _veilnetToken, _httpClient);
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                var result = await client.RevokeWorldInvitesAsync().ConfigureAwait(false);
+                EnqueueMainThread(() =>
+                {
+                    _friendsStatusMessage = result.Ok ? "Sent invites cancelled." : $"Cancel failed: {result.Error}";
+                    if (result.Ok) StartInvitePoll();
+                });
+            });
+        }
+
         private void DrawVersionManagerModal(Rect screenRect)
         {
             GUI.Box(screenRect, "", _dimmerStyle);

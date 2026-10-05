@@ -2298,12 +2298,12 @@ namespace LatticeVeil.Launcher
             {
                 var autoUpdatesText = _settings.AutoUpdateChecksEnabled ? "Automatic Update Checks: Enabled" : "Automatic Update Checks: Disabled";
                 GUI.Label(new Rect(contentX, tabBodyY, contentWidth, 28), autoUpdatesText, _sectionHeaderStyle);
-                GUI.Label(new Rect(contentX, tabBodyY + 28, contentWidth, 24), _settings.AutoInstallUpdatesEnabled
+                GUI.Label(new Rect(contentX, tabBodyY + 34, contentWidth, 24), _settings.AutoInstallUpdatesEnabled
                     ? "Automatic Update Install: Enabled (latest version installs silently)"
                     : "Automatic Update Install: Disabled (prompt on new release)", _labelStyle);
-                GUI.Label(new Rect(contentX, tabBodyY + 38, contentWidth, 28), $"Current Channel: {(Paths.IsDevBuild ? "DEV" : "Release")}", _labelStyle);
-                GUI.Label(new Rect(contentX, tabBodyY + 70, contentWidth, 28), $"Build Hash: {(_hashVerified ? "Verified Official" : "Unverified")}", _labelStyle);
-                GUI.Label(new Rect(contentX, tabBodyY + 102, contentWidth, 28), $"Texture Downloads: {(_settings.AutoTextureDownloadsEnabled ? "Automatic Sync" : "Manual / Preserved")}", _labelStyle);
+                GUI.Label(new Rect(contentX, tabBodyY + 62, contentWidth, 28), $"Current Channel: {(Paths.IsDevBuild ? "DEV" : "Release")}", _labelStyle);
+                GUI.Label(new Rect(contentX, tabBodyY + 94, contentWidth, 28), $"Build Hash: {(_hashVerified ? "Verified Official" : "Unverified")}", _labelStyle);
+                GUI.Label(new Rect(contentX, tabBodyY + 130, contentWidth, 28), $"Texture Downloads: {(_settings.AutoTextureDownloadsEnabled ? "Automatic Sync" : "Manual / Preserved")}", _labelStyle);
             }
             else if (_settingsTabIndex == 2) // Cleanup Tab
             {

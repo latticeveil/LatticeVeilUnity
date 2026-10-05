@@ -248,6 +248,10 @@ namespace LatticeVeil.Launcher
         private GUIStyle _skinsSubLabelStyle;
         private GUIStyle _skinsHeaderStyle;
         private GUIStyle _logStyle;
+        private GUIStyle _logTextAreaStyle;
+        private bool _logContextMenuOpen;
+        private Rect _logContextMenuRect;
+        private Rect _logTextAreaScreenRect;
         private GUIStyle _topBarStyle;
         private GUIStyle _textFieldStyle;
         private GUIStyle _dropdownStyle;
@@ -1524,14 +1528,24 @@ namespace LatticeVeil.Launcher
             var logBoxRect = new Rect(leftPanelRect.x, leftPanelRect.y, leftPanelRect.width, logBoxHeight);
             GUI.Box(logBoxRect, "", _boxStyle);
 
+            // Log copy controls (top-right inside the log box)
+            var copyAllRect = new Rect(logBoxRect.x + logBoxRect.width - 100, logBoxRect.y + 8, 92, 26);
+            if (GUI.Button(copyAllRect, "COPY ALL", _friendsGhostButtonStyle))
+                GUIUtility.systemCopyBuffer = _logContent;
+
             // Scrollable log text — TextArea so log lines can be selected and
             // copied (Ctrl+C) like any Windows text box. Edits are discarded:
             // the buffer is re-fed every frame from the logger.
-            var scrollAreaRect = new Rect(logBoxRect.x + 6, logBoxRect.y + 6, logBoxRect.width - 12, logBoxRect.height - 12);
-            var textHeight = Mathf.Max(scrollAreaRect.height, _logContent.Length * 22);
+            var logTopOffset = 40f;
+            var scrollAreaRect = new Rect(logBoxRect.x + 6, logBoxRect.y + logTopOffset, logBoxRect.width - 12, logBoxRect.height - logTopOffset - 6);
+            var logLineCount = _logContent.Length == 0 ? 1 : _logContent.Count(c => c == '\n') + 1;
+            var textHeight = Mathf.Max(scrollAreaRect.height, logLineCount * 24f);
             _scrollPosition = GUI.BeginScrollView(scrollAreaRect, _scrollPosition, new Rect(0, 0, scrollAreaRect.width - 20, textHeight));
-            GUI.TextArea(new Rect(4, 4, scrollAreaRect.width - 24, textHeight), _logContent, _logStyle);
+            _logTextAreaScreenRect = new Rect(4, 4, scrollAreaRect.width - 24, textHeight);
+            GUI.TextArea(_logTextAreaScreenRect, _logContent, _logTextAreaStyle);
             GUI.EndScrollView();
+
+            DrawLogContextMenu(scrollAreaRect);
 
             // Status label & Colored horizontal status bar
             var statusY = logBoxRect.y + logBoxRect.height + 10;
@@ -2967,6 +2981,66 @@ namespace LatticeVeil.Launcher
                 _currentLoadedSkinTex, _skinPreviewYaw, _skinPreviewPitch, _skinPreviewLayers);
         }
 
+        /// <summary>
+        /// Right-click context menu for the log preview: copy the selected
+        /// lines or the whole log. Selection text is read from the active
+        /// IMGUI TextEditor state (the TextArea owns it while focused).
+        /// </summary>
+        private void DrawLogContextMenu(Rect scrollAreaRect)
+        {
+            // Open on right-click inside the log area.
+            if (Event.current.type == EventType.ContextClick
+                && scrollAreaRect.Contains(Event.current.mousePosition))
+            {
+                _logContextMenuOpen = true;
+                _logContextMenuRect = new Rect(Event.current.mousePosition.x, Event.current.mousePosition.y - 8, 176, 74);
+                Event.current.Use();
+            }
+
+            if (!_logContextMenuOpen)
+                return;
+
+            // Close when clicking anywhere outside the menu.
+            if ((Event.current.type == EventType.MouseDown || Event.current.type == EventType.ContextClick)
+                && !_logContextMenuRect.Contains(Event.current.mousePosition))
+            {
+                _logContextMenuOpen = false;
+                return;
+            }
+
+            GUI.Box(_logContextMenuRect, "", _friendsPanelStyle);
+
+            var selected = GetLogSelectedText();
+            GUI.enabled = !string.IsNullOrEmpty(selected);
+            if (GUI.Button(new Rect(_logContextMenuRect.x + 6, _logContextMenuRect.y + 6, _logContextMenuRect.width - 12, 28), "COPY SELECTED", _friendsGhostButtonStyle))
+            {
+                GUIUtility.systemCopyBuffer = selected;
+                _logContextMenuOpen = false;
+            }
+            GUI.enabled = true;
+            if (GUI.Button(new Rect(_logContextMenuRect.x + 6, _logContextMenuRect.y + 40, _logContextMenuRect.width - 12, 28), "COPY WHOLE LOG", _friendsGhostButtonStyle))
+            {
+                GUIUtility.systemCopyBuffer = _logContent;
+                _logContextMenuOpen = false;
+            }
+        }
+
+        /// <summary>
+        /// Returns the text currently selected in the log TextArea, or null.
+        /// Reads the IMGUI TextEditor state owned by the focused control.
+        /// </summary>
+        private string GetLogSelectedText()
+        {
+            if (GUIUtility.keyboardControl == 0)
+                return null;
+            var editor = (TextEditor)GUIUtility.GetStateObject(typeof(TextEditor), GUIUtility.keyboardControl);
+            if (editor == null || string.IsNullOrEmpty(editor.text) || editor.text != _logContent)
+                return null;
+            if (!editor.hasSelection)
+                return null;
+            return editor.SelectedText;
+        }
+
         private float leftPanelHeightWithoutStatus(float totalBodyHeight)
         {
             return Mathf.Max(60, totalBodyHeight - 44);
@@ -4317,6 +4391,15 @@ namespace LatticeVeil.Launcher
             _logStyle.normal.textColor = new Color(0.95f, 0.95f, 0.95f);
             _logStyle.normal.background = MakeTexture(2, 2, oledBlack);
             _logStyle.padding = new RectOffset(8, 8, 8, 8);
+
+            // Log preview text: larger + bold for readability, with a green
+            // selection highlight so selected lines are easy to see.
+            _logTextAreaStyle = new GUIStyle(_logStyle);
+            _logTextAreaStyle.fontSize = 15;
+            _logTextAreaStyle.fontStyle = FontStyle.Bold;
+            _logTextAreaStyle.normal.textColor = new Color(0.97f, 0.97f, 0.97f, 1f);
+            _logTextAreaStyle.padding = new RectOffset(8, 8, 6, 6);
+            GUI.skin.settings.selectionColor = new Color(0f, 0.9f, 0.46f, 0.35f);
 
             _topBarStyle = new GUIStyle(GUI.skin.box);
             _topBarStyle.border = new RectOffset(2, 2, 2, 2);

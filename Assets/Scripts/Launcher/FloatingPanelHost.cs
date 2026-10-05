@@ -629,6 +629,12 @@ namespace LatticeVeil.Launcher
             private bool _uploadInfoOpen;
             private string _uploadInfoText = "";
 
+            // Online-skin removal: confirmation explains that removing the
+            // online copy stops its sync; the dialog offers a local backup.
+            private bool _removeConfirmOpen;
+            private OnlineSkin _removeTarget;
+            private bool _removeQueued;
+
             private readonly Dictionary<string, string> _hashCache = new Dictionary<string, string>();
             private bool _activeSelectionDone;
 
@@ -685,6 +691,11 @@ namespace LatticeVeil.Launcher
                 {
                     _onlineUploadQueued = false;
                     BeginOnlineUpload();
+                }
+                if (_removeQueued)
+                {
+                    _removeQueued = false;
+                    QueueOnlineSkinRemove(_removeTarget);
                 }
 
                 // Consume worker results (online fetch / upload) and kick the
@@ -1223,6 +1234,23 @@ namespace LatticeVeil.Launcher
 
             private void ConsumeUploadResult(UploadResult r, bool directOnline)
             {
+                // Removal results ride the same channel; _removeTarget identifies them.
+                if (_removeTarget != null && r.Slot == _removeTarget.Slot)
+                {
+                    var removedName = _removeTarget.Name;
+                    if (r.Ok)
+                    {
+                        _onlineSkins.RemoveAll(s => s.Slot == r.Slot);
+                        _onlineIsDefault = _onlineSkins.Count == 0;
+                        _onlineFetchQueued = true;
+                        _statusMessage = $"Removed {removedName} from your account ({_onlineSkins.Count}/{SupabaseSkinClient.MaxSkinsPerUser} still used).";
+                    }
+                    else
+                        _statusMessage = $"Removal failed: {r.Error}";
+                    _removeTarget = null;
+                    return;
+                }
+
                 if (r.Ok)
                 {
                     SkinManager.MarkSkinUploaded(r.Hash);
@@ -1552,6 +1580,105 @@ namespace LatticeVeil.Launcher
                     DrawImportWarningDialog(ui, panelRect);
                 if (_uploadInfoOpen)
                     DrawUploadInfoDialog(ui, panelRect);
+                if (_removeConfirmOpen)
+                    DrawRemoveConfirmDialog(ui, panelRect);
+            }
+
+            /// <summary>
+            /// Removal confirmation: warns that deleting the online copy ends
+            /// its sync across devices, with an optional backup into the
+            /// local library before removal.
+            /// </summary>
+            private void DrawRemoveConfirmDialog(PanelUI ui, Rect panelRect)
+            {
+                const float w = 470f, h = 230f;
+                var box = new Rect((panelRect.width - w) * 0.5f, (panelRect.height - h) * 0.5f, w, h);
+                ui.Fill(box, new Color(0.14f, 0.09f, 0.07f));
+                ui.Frame(box, new Color(0.95f, 0.55f, 0.25f)); // warning orange
+
+                var name = _removeTarget != null ? _removeTarget.Name : "this skin";
+                ui.Label(new Rect(box.x + 16, box.y + 14, w - 32, 24), $"REMOVE {name} FROM YOUR ACCOUNT?", 13,
+                    new Color(1f, 0.62f, 0.3f), bold: true);
+
+                const float thumb = 64f;
+                bool hasThumb = _removeTarget?.CachedPath != null && File.Exists(_removeTarget.CachedPath);
+                if (hasThumb)
+                    ui.Image(new Rect(box.x + 16, box.y + 48, thumb, thumb), _removeTarget.CachedPath);
+                var textX = box.x + 16 + (hasThumb ? thumb + 12 : 0);
+                ui.Label(new Rect(textX, box.y + 48, w - 32 - (hasThumb ? thumb + 12 : 0), 90),
+                    "Removing the ONLINE copy ends its sync: it disappears from every device logged into your account, and its slot frees up.\n\n"
+                    + "Any device currently wearing it keeps it until a new skin is applied.", 11, Text, wrap: true);
+
+                float by = box.y + h - 44;
+                if (ui.Button(new Rect(box.x + 16, by, 200, 32), "BACKUP TO LOCAL + REMOVE", 10, BtnBg, BtnHover, Text))
+                {
+                    BackupOnlineSkinToLocal(_removeTarget);
+                    _removeConfirmOpen = false;
+                    _removeQueued = true;
+                }
+                if (ui.Button(new Rect(box.x + 226, by, 120, 32), "JUST REMOVE", 10, BtnBg, BtnHover, Text))
+                {
+                    _removeConfirmOpen = false;
+                    _removeQueued = true;
+                }
+                if (ui.Button(new Rect(box.x + w - 44, box.y + 10, 28, 24), "X", 11, BtnBg, BtnHover, Text))
+                    _removeConfirmOpen = false;
+            }
+
+            /// <summary>Saves the online skin into the local library before removal.</summary>
+            private void BackupOnlineSkinToLocal(OnlineSkin skin)
+            {
+                if (skin == null) return;
+                try
+                {
+                    byte[] bytes = skin.Bytes;
+                    if ((bytes == null || bytes.Length == 0) && skin.CachedPath != null && File.Exists(skin.CachedPath))
+                        bytes = File.ReadAllBytes(skin.CachedPath);
+                    if (bytes == null || bytes.Length == 0)
+                    {
+                        _statusMessage = "No skin data available to back up locally.";
+                        return;
+                    }
+
+                    Directory.CreateDirectory(Core.Paths.UserSkinsDir);
+                    var dest = Path.Combine(Core.Paths.UserSkinsDir, "Veilnet_backup.png");
+                    for (int i = 2; File.Exists(dest)
+                         && !string.Equals(GetSkinHashCached(dest), skin.Hash, StringComparison.OrdinalIgnoreCase); i++)
+                        dest = Path.Combine(Core.Paths.UserSkinsDir, $"Veilnet_backup_{i}.png");
+
+                    File.WriteAllBytes(dest, bytes);
+                    _skinPaths = GetLocalSkinPaths();
+                    _hashCache.Remove(dest);
+                    _statusMessage = $"Backed up {skin.Name} locally as {Path.GetFileName(dest)}.";
+                }
+                catch (Exception ex)
+                {
+                    _statusMessage = $"Backup failed: {ex.Message}";
+                }
+            }
+
+            /// <summary>Sends the remove request for one online slot.</summary>
+            private void QueueOnlineSkinRemove(OnlineSkin skin)
+            {
+                if (skin == null) return;
+                var auth = VeilnetSession.TryRead();
+                if (auth == null)
+                {
+                    _statusMessage = "Log in to Veilnet to manage your online skins.";
+                    return;
+                }
+                if (_syncBusy) { _statusMessage = "Another sync operation is running; try again in a moment."; return; }
+
+                _syncBusy = true;
+                _uploadPending = true;
+                var client = _syncClient ?? (_syncClient = VeilnetSession.CreateClient(auth));
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    var (ok, error) = client.RemoveSkinAsync(skin.Slot).GetAwaiter().GetResult();
+                    _pendingUpload = new UploadResult { Ok = ok, Error = error, Hash = skin.Hash, Slot = skin.Slot, FileName = skin.Name };
+                    _syncBusy = false;
+                    _uploadPending = false;
+                });
             }
 
             /// <summary>Duplicate / full-library upload results with exact hash info.</summary>
@@ -1916,27 +2043,32 @@ namespace LatticeVeil.Launcher
                     {
                         ApplyRowSkin(path, displayName);
                     }
-                }
-
-                // REMOVE only exists on local library rows. Online skins live
-                // on the account and are managed there, so they are never
-                // removed from the launcher.
-                if (path != null && !isOnlineRow)
+                }                if (path != null)
                 {
                     var removeRect = new Rect(row.x + row.width - 106, row.y + 8, 96, 28);
                     if (ui.Button(removeRect, "REMOVE", 11, BtnBg, BtnHover, Text))
                     {
-                        try
+                        if (isOnlineRow)
                         {
-                            File.Delete(path);
-                            if (string.Equals(_selectedSkinPath, path)) _selectedSkinPath = null;
-                            if (string.Equals(_stagedSkinPath, path, StringComparison.OrdinalIgnoreCase)) ClearStagedSkin();
-                            _skinPaths = GetLocalSkinPaths();
-                            _statusMessage = $"Removed {displayName}.";
+                            // Online removal deletes the account copy (ends its
+                            // sync everywhere); the dialog offers a local backup.
+                            _removeTarget = onlineSkin;
+                            _removeConfirmOpen = true;
                         }
-                        catch
+                        else
                         {
-                            _statusMessage = $"Could not remove {displayName} (file may be in use).";
+                            try
+                            {
+                                File.Delete(path);
+                                if (string.Equals(_selectedSkinPath, path)) _selectedSkinPath = null;
+                                if (string.Equals(_stagedSkinPath, path, StringComparison.OrdinalIgnoreCase)) ClearStagedSkin();
+                                _skinPaths = GetLocalSkinPaths();
+                                _statusMessage = $"Removed {displayName}.";
+                            }
+                            catch
+                            {
+                                _statusMessage = $"Could not remove {displayName} (file may be in use).";
+                            }
                         }
                     }
                 }

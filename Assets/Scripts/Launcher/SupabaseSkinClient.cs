@@ -130,6 +130,47 @@ namespace LatticeVeil.Launcher
         }
 
         /// <summary>
+        /// Removes one slot (0..4) from the user's online skin library. The
+        /// remaining slots are untouched.
+        /// </summary>
+        public async Task<(bool ok, string error)> RemoveSkinAsync(int slot, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(_userToken))
+                return (false, "Not logged in to Veilnet.");
+            if (slot < 0 || slot >= MaxSkinsPerUser)
+                return (false, $"Skin slot must be 0..{MaxSkinsPerUser - 1}.");
+
+            try
+            {
+                var body = $"{{\"action\":\"remove\",\"slot\":{slot}}}";
+                var url = $"{_functionsBaseUrl}/player-skin-set";
+                using var req = new HttpRequestMessage(HttpMethod.Post, url)
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json")
+                };
+                AddHeaders(req);
+
+                using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+                var respBody = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+                if (resp.IsSuccessStatusCode)
+                {
+                    var ok = ExtractJsonBool(respBody, "ok");
+                    if (ok) return (true, null);
+                }
+
+                var err = ExtractJsonString(respBody, "error");
+                var detail = ExtractJsonString(respBody, "detail");
+                var msg = !string.IsNullOrEmpty(detail) ? $"{err}: {detail}" : (!string.IsNullOrEmpty(err) ? err : $"HTTP {(int)resp.StatusCode}");
+                return (false, msg);
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Remove skin error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Fetches the player's skin from Veilnet (<c>player-skin-get</c>).
         /// </summary>
         public async Task<FetchResult> FetchSkinAsync(CancellationToken ct = default)

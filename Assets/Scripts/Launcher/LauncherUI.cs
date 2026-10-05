@@ -63,6 +63,9 @@ namespace LatticeVeil.Launcher
         // Protocol linking & Backend endpoints
         private string _startupLinkCode;
         private const string DefaultVeilnetLauncherPageUrl = "https://latticeveil.github.io/veilnet/launcher/";
+
+        /// <summary>Website profile page; supports ?u=&lt;username&gt; deep links.</summary>
+        private const string VeilnetProfilePageUrl = "https://latticeveil.github.io/veilnet/profile/";
         private const string DefaultVeilnetFunctionsBaseUrl = "https://lqghurvonrvrxfwjgkuu.supabase.co/functions/v1";
         private const string DefaultGameHashesGetUrl = "https://lqghurvonrvrxfwjgkuu.supabase.co/rest/v1/game_hashes";
         private const string DefaultSupabaseAnonKey = "sb_publishable_oy1En_XHnhp5AiOWruitmQ_sniWHETA";
@@ -2456,6 +2459,11 @@ namespace LatticeVeil.Launcher
             GUI.backgroundColor = prevBg;
             if (_friendBannerCache.TryGetValue(friend.Id, out var banner) && banner != null)
                 GUI.DrawTexture(heroRect, banner, ScaleMode.ScaleAndCrop);
+
+            // View profile: opens this friend's profile page on the Veilnet website.
+            if (GUI.Button(new Rect(detailRect.x + detailRect.width - 130, detailRect.y + 12, 110, 30), "VIEW PROFILE", _buttonStyle)
+                && !string.IsNullOrEmpty(friend.Username))
+                Application.OpenURL($"{VeilnetProfilePageUrl}?u={Uri.EscapeDataString(friend.Username)}");
 
             // Avatar overlapping the hero's bottom edge (website layout).
             var avatarRect = new Rect(detailRect.x + 20, detailRect.y + 140 - 40, 88, 88);

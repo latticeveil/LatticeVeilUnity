@@ -620,6 +620,15 @@ namespace LatticeVeil.Launcher
             private bool _importWarningOpen;
             private string _importWarningText = "";
 
+            // Direct ONLINE upload: hash + base64 the picked file and ship it
+            // to Supabase without touching the local library.
+            private bool _onlineUploadQueued;
+            private bool _uploadWasDirectOnline;
+
+            // Upload result info (duplicate skin / library full).
+            private bool _uploadInfoOpen;
+            private string _uploadInfoText = "";
+
             private readonly Dictionary<string, string> _hashCache = new Dictionary<string, string>();
             private bool _activeSelectionDone;
 
@@ -633,7 +642,7 @@ namespace LatticeVeil.Launcher
             private class UploadResult
             {
                 public bool Ok;
-                public string Hash, Error;
+                public string Hash, Error, FileName;
                 public int Slot;
             }
 
@@ -670,34 +679,12 @@ namespace LatticeVeil.Launcher
                 if (_uploadQueued)
                 {
                     _uploadQueued = false;
-                    var filePath = SkinManager.PromptSelectSkinFile();
-                    if (!string.IsNullOrEmpty(filePath))
-                    {
-                        // Validate FIRST so size/dimension problems surface as an
-                        // explicit warning instead of a silent status line.
-                        if (!SkinManager.ValidateSkinFile(filePath, out var checkTex, out _, out var invalidReason))
-                        {
-                            if (checkTex != null) Destroy(checkTex);
-                            _importWarningText = $"\"{Path.GetFileName(filePath)}\" is not a valid skin:\n{invalidReason}\n\nSkins must be 64x64 (or 64x32) PNG files, 64KB or smaller.";
-                            _importWarningOpen = true;
-                            _statusMessage = "Skin rejected — see the warning for details.";
-                        }
-                        else if (SkinManager.ImportSkinToLibrary(filePath, out var importError, Path.GetFileNameWithoutExtension(filePath)))
-                        {
-                            _skinPaths = GetLocalSkinPaths();
-                            _hashCache.Remove(Path.GetFullPath(filePath));
-                            _hashCache.Remove(filePath);
-                            // Upload flow: import > preview updates > apply.
-                            StageSkinForPreview(filePath, Path.GetFileNameWithoutExtension(filePath));
-                            _statusMessage = "Imported. Preview it, then press APPLY to use and upload it.";
-                        }
-                        else
-                        {
-                            _importWarningText = $"\"{Path.GetFileName(filePath)}\" could not be imported:\n{importError}";
-                            _importWarningOpen = true;
-                            _statusMessage = "Skin import failed — see the warning for details.";
-                        }
-                    }
+                    BeginLocalAdd();
+                }
+                if (_onlineUploadQueued)
+                {
+                    _onlineUploadQueued = false;
+                    BeginOnlineUpload();
                 }
 
                 // Consume worker results (online fetch / upload) and kick the
@@ -712,7 +699,8 @@ namespace LatticeVeil.Launcher
                 if (uploaded != null)
                 {
                     _pendingUpload = null;
-                    ConsumeUploadResult(uploaded);
+                    ConsumeUploadResult(uploaded, _uploadWasDirectOnline);
+                    _uploadWasDirectOnline = false;
                 }
                 if (_onlineFetchQueued)
                     QueueOnlineFetch();
@@ -896,7 +884,7 @@ namespace LatticeVeil.Launcher
                     return;
                 }
                 _statusMessage = $"Uploading local skin to Veilnet (slot {existingSlot + 1})…";
-                QueueUpload(auth, activeHash, png, existingSlot);
+                QueueUpload(auth, activeHash, png, existingSlot, Path.GetFileName(localPath));
             }            /// <summary>
             /// APPLY on an ONLINE row: makes that online skin the active one.
             /// Reuses the local library copy when the hash already exists
@@ -1217,7 +1205,7 @@ namespace LatticeVeil.Launcher
                 return QueueUpload(auth, hash, png, slot);
             }
 
-            private bool QueueUpload(VeilnetSession.Auth auth, string hash, byte[] png, int slot)
+            private bool QueueUpload(VeilnetSession.Auth auth, string hash, byte[] png, int slot, string fileName = null)
             {
                 if (_syncBusy) { _statusMessage = "Another sync operation is running; try again in a moment."; return false; }
                 _syncBusy = true;
@@ -1226,14 +1214,14 @@ namespace LatticeVeil.Launcher
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {
                     var (ok, error) = client.UploadSkinAsync(hash, png, slot: slot).GetAwaiter().GetResult();
-                    _pendingUpload = new UploadResult { Ok = ok, Error = error, Hash = hash, Slot = slot };
+                    _pendingUpload = new UploadResult { Ok = ok, Error = error, Hash = hash, Slot = slot, FileName = fileName };
                     _syncBusy = false;
                     _uploadPending = false;
                 });
                 return true;
             }
 
-            private void ConsumeUploadResult(UploadResult r)
+            private void ConsumeUploadResult(UploadResult r, bool directOnline)
             {
                 if (r.Ok)
                 {
@@ -1243,16 +1231,133 @@ namespace LatticeVeil.Launcher
                     // Refresh the online library so the X/5 indicator and rows
                     // reflect the new slot contents.
                     _onlineFetchQueued = true;
-                    _statusMessage = $"Uploaded to online slot {r.Slot + 1} ({Mathf.Min(_onlineSkins.Count + 1, SupabaseSkinClient.MaxSkinsPerUser)}/{SupabaseSkinClient.MaxSkinsPerUser} used).";
+                    _statusMessage = directOnline
+                        ? $"Uploaded to your account (slot {r.Slot + 1}, {Mathf.Min(_onlineSkins.Count + 1, SupabaseSkinClient.MaxSkinsPerUser)}/{SupabaseSkinClient.MaxSkinsPerUser} used) — visible on any PC you log in from."
+                        : $"Uploaded to online slot {r.Slot + 1} ({Mathf.Min(_onlineSkins.Count + 1, SupabaseSkinClient.MaxSkinsPerUser)}/{SupabaseSkinClient.MaxSkinsPerUser} used).";
+                    return;
                 }
-                else if (!string.IsNullOrEmpty(r.Error) && r.Error.IndexOf("skin_already_uploaded", StringComparison.OrdinalIgnoreCase) >= 0)
+
+                if (!string.IsNullOrEmpty(r.Error)
+                    && r.Error.IndexOf("skin_already_uploaded", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    _statusMessage = "That skin is already on your account (no duplicates). Press SYNC to see it in the ONLINE tab.";
+                    // Show the exact identifying data the server matched on.
+                    _uploadInfoText = $"SKIN ALREADY ON YOUR ACCOUNT\n\n"
+                        + $"File: {r.FileName}\n"
+                        + $"SHA-256 hash:\n{r.Hash}\n\n"
+                        + "This exact image (byte-for-byte) already occupies one of your five online slots.\n"
+                        + "Duplicate uploads are blocked. Open the ONLINE tab to preview or apply it.";
+                    _uploadInfoOpen = true;
+                    _statusMessage = "Upload blocked — that skin is already on your account.";
+                    return;
+                }
+
+                if (!string.IsNullOrEmpty(r.Error)
+                    && (r.Error.IndexOf("full", StringComparison.OrdinalIgnoreCase) >= 0
+                        || r.Error.IndexOf("max", StringComparison.OrdinalIgnoreCase) >= 0
+                        || r.Error.IndexOf("library", StringComparison.OrdinalIgnoreCase) >= 0))
+                {
+                    _uploadInfoText = $"ONLINE LIBRARY FULL (5/5)\n\n"
+                        + $"File: {r.FileName}\n"
+                        + $"SHA-256 hash:\n{r.Hash}\n\n"
+                        + "Your account holds the maximum of five online skins.\n"
+                        + "Remove one on the Veilnet website to free a slot.";
+                    _uploadInfoOpen = true;
+                    _statusMessage = "Upload blocked — online library is full (5/5).";
+                    return;
+                }
+
+                _statusMessage = $"Upload failed: {r.Error}";
+            }
+
+            /// <summary>
+            /// "+ ADD SKIN" on the LOCAL tab: validates and imports the picked
+            /// file into the local library, then stages it for preview.
+            /// </summary>
+            private void BeginLocalAdd()
+            {
+                var filePath = SkinManager.PromptSelectSkinFile();
+                if (string.IsNullOrEmpty(filePath)) return;
+
+                // Validate FIRST so size/dimension problems surface as an
+                // explicit warning instead of a silent status line.
+                if (!SkinManager.ValidateSkinFile(filePath, out var checkTex, out _, out var invalidReason))
+                {
+                    if (checkTex != null) Destroy(checkTex);
+                    _importWarningText = $"\"{Path.GetFileName(filePath)}\" is not a valid skin:\n{invalidReason}\n\nSkins must be 64x64 (or 64x32) PNG files, 64KB or smaller.";
+                    _importWarningOpen = true;
+                    _statusMessage = "Skin rejected — see the warning for details.";
+                    return;
+                }
+
+                if (SkinManager.ImportSkinToLibrary(filePath, out var importError, Path.GetFileNameWithoutExtension(filePath)))
+                {
+                    _skinPaths = GetLocalSkinPaths();
+                    _hashCache.Remove(Path.GetFullPath(filePath));
+                    _hashCache.Remove(filePath);
+                    // Upload flow: import > preview updates > apply.
+                    StageSkinForPreview(filePath, Path.GetFileNameWithoutExtension(filePath));
+                    _statusMessage = "Imported. Preview it, then press APPLY to use it.";
                 }
                 else
                 {
-                    _statusMessage = $"Upload failed: {r.Error}";
+                    _importWarningText = $"\"{Path.GetFileName(filePath)}\" could not be imported:\n{importError}";
+                    _importWarningOpen = true;
+                    _statusMessage = "Skin import failed — see the warning for details.";
                 }
+            }
+
+            /// <summary>
+            /// UPLOAD on the ONLINE tab: ships the picked file straight to the
+            /// account (hash + base64, next free slot) WITHOUT importing it
+            /// locally — that's what makes it available on other PCs.
+            /// </summary>
+            private void BeginOnlineUpload()
+            {
+                var auth = VeilnetSession.TryRead();
+                if (auth == null)
+                {
+                    _statusMessage = "Log in to Veilnet to upload skins to your account.";
+                    return;
+                }
+
+                var filePath = SkinManager.PromptSelectSkinFile();
+                if (string.IsNullOrEmpty(filePath)) return;
+
+                if (!SkinManager.ValidateSkinFile(filePath, out var tex, out var hash, out var invalidReason))
+                {
+                    if (tex != null) Destroy(tex);
+                    _importWarningText = $"\"{Path.GetFileName(filePath)}\" is not a valid skin:\n{invalidReason}\n\nSkins must be 64x64 (or 64x32) PNG files, 64KB or smaller.";
+                    _importWarningOpen = true;
+                    _statusMessage = "Skin rejected — see the warning for details.";
+                    return;
+                }
+                if (tex != null) Destroy(tex);
+
+                byte[] png;
+                try { png = File.ReadAllBytes(filePath); }
+                catch (Exception ex)
+                {
+                    _statusMessage = $"Could not read the skin file: {ex.Message}";
+                    return;
+                }
+
+                // Slot choice: reuse the slot holding this skin, else next free.
+                var existing = FindOnlineSkinByHash(hash);
+                var slot = existing != null ? existing.Slot : FirstFreeOnlineSlot();
+                if (slot < 0)
+                {
+                    _uploadInfoText = $"ONLINE LIBRARY FULL (5/5)\n\n"
+                        + $"File: {Path.GetFileName(filePath)}\n"
+                        + $"SHA-256 hash:\n{hash}\n\n"
+                        + "Your account holds the maximum of five online skins.\n"
+                        + "Remove one on the Veilnet website to free a slot.";
+                    _uploadInfoOpen = true;
+                    _statusMessage = "Upload blocked — online library is full (5/5).";
+                    return;
+                }
+
+                _uploadWasDirectOnline = true;
+                QueueUpload(auth, hash, png, slot, Path.GetFileName(filePath));
             }
 
             /// <summary>Resolves the local file (or ONLINE row) for the active skin hash.</summary>
@@ -1398,36 +1503,45 @@ namespace LatticeVeil.Launcher
                 if (!string.IsNullOrEmpty(_statusMessage))
                     ui.Label(new Rect(16, panelRect.height - 40, panelRect.width - 32, 26), _statusMessage, 12, Dim);
 
-                var buttonRowY = previewRect.y + previewRect.height - 52;
+                // Bottom-left: tab-dependent action — "+ ADD SKIN" imports
+                // into the local library, UPLOAD ships a file straight to the
+                // account (hash + base64, no local copy). Bottom-right:
+                // preview/skin-visibility settings only.
+                float actionY = previewRect.y + previewRect.height - 52;
+                if (onlineTab)
+                {
+                    var uploadRect = new Rect(16, actionY, 150, 38);
+                    if (ui.Button(uploadRect, "UPLOAD", 11, BtnBg, BtnHover, Text))
+                        _onlineUploadQueued = true;
+                    var syncRect = new Rect(174, actionY, 110, 38);
+                    if (ui.Button(syncRect, _syncBusy ? "…" : "SYNC", 11, BtnBg, BtnHover, Text))
+                    {
+                        _syncCheckRequested = true;
+                        QueueOnlineFetch();
+                    }
+                }
+                else
+                {
+                    var addRect = new Rect(16, actionY, 170, 38);
+                    if (ui.Button(addRect, "+ ADD SKIN", 11, Accent, BtnHover, Text))
+                        _uploadQueued = true;
+                }
 
-                // Distribute the buttons across the preview column so they can
-                // never be cut off by the window edge at small panel widths.
-                const int ButtonCount = 5;
-                const float Gap = 10f, Margin = 16f;
-                float btnW = (previewRect.width - Margin * 2 - Gap * (ButtonCount - 1)) / ButtonCount;
-                if (btnW < 56f) btnW = 56f;
-                float totalW = ButtonCount * btnW + (ButtonCount - 1) * Gap;
-                float bx = previewRect.x + Mathf.Max(Margin, (previewRect.width - totalW) * 0.5f);
-                int btnFont = btnW < 84 ? 9 : 11;
-                Rect B(int i) => new Rect(bx + i * (btnW + Gap), buttonRowY, btnW, 38);
-
-                if (ui.Button(B(0), "RECENTER", btnFont, BtnBg, BtnHover, Text))
+                // Right-aligned visibility controls (both tabs).
+                float rightW = 92f, rightGap = 8f;
+                float r2x = panelRect.width - 16 - rightW;
+                float r1x = r2x - rightW - rightGap;
+                float r3x = r1x - rightW - rightGap;
+                if (ui.Button(new Rect(r3x, actionY, rightW, 38), "RECENTER", 9, BtnBg, BtnHover, Text))
                 {
                     // yaw = 90 => rootYaw = 0 => the model faces the camera.
                     _yaw = 90f; _pitch = 0f; _zoom = 1f;
                 }
-                if (ui.Button(B(1), _layers ? "LAYERS: ON" : "LAYERS: OFF", btnFont, BtnBg, BtnHover, Text))
+                if (ui.Button(new Rect(r2x, actionY, rightW, 38), _layers ? "LAYERS: ON" : "LAYERS: OFF", 9, BtnBg, BtnHover, Text))
                     _layers = !_layers;
-                if (ui.Button(B(2), "UPLOAD", btnFont, BtnBg, BtnHover, Text))
-                    _uploadQueued = true;
-                if (ui.Button(B(3), _syncBusy ? "…" : "SYNC", btnFont, BtnBg, BtnHover, Text))
+                if (ui.Button(new Rect(r1x, actionY, rightW, 38), "FOLDER", 9, BtnBg, BtnHover, Text))
                 {
-                    _syncCheckRequested = true;
-                    QueueOnlineFetch();
-                }
-                if (ui.Button(B(4), "FOLDER", btnFont, BtnBg, BtnHover, Text))
-                {
-                    try { Process.Start("explorer.exe", Core.Paths.UserSkinsDir); } catch { }
+                    try { Process.Start("explorer.exe", onlineTab ? Core.Paths.RuntimeSkinsDir : Core.Paths.UserSkinsDir); } catch { }
                 }
 
                 if (_syncDialogOpen)
@@ -1436,6 +1550,26 @@ namespace LatticeVeil.Launcher
                     DrawApplyConfirmDialog(ui, panelRect);
                 if (_importWarningOpen)
                     DrawImportWarningDialog(ui, panelRect);
+                if (_uploadInfoOpen)
+                    DrawUploadInfoDialog(ui, panelRect);
+            }
+
+            /// <summary>Duplicate / full-library upload results with exact hash info.</summary>
+            private void DrawUploadInfoDialog(PanelUI ui, Rect panelRect)
+            {
+                const float w = 480f, h = 220f;
+                var box = new Rect((panelRect.width - w) * 0.5f, (panelRect.height - h) * 0.5f, w, h);
+                ui.Fill(box, new Color(0.14f, 0.09f, 0.07f));
+                ui.Frame(box, new Color(0.95f, 0.55f, 0.25f)); // warning orange
+
+                ui.Label(new Rect(box.x + 16, box.y + 14, w - 32, 24), "UPLOAD BLOCKED", 13,
+                    new Color(1f, 0.62f, 0.3f), bold: true);
+                ui.Label(new Rect(box.x + 16, box.y + 44, w - 32, 120), _uploadInfoText ?? "", 11, Text, wrap: true);
+
+                if (ui.Button(new Rect(box.x + w - 130, box.y + h - 44, 114, 30), "OK", 11, BtnBg, BtnHover, Text))
+                    _uploadInfoOpen = false;
+                if (ui.Button(new Rect(box.x + w - 44, box.y + 10, 28, 24), "X", 11, BtnBg, BtnHover, Text))
+                    _uploadInfoOpen = false;
             }
 
             /// <summary>Warning shown when an imported skin fails validation (size / dimensions).</summary>

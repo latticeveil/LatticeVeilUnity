@@ -237,6 +237,10 @@ namespace LatticeVeil.Launcher
         private GUIStyle _switchSubLabelStyle;
         private GUIStyle _boxStyle;
         private GUIStyle _panelBoxStyle;
+        private GUIStyle _friendsModalBoxStyle;
+        private GUIStyle _friendsPanelStyle;
+        private GUIStyle _friendsAccentButtonStyle;
+        private GUIStyle _friendsGhostButtonStyle;
         private GUIStyle _logStyle;
         private GUIStyle _topBarStyle;
         private GUIStyle _textFieldStyle;
@@ -2279,10 +2283,10 @@ namespace LatticeVeil.Launcher
         {
             GUI.Box(screenRect, "", _dimmerStyle);
 
-            const float modalWidth = 880f;
-            const float modalHeight = 560f;
+            var modalWidth = Mathf.Min(980f, screenRect.width - 60f);
+            var modalHeight = Mathf.Min(620f, screenRect.height - 60f);
             var modalRect = new Rect((screenRect.width - modalWidth) * 0.5f + _skinModalOffset.x, (screenRect.height - modalHeight) * 0.5f + _skinModalOffset.y, modalWidth, modalHeight);
-            GUI.Box(modalRect, "", _boxStyle);
+            GUI.Box(modalRect, "", _friendsModalBoxStyle);
 
             // Draggable header + close button
             var headerRect = new Rect(modalRect.x + 8, modalRect.y + 8, modalRect.width - 70, 36);
@@ -2308,11 +2312,11 @@ namespace LatticeVeil.Launcher
 
             // Tabs: FRIENDS | INVITES (with green bubble count)
             float tabY = modalRect.y + 52;
-            var friendsTabRect = new Rect(modalRect.x + 18, tabY, 120, 30);
-            var invitesTabRect = new Rect(modalRect.x + 146, tabY, 150, 30);
-            if (GUI.Button(friendsTabRect, $"FRIENDS ({_friendsList.Count(f => !f.Pending)})", _friendsTabIndex == 0 ? _logoutButtonStyle : _buttonStyle))
+            var friendsTabRect = new Rect(modalRect.x + 18, tabY, 130, 30);
+            var invitesTabRect = new Rect(modalRect.x + 156, tabY, 160, 30);
+            if (GUI.Button(friendsTabRect, $"FRIENDS ({_friendsList.Count(f => !f.Pending)})", _friendsTabIndex == 0 ? _friendsAccentButtonStyle : _friendsGhostButtonStyle))
                 _friendsTabIndex = 0;
-            if (GUI.Button(invitesTabRect, _pendingInviteCount > 0 ? $"INVITES \u25cf {_pendingInviteCount}" : "INVITES", _friendsTabIndex == 1 ? _logoutButtonStyle : _buttonStyle))
+            if (GUI.Button(invitesTabRect, _pendingInviteCount > 0 ? $"INVITES \u25cf {_pendingInviteCount}" : "INVITES", _friendsTabIndex == 1 ? _friendsAccentButtonStyle : _friendsGhostButtonStyle))
             {
                 _friendsTabIndex = 1;
                 _pendingInviteCount = 0; // viewed: bubble clears
@@ -2335,10 +2339,10 @@ namespace LatticeVeil.Launcher
         private void DrawFriendsTab(Rect modalRect, float bodyY, float bodyH)
         {
             // Add-friend bar
-            var inputRect = new Rect(modalRect.x + 18, bodyY, 280, 32);
+            var inputRect = new Rect(modalRect.x + 18, bodyY, 262, 32);
             _addFriendInput = GUI.TextField(inputRect, _addFriendInput, _textFieldStyle);
-            var addBtnRect = new Rect(modalRect.x + 306, bodyY, 110, 32);
-            if (GUI.Button(addBtnRect, "ADD FRIEND", _buttonStyle))
+            var addBtnRect = new Rect(modalRect.x + 288, bodyY, 150, 32);
+            if (GUI.Button(addBtnRect, "ADD FRIEND", _friendsAccentButtonStyle))
             {
                 if (string.IsNullOrWhiteSpace(_addFriendInput))
                     _friendsStatusMessage = "Enter a username to send a friend request.";
@@ -2347,8 +2351,8 @@ namespace LatticeVeil.Launcher
             }
 
             // Left column: friends list
-            var listRect = new Rect(modalRect.x + 18, bodyY + 42, 400, bodyH - 42);
-            GUI.Box(listRect, "", _panelBoxStyle);
+            var listRect = new Rect(modalRect.x + 18, bodyY + 42, 420, bodyH - 42);
+            GUI.Box(listRect, "", _friendsPanelStyle);
             var rowH = 62f;
             var content = new Rect(0, 0, listRect.width - 14, 6 + _friendsList.Count * rowH);
             _friendsScroll = GUI.BeginScrollView(listRect, _friendsScroll, content, false, true);
@@ -2365,8 +2369,8 @@ namespace LatticeVeil.Launcher
             GUI.EndScrollView();
 
             // Right column: selected friend profile (Discord-style detail card)
-            var detailRect = new Rect(modalRect.x + 430, bodyY + 42, modalRect.width - 448, bodyH - 42);
-            GUI.Box(detailRect, "", _panelBoxStyle);
+            var detailRect = new Rect(modalRect.x + 450, bodyY + 42, modalRect.width - 468, bodyH - 42);
+            GUI.Box(detailRect, "", _friendsPanelStyle);
             var selected = FindFriend(_selectedFriendId);
             if (selected == null)
             {
@@ -2396,7 +2400,7 @@ namespace LatticeVeil.Launcher
             bool selected = string.Equals(_selectedFriendId, friend.Id, StringComparison.OrdinalIgnoreCase);
             bool hover = row.Contains(Event.current.mousePosition);
 
-            var bg = selected ? new Color(0.24f, 0.26f, 0.32f) : hover ? new Color(0.18f, 0.20f, 0.25f) : new Color(0.14f, 0.15f, 0.19f);
+            var bg = selected ? new Color(0.10f, 0.26f, 0.17f) : hover ? new Color(0.08f, 0.20f, 0.13f) : new Color(0.07f, 0.10f, 0.08f);
             var prevBg = GUI.backgroundColor;
             GUI.backgroundColor = bg;
             GUI.Box(row, "", _boxStyle);
@@ -2454,14 +2458,14 @@ namespace LatticeVeil.Launcher
             // Hero: banner (cover) with dark fallback, ~140px tall.
             var heroRect = new Rect(detailRect.x + 1, detailRect.y + 1, detailRect.width - 2, 140);
             var prevBg = GUI.backgroundColor;
-            GUI.backgroundColor = new Color(0.09f, 0.10f, 0.13f);
+            GUI.backgroundColor = new Color(0.08f, 0.10f, 0.09f);
             GUI.Box(heroRect, "", _boxStyle);
             GUI.backgroundColor = prevBg;
             if (_friendBannerCache.TryGetValue(friend.Id, out var banner) && banner != null)
                 GUI.DrawTexture(heroRect, banner, ScaleMode.ScaleAndCrop);
 
             // View profile: opens this friend's profile page on the Veilnet website.
-            if (GUI.Button(new Rect(detailRect.x + detailRect.width - 130, detailRect.y + 12, 110, 30), "VIEW PROFILE", _buttonStyle)
+            if (GUI.Button(new Rect(detailRect.x + detailRect.width - 185, detailRect.y + 12, 165, 30), "VIEW PROFILE", _friendsAccentButtonStyle)
                 && !string.IsNullOrEmpty(friend.Username))
                 Application.OpenURL($"{VeilnetProfilePageUrl}?u={Uri.EscapeDataString(friend.Username)}");
 
@@ -2499,15 +2503,15 @@ namespace LatticeVeil.Launcher
                 string.IsNullOrEmpty(friend.AboutMe) ? "No about me yet." : friend.AboutMe,
                 new GUIStyle(_switchSubLabelStyle) { wordWrap = true });
 
-            var inviteRect = new Rect(detailRect.x + 20, detailRect.y + detailRect.height - 48, 150, 36);
+            var inviteRect = new Rect(detailRect.x + 20, detailRect.y + detailRect.height - 48, 180, 36);
             bool canInvite = !friend.Pending && presence != null && presence.Status != "OFFLINE";
             GUI.enabled = canInvite;
-            if (GUI.Button(inviteRect, canInvite ? "INVITE TO WORLD" : (friend.Pending ? "PENDING" : "OFFLINE"), _logoutButtonStyle))
+            if (GUI.Button(inviteRect, canInvite ? "INVITE TO WORLD" : (friend.Pending ? "PENDING" : "OFFLINE"), canInvite ? _friendsAccentButtonStyle : _friendsGhostButtonStyle))
                 BeginWorldInvite(friend);
             GUI.enabled = true;
 
-            var removeRect = new Rect(detailRect.x + detailRect.width - 130, detailRect.y + detailRect.height - 48, 110, 36);
-            if (GUI.Button(removeRect, friend.Pending ? "CANCEL" : "REMOVE", _buttonStyle))
+            var removeRect = new Rect(detailRect.x + detailRect.width - 140, detailRect.y + detailRect.height - 48, 120, 36);
+            if (GUI.Button(removeRect, friend.Pending ? "CANCEL" : "REMOVE", _friendsGhostButtonStyle))
             {
                 if (friend.Pending) BeginFriendRequestCancel(friend);
                 else BeginFriendRemove(friend);
@@ -2541,7 +2545,7 @@ namespace LatticeVeil.Launcher
         private void DrawInvitesTab(Rect modalRect, float bodyY, float bodyH)
         {
             var listRect = new Rect(modalRect.x + 18, bodyY, modalRect.width - 36, bodyH);
-            GUI.Box(listRect, "", _panelBoxStyle);
+            GUI.Box(listRect, "", _friendsPanelStyle);
             var rowH = 66f;
             var count = _worldInvitesIn.Count + _worldInvitesOut.Count;
             var content = new Rect(0, 0, listRect.width - 14, 6 + count * rowH);
@@ -2593,17 +2597,17 @@ namespace LatticeVeil.Launcher
 
             if (incoming)
             {
-                var acceptRect = new Rect(row.x + row.width - 186, row.y + 16, 86, 30);
-                if (GUI.Button(acceptRect, "JOIN", _logoutButtonStyle))
+                var acceptRect = new Rect(row.x + row.width - 202, row.y + 16, 98, 30);
+                if (GUI.Button(acceptRect, "JOIN", _friendsAccentButtonStyle))
                     BeginInviteRespond(invite, true);
-                var declineRect = new Rect(row.x + row.width - 94, row.y + 16, 86, 30);
-                if (GUI.Button(declineRect, "DECLINE", _buttonStyle))
+                var declineRect = new Rect(row.x + row.width - 98, row.y + 16, 90, 30);
+                if (GUI.Button(declineRect, "DECLINE", _friendsGhostButtonStyle))
                     BeginInviteRespond(invite, false);
             }
             else
             {
-                var cancelRect = new Rect(row.x + row.width - 94, row.y + 16, 86, 30);
-                if (GUI.Button(cancelRect, "CANCEL", _buttonStyle))
+                var cancelRect = new Rect(row.x + row.width - 98, row.y + 16, 90, 30);
+                if (GUI.Button(cancelRect, "CANCEL", _friendsGhostButtonStyle))
                     BeginInviteRevokeAll();
             }
         }
@@ -2742,7 +2746,7 @@ namespace LatticeVeil.Launcher
 
             // Left: version list (all releases with a zip asset)
             var listRect = new Rect(modalRect.x + 16, modalRect.y + 54, 470, modalRect.height - 122);
-            GUI.Box(listRect, "", _panelBoxStyle);
+            GUI.Box(listRect, "", _friendsPanelStyle);
             var rowHeight = 68f;
             var listContent = new Rect(0, 0, listRect.width - 20, 8 + _gameVersions.Count * rowHeight);
             _versionManagerListScroll = GUI.BeginScrollView(listRect, _versionManagerListScroll, listContent, false, true);
@@ -3809,7 +3813,7 @@ namespace LatticeVeil.Launcher
 
             var listRect = new Rect(modalRect.x + 18, modalRect.y + 54, 360, 390);
             var previewRect = new Rect(modalRect.x + 426, modalRect.y + 56, 360, 320);
-            GUI.Box(listRect, "", _panelBoxStyle);
+            GUI.Box(listRect, "", _friendsPanelStyle);
             GUI.Box(previewRect, "", _panelBoxStyle);
 
             var activeHash = ReadActiveSkinHash();
@@ -4378,6 +4382,40 @@ namespace LatticeVeil.Launcher
 
             _dimmerStyle = new GUIStyle(GUI.skin.box);
             _dimmerStyle.normal.background = _dimmerTex;
+
+            // Friends modal scheme: near-black green-tinted surfaces, brand-green
+            // accent buttons for primary actions, muted ghost buttons otherwise.
+            var friendsSurface = new Color(0.055f, 0.07f, 0.06f, 1f);
+            var friendsPanel = new Color(0.07f, 0.09f, 0.08f, 1f);
+            var friendsBorder = new Color(0.14f, 0.34f, 0.22f, 1f);
+
+            _friendsModalBoxStyle = new GUIStyle(_boxStyle);
+            _friendsModalBoxStyle.normal.background = CreateBorderedTexture(friendsSurface, friendsBorder, 16, 16, 1);
+
+            _friendsPanelStyle = new GUIStyle(_boxStyle);
+            _friendsPanelStyle.normal.background = CreateBorderedTexture(friendsPanel, friendsBorder, 16, 16, 1);
+
+            _friendsAccentButtonStyle = new GUIStyle(GUI.skin.button);
+            _friendsAccentButtonStyle.fontSize = 14;
+            _friendsAccentButtonStyle.fontStyle = FontStyle.Bold;
+            _friendsAccentButtonStyle.border = new RectOffset(2, 2, 2, 2);
+            _friendsAccentButtonStyle.padding = new RectOffset(12, 12, 8, 8);
+            _friendsAccentButtonStyle.normal.textColor = Color.white;
+            _friendsAccentButtonStyle.normal.background = CreateBorderedTexture(forestGreen, greenAccent, 16, 16, 1);
+            _friendsAccentButtonStyle.hover.background = CreateBorderedTexture(new Color(0.08f, 0.30f, 0.18f, 1f), greenAccent, 16, 16, 1);
+            _friendsAccentButtonStyle.active.background = CreateBorderedTexture(new Color(0.10f, 0.38f, 0.22f, 1f), greenAccent, 16, 16, 1);
+            _friendsAccentButtonStyle.alignment = TextAnchor.MiddleCenter;
+
+            _friendsGhostButtonStyle = new GUIStyle(GUI.skin.button);
+            _friendsGhostButtonStyle.fontSize = 14;
+            _friendsGhostButtonStyle.fontStyle = FontStyle.Bold;
+            _friendsGhostButtonStyle.border = new RectOffset(2, 2, 2, 2);
+            _friendsGhostButtonStyle.padding = new RectOffset(12, 12, 8, 8);
+            _friendsGhostButtonStyle.normal.textColor = new Color(0.85f, 0.88f, 0.86f, 1f);
+            _friendsGhostButtonStyle.normal.background = CreateBorderedTexture(new Color(0.10f, 0.12f, 0.11f, 1f), new Color(0.24f, 0.30f, 0.26f, 1f), 16, 16, 1);
+            _friendsGhostButtonStyle.hover.background = CreateBorderedTexture(new Color(0.16f, 0.19f, 0.17f, 1f), new Color(0.30f, 0.38f, 0.33f, 1f), 16, 16, 1);
+            _friendsGhostButtonStyle.active.background = CreateBorderedTexture(new Color(0.20f, 0.24f, 0.22f, 1f), greenAccent, 16, 16, 1);
+            _friendsGhostButtonStyle.alignment = TextAnchor.MiddleCenter;
         }
 
         private Texture2D MakeTexture(int width, int height, Color col)

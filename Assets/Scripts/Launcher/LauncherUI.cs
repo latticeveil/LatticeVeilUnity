@@ -135,6 +135,7 @@ namespace LatticeVeil.Launcher
         private int _pendingInviteCount;            // green bubble on the top bar
         private readonly Dictionary<string, Texture2D> _friendAvatarCache = new Dictionary<string, Texture2D>();
         private readonly Dictionary<string, Texture2D> _friendInitialsCache = new Dictionary<string, Texture2D>();
+        private readonly Dictionary<string, Texture2D> _friendBannerCache = new Dictionary<string, Texture2D>();
         private Texture2D _friendsIconTex;
         private Texture2D _greenBubbleTex;
         private static readonly Color OnlineGreen = new Color(0.36f, 0.80f, 0.44f);
@@ -1043,9 +1044,12 @@ namespace LatticeVeil.Launcher
                     _presenceList.Clear();
                     if (presence != null && presence.Ok) _presenceList.AddRange(presence.Entries);
 
-                    // Download avatars for friends we have not cached yet.
+                    // Download avatars + banners for friends we have not cached yet.
                     foreach (var f in _friendsList)
+                    {
                         StartFriendAvatarDownload(f);
+                        StartFriendBannerDownload(f);
+                    }
 
                     _friendsStatusMessage = _friendsList.Count == 0
                         ? "No friends yet — add someone by their username."
@@ -1096,6 +1100,44 @@ namespace LatticeVeil.Launcher
                         return;
                     }
                     _friendAvatarCache[friend.Id] = tex;
+                });
+            });
+        }
+
+        /// <summary>Downloads a friend's banner image (website profile hero).</summary>
+        private void StartFriendBannerDownload(VeilnetFriendsClient.FriendUser friend)
+        {
+            if (friend == null || string.IsNullOrWhiteSpace(friend.BannerUrl)) return;
+            if (_friendBannerCache.ContainsKey(friend.Id)) return;
+            _friendBannerCache[friend.Id] = null; // reserve
+
+            var url = friend.BannerUrl;
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                byte[] bytes = null;
+                try
+                {
+                    using (var resp = await _httpClient.GetAsync(url).ConfigureAwait(false))
+                        if (resp.IsSuccessStatusCode)
+                            bytes = await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                }
+                catch { }
+
+                EnqueueMainThread(() =>
+                {
+                    if (bytes == null || bytes.Length == 0)
+                    {
+                        _friendBannerCache.Remove(friend.Id);
+                        return;
+                    }
+                    var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                    if (!tex.LoadImage(bytes))
+                    {
+                        Destroy(tex);
+                        _friendBannerCache.Remove(friend.Id);
+                        return;
+                    }
+                    _friendBannerCache[friend.Id] = tex;
                 });
             });
         }
@@ -2368,34 +2410,64 @@ namespace LatticeVeil.Launcher
             }
         }
 
+        /// <summary>
+        /// Website-style profile card: banner hero across the top, avatar
+        /// overlapping its bottom edge, nameplate, status line, then an
+        /// "About Me" section — mirroring the Veilnet profile page.
+        /// </summary>
         private void DrawFriendDetail(Rect detailRect, VeilnetFriendsClient.FriendUser friend)
         {
             var presence = GetPresence(friend.Id);
-            var bigAvatarRect = new Rect(detailRect.x + (detailRect.width - 96) * 0.5f, detailRect.y + 20, 96, 96);
+
+            // Hero: banner (cover) with dark fallback, ~140px tall.
+            var heroRect = new Rect(detailRect.x + 1, detailRect.y + 1, detailRect.width - 2, 140);
+            var prevBg = GUI.backgroundColor;
+            GUI.backgroundColor = new Color(0.09f, 0.10f, 0.13f);
+            GUI.Box(heroRect, "", _boxStyle);
+            GUI.backgroundColor = prevBg;
+            if (_friendBannerCache.TryGetValue(friend.Id, out var banner) && banner != null)
+                GUI.DrawTexture(heroRect, banner, ScaleMode.ScaleAndCrop);
+
+            // Avatar overlapping the hero's bottom edge (website layout).
+            var avatarRect = new Rect(detailRect.x + 20, detailRect.y + 140 - 40, 88, 88);
             var avatar = _friendAvatarCache.TryGetValue(friend.Id, out var tex) && tex != null
                 ? tex
                 : GetFriendInitialsTexture(friend);
             if (avatar != null)
-                GUI.DrawTexture(bigAvatarRect, avatar, ScaleMode.ScaleToFit);
+                GUI.DrawTexture(avatarRect, avatar, ScaleMode.ScaleToFit);
 
-            GUI.Label(new Rect(detailRect.x + 16, detailRect.y + 124, detailRect.width - 32, 26), friend.Username, _switchLabelStyle);
+            // Nameplate + status under the hero (avatar occupies the left).
+            var nameY = detailRect.y + 150;
+            GUI.Label(new Rect(detailRect.x + 120, nameY, detailRect.width - 136, 26), friend.Username, _switchLabelStyle);
             var statusText = presence == null ? "Offline"
                 : presence.Status == "IN_WORLD" ? $"In world: {presence.WorldName}"
                 : presence.Status == "MENU" ? "Online \u2014 in menu"
                 : "Online";
-            GUI.Label(new Rect(detailRect.x + 16, detailRect.y + 150, detailRect.width - 32, 20), statusText, _switchSubLabelStyle);
+            var statusColor = presence == null ? OfflineDim
+                : presence.Status == "IN_WORLD" ? InWorldColor : OnlineGreen;
+            var prevColor = GUI.color;
+            GUI.color = statusColor;
+            GUI.DrawTexture(new Rect(detailRect.x + 120, nameY + 30, 9, 9), Texture2D.whiteTexture, ScaleMode.StretchToFill);
+            GUI.color = prevColor;
+            GUI.Label(new Rect(detailRect.x + 134, nameY + 27, detailRect.width - 150, 20), statusText, _switchSubLabelStyle);
 
-            if (!string.IsNullOrEmpty(friend.FriendCode))
-                GUI.Label(new Rect(detailRect.x + 16, detailRect.y + 172, detailRect.width - 32, 20), $"Friend code: {friend.FriendCode}", _switchSubLabelStyle);
+            // About Me section (website parity: pre-wrap, muted).
+            var aboutHeaderY = nameY + 56;
+            GUI.Label(new Rect(detailRect.x + 20, aboutHeaderY, detailRect.width - 40, 20), "ABOUT ME", _sectionHeaderStyle);
+            var aboutY = aboutHeaderY + 24;
+            var aboutH = detailRect.height - (aboutY - detailRect.y) - 56;
+            GUI.Label(new Rect(detailRect.x + 20, aboutY, detailRect.width - 40, Mathf.Max(20, aboutH)),
+                string.IsNullOrEmpty(friend.AboutMe) ? "No about me yet." : friend.AboutMe,
+                new GUIStyle(_switchSubLabelStyle) { wordWrap = true });
 
-            var inviteRect = new Rect(detailRect.x + 16, detailRect.y + detailRect.height - 64, 150, 36);
+            var inviteRect = new Rect(detailRect.x + 20, detailRect.y + detailRect.height - 48, 150, 36);
             bool canInvite = presence != null && presence.Status != "OFFLINE";
             GUI.enabled = canInvite;
             if (GUI.Button(inviteRect, canInvite ? "INVITE TO WORLD" : "OFFLINE", _logoutButtonStyle))
                 BeginWorldInvite(friend);
             GUI.enabled = true;
 
-            var removeRect = new Rect(detailRect.x + detailRect.width - 126, detailRect.y + detailRect.height - 64, 110, 36);
+            var removeRect = new Rect(detailRect.x + detailRect.width - 130, detailRect.y + detailRect.height - 48, 110, 36);
             if (GUI.Button(removeRect, "REMOVE", _buttonStyle))
                 BeginFriendRemove(friend);
         }

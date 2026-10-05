@@ -39,8 +39,9 @@ namespace LatticeVeil.Launcher
         {
             public string Id;
             public string Username;
-            public string FriendCode;
             public string PictureUrl;
+            public string BannerUrl;
+            public string AboutMe;
         }
 
         public sealed class FriendListResult
@@ -339,8 +340,9 @@ namespace LatticeVeil.Launcher
             {
                 Id = ExtractFirst(obj, "productUserId") ?? string.Empty,
                 Username = ExtractFirst(obj, "username", "displayName") ?? string.Empty,
-                FriendCode = ExtractFirst(obj, "friendCode") ?? string.Empty,
                 PictureUrl = ExtractFirst(obj, "pictureUrl") ?? string.Empty,
+                BannerUrl = ExtractFirst(obj, "bannerUrl") ?? string.Empty,
+                AboutMe = ExtractFirst(obj, "aboutMe") ?? string.Empty,
             };
         }
 

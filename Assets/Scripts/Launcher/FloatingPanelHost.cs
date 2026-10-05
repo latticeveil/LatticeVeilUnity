@@ -551,7 +551,7 @@ namespace LatticeVeil.Launcher
             private Vector2 _skinScroll = Vector2.zero;
             private Vector2 _onlineScroll = Vector2.zero;
             private int _skinTab;             // 0 = LOCAL, 1 = ONLINE
-            private int _localFilter;         // 0 = ALL, 1 = ONLINE, 2 = LOCAL ONLY
+            private bool _onlineFetchedOnce;  // fetch the account's skins on first ONLINE visit
             private string _selectedSkinPath;
             private string _statusMessage = "";
             private bool _uploadQueued;
@@ -1245,6 +1245,10 @@ namespace LatticeVeil.Launcher
                     _onlineFetchQueued = true;
                     _statusMessage = $"Uploaded to online slot {r.Slot + 1} ({Mathf.Min(_onlineSkins.Count + 1, SupabaseSkinClient.MaxSkinsPerUser)}/{SupabaseSkinClient.MaxSkinsPerUser} used).";
                 }
+                else if (!string.IsNullOrEmpty(r.Error) && r.Error.IndexOf("skin_already_uploaded", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    _statusMessage = "That skin is already on your account (no duplicates). Press SYNC to see it in the ONLINE tab.";
+                }
                 else
                 {
                     _statusMessage = $"Upload failed: {r.Error}";
@@ -1325,6 +1329,13 @@ namespace LatticeVeil.Launcher
                 bool onlineTab = DrawSkinTabs(ui, tabRect);
                 float rowH = 74f;
 
+                // First visit to the ONLINE tab pulls the account's skins.
+                if (onlineTab && !_onlineFetchedOnce && !_syncBusy)
+                {
+                    _onlineFetchQueued = true;
+                    _onlineFetchedOnce = true;
+                }
+
                 string uploadedMarker = ReadUploadedHashSafe();
                 if (onlineTab)
                 {
@@ -1333,12 +1344,9 @@ namespace LatticeVeil.Launcher
                 }
                 else
                 {
-                    // Sub-filter: ALL / ONLINE (has a cloud copy) / LOCAL ONLY.
-                    DrawLocalFilterStrip(ui, new Rect(16, HeaderH + 46, 400, 26));
-                    var listRect = new Rect(16, HeaderH + 76, 400, panelRect.height - HeaderH - 24 - 64);
+                    var listRect = new Rect(16, HeaderH + 46, 400, panelRect.height - HeaderH - 24 - 34);
 
-                    var filtered = FilterLocalSkins(uploadedMarker);
-                    float contentH = 8 + (filtered.Length + 1) * rowH;
+                    float contentH = 8 + (_skinPaths.Length + 1) * rowH;
                     var list = ui.BeginList(listRect, contentH, ref _skinScroll);
 
                     bool defaultUploaded = _onlineIsDefault
@@ -1346,16 +1354,13 @@ namespace LatticeVeil.Launcher
                         || string.Equals(uploadedMarker, "default_skin", StringComparison.OrdinalIgnoreCase);
 
                     float rowY = list.y + 4;
-                    if (_localFilter != 2) // the default skin has no local file
-                    {
-                        DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), "DEFAULT SKIN", null,
-                            string.IsNullOrWhiteSpace(activeHash), SkinRowMode.Default,
-                            defaultUploaded ? "UPLOADED" : null);
-                        rowY += rowH;
-                    }
+                    DrawSkinRow(ui, new Rect(4, rowY, list.width - 10, rowH - 6), "DEFAULT SKIN", null,
+                        string.IsNullOrWhiteSpace(activeHash), SkinRowMode.Default,
+                        defaultUploaded ? "UPLOADED" : null);
+                    rowY += rowH;
 
                     bool anyRowActive = false;
-                    foreach (var path in filtered)
+                    foreach (var path in _skinPaths)
                     {
                         var name = Path.GetFileNameWithoutExtension(path);
                         // Imported skins keep their friendly filename (hashes live in
@@ -1431,32 +1436,6 @@ namespace LatticeVeil.Launcher
                     DrawApplyConfirmDialog(ui, panelRect);
                 if (_importWarningOpen)
                     DrawImportWarningDialog(ui, panelRect);
-            }
-
-            /// <summary>Draws the ALL / ONLINE / LOCAL ONLY filter strip.</summary>
-            private void DrawLocalFilterStrip(PanelUI ui, Rect rect)
-            {
-                float w = (rect.width - 12) / 3f;
-                string[] labels = { "ALL", "ONLINE", "LOCAL ONLY" };
-                for (int i = 0; i < labels.Length; i++)
-                {
-                    var r = new Rect(rect.x + i * (w + 6), rect.y, w, rect.height);
-                    if (ui.Button(r, labels[i], 10, _localFilter == i ? Accent : BtnBg, BtnHover, Text))
-                        _localFilter = i;
-                }
-            }
-
-            /// <summary>Filters library skins by their online-copy status.</summary>
-            private string[] FilterLocalSkins(string uploadedMarker)
-            {
-                if (_localFilter == 0) return _skinPaths;
-                return _skinPaths.Where(path =>
-                {
-                    var hash = GetSkinHashCached(path);
-                    bool hasOnlineCopy = FindOnlineSkinByHash(hash) != null
-                        || (!string.IsNullOrEmpty(uploadedMarker) && string.Equals(hash, uploadedMarker, StringComparison.OrdinalIgnoreCase));
-                    return _localFilter == 1 ? hasOnlineCopy : !hasOnlineCopy;
-                }).ToArray();
             }
 
             /// <summary>Warning shown when an imported skin fails validation (size / dimensions).</summary>

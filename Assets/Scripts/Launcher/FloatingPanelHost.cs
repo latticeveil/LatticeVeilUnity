@@ -811,6 +811,43 @@ namespace LatticeVeil.Launcher
                 return null;
             }
 
+            /// <summary>
+            /// REMOVE on the ONLINE row: saves the account skin into the local
+            /// library (never overwriting a different skin under the same name)
+            /// so it becomes a normal local copy. Active skin and the runtime
+            /// cache are left untouched; the row then shows as a local entry.
+            /// </summary>
+            private void KeepOnlineSkinAsLocalCopy()
+            {
+                try
+                {
+                    if (_onlinePngBytes == null || _onlinePngBytes.Length == 0)
+                    {
+                        if (_onlinePngPath != null && File.Exists(_onlinePngPath))
+                            _onlinePngBytes = File.ReadAllBytes(_onlinePngPath);
+                    }
+                    if (_onlinePngBytes == null || _onlinePngBytes.Length == 0)
+                    {
+                        _statusMessage = "Online skin data unavailable; press SYNC to re-fetch.";
+                        return;
+                    }
+
+                    Directory.CreateDirectory(Core.Paths.UserSkinsDir);
+                    var dest = Path.Combine(Core.Paths.UserSkinsDir, "Veilnet_skin.png");
+                    for (int i = 2; File.Exists(dest)
+                         && !string.Equals(GetSkinHashCached(dest), _onlineHash, StringComparison.OrdinalIgnoreCase); i++)
+                        dest = Path.Combine(Core.Paths.UserSkinsDir, $"Veilnet_skin_{i}.png");
+
+                    File.WriteAllBytes(dest, _onlinePngBytes);
+                    _selectedSkinPath = dest;
+                    _statusMessage = "Kept the online skin as a local copy.";
+                }
+                catch (Exception ex)
+                {
+                    _statusMessage = $"Could not save the online skin locally: {ex.Message}";
+                }
+            }
+
             /// <summary>Uploads the just-imported skin to Veilnet in the background (UPLOAD button).</summary>
             private void QueueUploadActiveSkin(string hash, string importedPath)
             {
@@ -1291,15 +1328,25 @@ namespace LatticeVeil.Launcher
                     var removeRect = new Rect(row.x + row.width - 106, row.y + 40, 96, 24);
                     if (ui.Button(removeRect, "REMOVE", 11, BtnBg, BtnHover, Text))
                     {
-                        try
+                        if (isOnlineRow)
                         {
-                            File.Delete(path);
-                            if (string.Equals(_selectedSkinPath, path)) _selectedSkinPath = null;
-                            _statusMessage = $"Removed {displayName}.";
+                            // Removing the ONLINE row keeps the skin: it swaps
+                            // from the online representation to a normal local
+                            // library copy of that online skin.
+                            KeepOnlineSkinAsLocalCopy();
                         }
-                        catch
+                        else
                         {
-                            _statusMessage = $"Could not remove {displayName} (file may be in use).";
+                            try
+                            {
+                                File.Delete(path);
+                                if (string.Equals(_selectedSkinPath, path)) _selectedSkinPath = null;
+                                _statusMessage = $"Removed {displayName}.";
+                            }
+                            catch
+                            {
+                                _statusMessage = $"Could not remove {displayName} (file may be in use).";
+                            }
                         }
                     }
                 }

@@ -752,9 +752,10 @@ namespace LatticeVeil.Launcher
                 if (_onlineIsDefault)
                 {
                     SkinManager.ClearActiveSkin();
+                    SelectDefaultPreview();
                     _statusMessage = "Switched to the default (online) skin.";
                     return;
-                }
+ }
                 if (_onlinePngBytes == null || _onlinePngBytes.Length == 0)
                 {
                     _statusMessage = "Online skin data unavailable; press SYNC to re-fetch.";
@@ -1196,6 +1197,19 @@ namespace LatticeVeil.Launcher
                 return bmp;
             }
 
+            /// <summary>
+            /// Points the preview back at the default skin and forces a rebake:
+            /// clearing the selection alone is not enough because the bake
+            /// trigger only fires when the baked key changes.
+            /// </summary>
+            private void SelectDefaultPreview()
+            {
+                _selectedSkinPath = null;
+                _bakedKey = null;
+                _lastBakedYaw = float.NaN;
+                _lastBakedPitch = float.NaN;
+            }
+
             private void DrawSkinRow(PanelUI ui, Rect row, string displayName, string path, bool isActive, string useText, string badge = null)
             {
                 bool hover = row.Contains(ui.Mouse);
@@ -1219,6 +1233,7 @@ namespace LatticeVeil.Launcher
                     if (path == null)
                     {
                         SkinManager.ClearActiveSkin();
+                        SelectDefaultPreview();
                         _statusMessage = "Reverted to the default skin.";
                     }
                     else

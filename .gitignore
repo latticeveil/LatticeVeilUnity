@@ -1,0 +1,41 @@
+# ---- Unity generated caches (regenerated on open) ----
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Uu]serSettings/
+MemoryCaptures/
+Recordings/
+
+# ---- Build outputs (distribute via GitHub Releases, not git) ----
+[Bb]uild/
+[Bb]uilds/
+
+# ---- Logs & crash reports ----
+[Ll]ogs/
+sysinfo.txt
+crashlytics-build.properties
+*.stackdump
+
+# ---- IDE / editor files (root-level Unity-generated solutions only) ----
+.vs/
+.idea/
+/*.csproj
+/*.sln
+*.suo
+*.user
+*.pidb
+*.booproj
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Local tooling metadata (machine-specific, not project content) ----
+.freebuff/
+.Aura/
+config.json
+
+# ---- Unity auto-recovery scenes ----
+Assets/_Recovery/
+Assets/_Recovery.meta

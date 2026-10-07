@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.WebSockets;
@@ -568,22 +569,88 @@ namespace LatticeVeil.Messages
     public static class Sound
     {
         private static bool _playing;
+
+        // Soft two-note chime, synthesized in memory (no audio asset shipped).
+        // Low-amplitude sines with gentle fade envelopes -> a quiet "doorbell",
+        // not the ear-piercing Console.Beep square wave.
+        private const int SampleRate = 22050;
+        private static byte[] _chimeWav;
+
         public static void PlayPing()
         {
             if (_playing) return;
             _playing = true;
             try
             {
-                // Smallest production-appropriate ping: synthesized via the OS beep
-                // cadence instead of shipping an audio asset.
-                Console.Beep(880, 120);
-                Console.Beep(1320, 180);
+                if (_chimeWav == null) _chimeWav = BuildChimeWav();
+                // Play() is async (preloads + plays on its own thread); no UI block.
+                using var player = new System.Media.SoundPlayer(new MemoryStream(_chimeWav));
+                player.Play();
             }
             catch { }
             finally
             {
-                Task.Delay(400).ContinueWith(_ => _playing = false);
+                Task.Delay(600).ContinueWith(_ => _playing = false);
             }
+        }
+
+        // Two gentle notes: E5 (659 Hz) then C5 (523 Hz), each 140 ms with the
+        // next note starting as the previous one decays — a warm "ding-dong"
+        // doorbell rather than a sharp beep.
+        private static byte[] BuildChimeWav()
+        {
+            const int noteMs = 140;          // spacing between note starts
+            const int tailMs = 260;          // decay tail after the last note
+            const int note1 = 659;           // E5
+            const int note2 = 523;           // C5
+            const double amp = 0.16;         // quiet by design
+            const double attackSec = 0.030;  // 30 ms soft fade-in per note
+
+            int total = (noteMs + tailMs) * SampleRate / 1000;
+            var samples = new short[total];
+            for (int n = 0; n < 2; n++)
+            {
+                int start = n * (noteMs * SampleRate / 1000);
+                double freq = n == 0 ? note1 : note2;
+                for (int i = start; i < total; i++)
+                {
+                    double t = (i - start) / (double)SampleRate;
+                    double attack = Math.Min(1.0, t / attackSec);
+                    double decay = Math.Exp(-3.5 * (i - start) / (double)total);
+                    double env = attack * decay;
+                    if (i >= 0 && i < total)
+                        samples[i] += (short)(amp * env * 32767.0 * Math.Sin(2 * Math.PI * freq * t));
+                }
+            }
+
+            // Global 20 ms edge fades so the clip never clicks at start/end.
+            int edge = SampleRate / 50;
+            for (int i = 0; i < edge; i++)
+            {
+                samples[i] = (short)(samples[i] * i / edge);
+                samples[total - 1 - i] = (short)(samples[total - 1 - i] * i / edge);
+            }
+
+            // 16-bit mono PCM WAV header + data
+            int dataBytes = total * 2;
+            var ms = new MemoryStream(44 + dataBytes);
+            var w = new BinaryWriter(ms);
+            w.Write("RIFF".ToCharArray());
+            w.Write(36 + dataBytes);
+            w.Write("WAVE".ToCharArray());
+            w.Write("fmt ".ToCharArray());
+            w.Write(16);                     // fmt chunk size
+            w.Write((short)1);               // PCM
+            w.Write((short)1);               // mono
+            w.Write(SampleRate);
+            w.Write(SampleRate * 2);         // byte rate = sr * blockalign
+            w.Write((short)2);               // block align (mono 16-bit)
+            w.Write((short)16);              // bits per sample
+            w.Write("data".ToCharArray());
+            w.Write(dataBytes);
+            foreach (var s in samples) w.Write(s);
+            w.Flush();
+            return ms.ToArray();
         }
     }
 }

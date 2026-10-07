@@ -46,6 +46,11 @@ namespace LatticeVeil.Messages
             }
 
             svc.StateChanged += s => Dispatcher.BeginInvoke(() => ConnText.Text = s == "on" ? "live" : s == "wait" ? "reconnecting…" : "offline");
+            // Replay the CURRENT state: the socket may have connected before
+            // this window subscribed, which left the label on "connecting…"
+            // even though messaging was live.
+            ConnText.Text = svc.ConnState == "on" ? "live"
+                : svc.ConnState == "wait" ? "connecting…" : "offline";
             svc.DataChanged += () => Dispatcher.BeginInvoke(RefreshConvList);
             svc.MessageArrived += convId => Dispatcher.BeginInvoke(() =>
             {

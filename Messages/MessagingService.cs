@@ -310,22 +310,34 @@ namespace LatticeVeil.Messages
                     _heartbeats = 0;
                     await SendJson(ws, new { topic = "phoenix", @event = "phx_join", @ref = "0", payload = new { } });
 
-                    // The SERVER broadcasts every new-message ping on the global
-                    // "realtime:veilnet-msgs-live" channel (same one the
-                    // website joins) — instant, regardless of which
-                    // conversations we have bootstrapped. Join it FIRST.
-                    await JoinChannel(ws, "realtime:veilnet-msgs-live");
-                    lock (_joinedTopics) _joinedTopics.Add("realtime:veilnet-msgs-live");
-
-                    // ... and the per-conversation channels as a secondary feed.
-                    lock (_joinedTopics) _joinedTopics.Clear();
-                    List<string> toJoin;
-                    lock (this) toJoin = Conversations.Select(c => c.ConversationId).ToList();
-                    foreach (var convId in toJoin) await JoinChannel(ws, convId);
-                    lock (_joinedTopics)
-                        foreach (var convId in toJoin) _joinedTopics.Add("veilnet-dm:" + convId);
-
+                    // Socket is up — report live BEFORE channel joins. Join
+                    // hiccups must never leave the UI stuck on "connecting…"
+                    // while messaging is actually working (the sweep covers
+                    // any missed joins).
                     ConnState = "on"; StateChanged?.Invoke(ConnState);
+
+                    // Re-join everything we know about on (re)connect.
+                    lock (_joinedTopics) _joinedTopics.Clear();
+                    try
+                    {
+                        // The SERVER broadcasts every new-message ping on the
+                        // global channel (same one the website joins) — join
+                        // it FIRST so delivery never depends on bootstrapped
+                        // conversation state.
+                        await JoinChannel(ws, "realtime:veilnet-msgs-live");
+                        lock (_joinedTopics) _joinedTopics.Add("realtime:veilnet-msgs-live");
+
+                        List<string> toJoin;
+                        lock (this) toJoin = Conversations.Select(c => c.ConversationId).ToList();
+                        foreach (var convId in toJoin)
+                        {
+                            try { await JoinChannel(ws, convId); }
+                            catch { /* sweep covers missed joins */ }
+                        }
+                        lock (_joinedTopics)
+                            foreach (var convId in toJoin) _joinedTopics.Add("veilnet-dm:" + convId);
+                    }
+                    catch { /* keep-fresh loop retries */ }
                     backoff = TimeSpan.FromSeconds(2);
                     _lastHeartbeatAck = DateTime.UtcNow;
 

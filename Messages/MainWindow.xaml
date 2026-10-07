@@ -14,11 +14,19 @@
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="Auto"/>
           </Grid.ColumnDefinitions>
-          <Border Width="36" Height="36" CornerRadius="18" Background="#101512">
-            <TextBlock Text="{Binding Initial}" FontSize="16" FontWeight="Bold"
-                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                       Foreground="{StaticResource AccentBrush}"/>
-          </Border>
+          <Grid Width="36" Height="36">
+            <Border CornerRadius="18" Background="#101512" Visibility="{Binding InitialVisible}">
+              <TextBlock Text="{Binding Initial}" FontSize="16" FontWeight="Bold"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                         Foreground="{StaticResource AccentBrush}"/>
+            </Border>
+            <Ellipse Width="36" Height="36"
+                     Visibility="{Binding PictureVisible}">
+              <Ellipse.Fill>
+                <ImageBrush ImageSource="{Binding Picture}"/>
+              </Ellipse.Fill>
+            </Ellipse>
+          </Grid>
           <StackPanel Grid.Column="1" Margin="10,0,6,0" VerticalAlignment="Center">
             <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="14" TextTrimming="CharacterEllipsis"/>
             <TextBlock Text="{Binding Preview}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis"/>

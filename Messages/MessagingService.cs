@@ -34,6 +34,8 @@ namespace LatticeVeil.Messages
         private int _heartbeats;
         private DateTime _lastHeartbeatAck = DateTime.UtcNow;
         private readonly object _wsLock = new object();
+        private readonly SemaphoreSlim _wsSendLock = new(1, 1);
+        private readonly HashSet<string> _joinedTopics = new HashSet<string>();
 
         public bool SoundEnabled { get; set; }
             = !string.Equals(Environment.GetEnvironmentVariable("LV_MSG_SOUND"), "off", StringComparison.OrdinalIgnoreCase);
@@ -87,6 +89,36 @@ namespace LatticeVeil.Messages
                 return;
             }
             _wsLoop = Task.Run(() => WebsocketLoop(_cts.Token));
+            _keepFreshLoop = Task.Run(() => KeepFreshLoop(_cts.Token));
+        }
+
+        private Task _keepFreshLoop;
+
+        /// <summary>
+        /// Keeps the session "loaded": periodic REST reconcile as a realtime
+        /// fallback, periodic re-bootstrap so newly-created conversations
+        /// appear without a restart, and channel re-joins for conversations
+        /// discovered after the socket connected.
+        /// </summary>
+        private async Task KeepFreshLoop(CancellationToken ct)
+        {
+            var cycle = 0;
+            while (!ct.IsCancellationRequested)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(20), ct); }
+                catch (TaskCanceledException) { break; }
+                try
+                {
+                    cycle++;
+                    lock (this)
+                    {
+                        foreach (var c in Conversations) EnsureChannelJoined(c.ConversationId);
+                    }
+                    if (cycle % 3 == 0) await BootstrapAsync();
+                    else await ReconcileAsync();
+                }
+                catch { /* next cycle retries */ }
+            }
         }
 
         private async Task<JsonElement> PostAsync(string action, object body)
@@ -143,6 +175,37 @@ namespace LatticeVeil.Messages
                     Conversations.Add(conv);
                 }
             }
+            DataChanged?.Invoke();
+
+            // Prefetch on launch: join every conversation's realtime channel
+            // (a friend may have opened a conversation while we were offline)
+            // and warm each conversation's latest messages so opening a chat
+            // needs no fetch at all.
+            try
+            {
+                foreach (var c in Conversations.ToList())
+                    EnsureChannelJoined(c.ConversationId);
+                _ = Task.Run(() => PrefetchAllAsync());
+            }
+            catch { /* keep-fresh loop retries */ }
+        }
+
+        /// <summary>
+        /// Warms the message cache for every conversation with its most
+        /// recent messages (2 concurrent fetches) so the chat view is instant.
+        /// </summary>
+        public async Task PrefetchAllAsync(int perConversation = 20)
+        {
+            var convs = Conversations.ToList();
+            using var gate = new SemaphoreSlim(2, 2);
+            var tasks = convs.Select(async c =>
+            {
+                await gate.WaitAsync();
+                try { await FetchMessagesAsync(c.ConversationId, limit: perConversation); }
+                catch { /* individual conversation failures are non-fatal */ }
+                finally { gate.Release(); }
+            });
+            await Task.WhenAll(tasks);
             DataChanged?.Invoke();
         }
 
@@ -242,8 +305,13 @@ namespace LatticeVeil.Messages
                     _heartbeats = 0;
                     await SendJson(ws, new { topic = "phoenix", @event = "phx_join", @ref = "0", payload = new { } });
 
-                    foreach (var conv in Conversations)
-                        await JoinChannel(ws, conv.ConversationId);
+                    // Re-join everything we know about on (re)connect.
+                    lock (_joinedTopics) _joinedTopics.Clear();
+                    List<string> toJoin;
+                    lock (this) toJoin = Conversations.Select(c => c.ConversationId).ToList();
+                    foreach (var convId in toJoin) await JoinChannel(ws, convId);
+                    lock (_joinedTopics)
+                        foreach (var convId in toJoin) _joinedTopics.Add("veilnet-dm:" + convId);
 
                     ConnState = "on"; StateChanged?.Invoke(ConnState);
                     backoff = TimeSpan.FromSeconds(2);
@@ -301,6 +369,41 @@ namespace LatticeVeil.Messages
                 @ref = NextRef(),
                 payload = new { config = new { broadcast = new { self = false } } },
             });
+        }
+
+        /// <summary>
+        /// Registers interest in a conversation's realtime channel. Safe to
+        /// call any time (before/during/after the socket is up); if the
+        /// socket is not open yet, the connect loop or keep-fresh loop joins
+        /// it on the next (re)connect.
+        /// </summary>
+        private void EnsureChannelJoined(string conversationId)
+        {
+            var topic = "veilnet-dm:" + conversationId;
+            lock (_joinedTopics)
+            {
+                if (!_joinedTopics.Add(topic)) return;
+            }
+            ClientWebSocket ws;
+            lock (_wsLock) ws = _ws;
+            if (ws != null && ws.State == WebSocketState.Open)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _sendGate.WaitAsync();
+                        try { await JoinChannel(ws, conversationId); }
+                        finally { _sendGate.Release(); }
+                    }
+                    catch { lock (_joinedTopics) _joinedTopics.Remove(topic); }
+                });
+            }
+            else
+            {
+                // Not connected (still connecting): retry keep-fresh rejoin.
+                lock (_joinedTopics) _joinedTopics.Remove(topic);
+            }
         }
 
         private void HandleSocketText(string text, ClientWebSocket ws)
@@ -399,10 +502,24 @@ namespace LatticeVeil.Messages
 
         private string NextRef() => (_ref++).ToString();
 
+        // Single writer: Realtime WebSocket rejects concurrent sends.
         private static async Task SendJson(ClientWebSocket ws, object o)
         {
             var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(o));
             await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+        }
+
+        // (Concurrent sends on one ClientWebSocket are illegal; joins go
+        // through EnsureChannelJoined's fire-and-forget Task while the
+        // connect loop may be sending heartbeats at the same instant.
+        // Serialize all sends through this lock.)
+        private readonly SemaphoreSlim _sendGate = new SemaphoreSlim(1, 1);
+
+        private async Task SendJsonLockedSafe(ClientWebSocket ws, object o)
+        {
+            await _wsSendLock.WaitAsync();
+            try { await SendJson(ws, o); }
+            finally { _wsSendLock.Release(); }
         }
 
         public void Dispose()

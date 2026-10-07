@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Threading.Tasks;
 using System.Windows.Threading;
 
@@ -109,15 +110,48 @@ namespace LatticeVeil.Messages
         }
 
         // ---------------- conversations ----------------
+        // NOTE: WPF {Binding} resolves public PROPERTIES (not fields) — these
+        // were fields once and every template bound to nothing.
         public sealed class ConvVm
         {
-            public string Title;
-            public string Preview;
-            public string Initial;
-            public int Unread;
-            public string ConversationId;
+            public string ConversationId { get; set; }
+            public string Title { get; set; }
+            public string Preview { get; set; }
+            public string Initial { get; set; }
+            public string Picture { get; set; }
+            public Brush AvatarBrush { get; set; }
+            public int Unread { get; set; }
             public Visibility UnreadVisible => Unread > 0 ? Visibility.Visible : Visibility.Collapsed;
             public string UnreadText => Unread > 99 ? "99+" : (Unread > 0 ? Unread.ToString() : "");
+            public Visibility PictureVisible => string.IsNullOrEmpty(Picture) ? Visibility.Collapsed : Visibility.Visible;
+            public Visibility InitialVisible => string.IsNullOrEmpty(Picture) ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // Frozen ImageBrush per avatar URL (thread-safe UI-side cache).
+        private static readonly Dictionary<string, Brush> AvatarBrushes
+            = new Dictionary<string, Brush>(StringComparer.OrdinalIgnoreCase);
+
+        private static Brush GetAvatarBrush(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return null;
+            lock (AvatarBrushes)
+            {
+                if (AvatarBrushes.TryGetValue(url, out var brush)) return brush;
+            }
+            Brush result = null;
+            try
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnDemand;
+                bmp.UriSource = new Uri(url, UriKind.Absolute);
+                bmp.EndInit();
+                bmp.Freeze();
+                result = new ImageBrush(bmp) { Stretch = Stretch.UniformToFill };
+            }
+            catch { result = null; }
+            lock (AvatarBrushes) { AvatarBrushes[url] = result; }
+            return result;
         }
 
         private void RefreshConvList()
@@ -130,12 +164,27 @@ namespace LatticeVeil.Messages
             _convs.Clear();
             foreach (var c in snapshot)
             {
+                // Prefer the authoritative username/picture from the shared
+                // Profiles table (bootstrap fills it for friends AND others).
+                if (string.IsNullOrEmpty(c.OtherUsername) || string.IsNullOrEmpty(c.OtherPicture))
+                {
+                    if (svc.Profiles.TryGetValue(c.OtherId, out var prof))
+                    {
+                        if (string.IsNullOrEmpty(c.OtherUsername)) c.OtherUsername = prof.username ?? "";
+                        if (string.IsNullOrEmpty(c.OtherPicture)) c.OtherPicture = prof.picture ?? "";
+                    }
+                }
+                var name = string.IsNullOrEmpty(c.OtherUsername)
+                    ? (c.OtherId.Length > 8 ? c.OtherId.Substring(0, 8) : c.OtherId)
+                    : c.OtherUsername;
                 _convs.Add(new ConvVm
                 {
                     ConversationId = c.ConversationId,
-                    Title = string.IsNullOrEmpty(c.OtherUsername) ? c.OtherId.Substring(0, 8) : c.OtherUsername,
+                    Title = name,
                     Preview = c.LastBody ?? "",
-                    Initial = (string.IsNullOrEmpty(c.OtherUsername) ? "?" : c.OtherUsername.Substring(0, 1)).ToUpperInvariant(),
+                    Initial = (string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1)).ToUpperInvariant(),
+                    Picture = c.OtherPicture,
+                    AvatarBrush = GetAvatarBrush(c.OtherPicture),
                     Unread = c.Unread,
                 });
             }
@@ -152,8 +201,9 @@ namespace LatticeVeil.Messages
                 var conv = App.Service.Conversations.FirstOrDefault(c => c.ConversationId == _current);
                 if (conv != null && conv.Unread > 0)
                 {
-                    await App.Service.ReadAsync(_current);
+                    conv.Unread = 0;           // instant UI flip, pre-REST
                     RefreshConvList();
+                    _ = App.Service.ReadAsync(_current);
                 }
                 await App.Service.FetchMessagesAsync(_current);
                 ReloadMessages(_current);
@@ -163,11 +213,11 @@ namespace LatticeVeil.Messages
         // ---------------- messages ----------------
         public sealed class MsgVm
         {
-            public string Body;
-            public string Stamp;
-            public HorizontalAlignment Align;
-            public Brush BubbleBrush;
-            public Brush BubbleBorder;
+            public string Body { get; set; }
+            public string Stamp { get; set; }
+            public HorizontalAlignment Align { get; set; }
+            public Brush BubbleBrush { get; set; }
+            public Brush BubbleBorder { get; set; }
         }
 
         private void ReloadMessages(string convId)

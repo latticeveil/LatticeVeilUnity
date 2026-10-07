@@ -575,6 +575,9 @@ namespace LatticeVeil.Messages
         // not the ear-piercing Console.Beep square wave.
         private const int SampleRate = 22050;
         private static byte[] _chimeWav;
+        // Kept alive for the process lifetime: Play() is async, so disposing the
+        // player (or its stream) right after Play() can truncate playback.
+        private static System.Media.SoundPlayer _player;
 
         public static void PlayPing()
         {
@@ -582,10 +585,13 @@ namespace LatticeVeil.Messages
             _playing = true;
             try
             {
-                if (_chimeWav == null) _chimeWav = BuildChimeWav();
+                if (_player == null)
+                {
+                    _chimeWav = BuildChimeWav();
+                    _player = new System.Media.SoundPlayer(new MemoryStream(_chimeWav));
+                }
                 // Play() is async (preloads + plays on its own thread); no UI block.
-                using var player = new System.Media.SoundPlayer(new MemoryStream(_chimeWav));
-                player.Play();
+                _player.Play();
             }
             catch { }
             finally

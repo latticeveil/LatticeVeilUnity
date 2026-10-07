@@ -135,6 +135,7 @@ namespace LatticeVeil.Launcher
         // Per-conversation last-activity from the previous badge poll; a conv
         // whose last_at vanishes between polls means someone DELETED the chat.
         private Dictionary<string, string> _msgPrevConvLastAt;
+        private Dictionary<string, string> _msgPrevConvLastSender;
         // The conv we already announced as deleted; re-arms once messages
         // flow into that conversation again (new last_at).
         private string _msgDeletedConvId;
@@ -1101,6 +1102,16 @@ namespace LatticeVeil.Launcher
                             snap.ConvLastAt.TryGetValue(kv.Key, out var nowAt);
                             if (!string.IsNullOrEmpty(nowAt)) continue;   // still has activity
                             if (!string.IsNullOrEmpty(_msgDeletedConvId)) continue; // one announce at a time
+                            // If the last known sender was ME, this clear was
+                            // done by this account (Messages app or website on
+                            // my account) — not news worth announcing.
+                            string prevSender = null;
+                            if (_msgPrevConvLastSender != null) _msgPrevConvLastSender.TryGetValue(kv.Key, out prevSender);
+                            if (string.Equals(prevSender, snap.Me, StringComparison.OrdinalIgnoreCase))
+                            {
+                                _log.Info($"[Messages] conversation {kv.Key} cleared by self (delete ack)");
+                                continue;
+                            }
                             snap.ConvOtherName.TryGetValue(kv.Key, out var who);
                             if (!string.IsNullOrEmpty(who))
                             {
@@ -1112,6 +1123,7 @@ namespace LatticeVeil.Launcher
                         }
                     }
                     _msgPrevConvLastAt = snap.ConvLastAt;
+                    _msgPrevConvLastSender = snap.ConvLastSender;
                 });
             });
         }

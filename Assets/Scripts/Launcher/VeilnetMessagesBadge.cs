@@ -36,10 +36,16 @@ namespace LatticeVeil.Launcher
             public readonly Dictionary<string, string> ConvLastAt = new Dictionary<string, string>(StringComparer.Ordinal);
             // friend display name per conversation (from the embedded other.username)
             public readonly Dictionary<string, string> ConvOtherName = new Dictionary<string, string>(StringComparer.Ordinal);
+            // last_sender user id per conversation (present whenever there is activity)
+            public readonly Dictionary<string, string> ConvLastSender = new Dictionary<string, string>(StringComparer.Ordinal);
+            // THIS account's product user id, from the bootstrap top level
+            public string Me = "";
         }
 
         private static readonly Regex UnreadRx = new Regex("\"unread\"\\s*:\\s*(\\d+)", RegexOptions.Compiled);
         private static readonly Regex ConvIdRx = new Regex("\"conversation_id\"\\s*:\\s*\"([a-f0-9-]{36})\"", RegexOptions.Compiled);
+        private static readonly Regex LastSenderRx = new Regex("\"last_sender\"\\s*:\\s*\"([a-f0-9-]{36})\"", RegexOptions.Compiled);
+        private static readonly Regex SelfIdRx = new Regex("\"([a-f0-9-]{36})\"\\s*:\\s*null", RegexOptions.Compiled);
         private static readonly Regex LastAtRx = new Regex("\"last_at\"\\s*:\\s*\"([^\"]*)\"", RegexOptions.Compiled);
         private static readonly Regex LastBodyRx = new Regex("\"last_body\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"", RegexOptions.Compiled);
         private static readonly Regex UsernameRx = new Regex("\"username\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"", RegexOptions.Compiled);
@@ -80,6 +86,26 @@ namespace LatticeVeil.Launcher
                     return snap;
                 }
 
+                // Decode THIS account's id from the JWT "sub" so the launcher
+                // can tell self-cleared conversations from peer-cleared ones.
+                // Regex-based: Unity's netstandard surface here has no
+                // System.Text.Json, and the launcher parses everything by
+                // regex by design.
+                var subRx = new Regex("\"sub\"\\s*:\\s*\"([a-f0-9-]{36})\"", RegexOptions.Compiled);
+                var parts = _userToken.Split('.');
+                if (parts.Length >= 2)
+                {
+                    try
+                    {
+                        var p = parts[1].Replace('-', '+').Replace('_', '/');
+                        p = p.PadRight(p.Length + (4 - p.Length % 4) % 4, '=');
+                        var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(p));
+                        var m = subRx.Match(json);
+                        snap.Me = m.Success ? m.Groups[1].Value : "";
+                    }
+                    catch { /* Me stays empty; announcements stay peer-safe */ }
+                }
+
                 // Split the conversations array into per-conversation segments
                 // and pull unread / preview fields from each.
                 var convStart = body.IndexOf("\"conversation_id\"", StringComparison.Ordinal);
@@ -103,6 +129,15 @@ namespace LatticeVeil.Launcher
                         snap.ConvLastAt[cidM.Groups[1].Value] = at2.Success && !at2.Groups[1].Value.StartsWith("null") ? at2.Groups[1].Value : null;
                         var un = UsernameRx.Match(seg);
                         snap.ConvOtherName[cidM.Groups[1].Value] = un.Success ? UnescapeJson(un.Groups[1].Value) : "";
+                        // who sent the latest message (the USER'S OWN id when
+                        // the last clear/delete was done by THIS account) —
+                        // the launcher filters self-cleared convs from the
+                        // "peer deleted" announcement with it.
+                        if (at2.Success)
+                        {
+                            var ls = LastSenderRx.Match(seg);
+                            snap.ConvLastSender[cidM.Groups[1].Value] = ls.Success ? ls.Groups[1].Value : "";
+                        }
                     }
 
                     var at = LastAtRx.Match(seg);

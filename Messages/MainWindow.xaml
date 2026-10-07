@@ -250,7 +250,7 @@
         <!-- Friends tab -->
         <ScrollViewer x:Name="FriendsPane" Grid.Row="1" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
           <StackPanel>
-            <ListBox x:Name="FriendList" ItemTemplate="{StaticResource FriendTemplate}"
+            <ListBox x:Name="FriendList" ItemsSource="{Binding Friends}" ItemTemplate="{StaticResource FriendTemplate}"
                      Background="Transparent" BorderThickness="0"
                      SelectionChanged="FriendList_SelectionChanged">
               <ListBox.ItemContainerStyle>
@@ -311,24 +311,6 @@
             </Border>
           </Grid>
         </Border>
-        <!-- Inline delete confirmation (in place of the message area) -->
-        <Border x:Name="DelConfirmPanel" Grid.Row="0" Grid.RowSpan="4" Background="#0C0F0DEE"
-                Visibility="Collapsed">
-          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="380" Margin="20">
-            <TextBlock x:Name="DelConfirmText" Text="Delete this chat?" FontSize="15" FontWeight="Bold"
-                       TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
-            <TextBlock Text="All messages in this conversation will be removed for you and your friend. This cannot be undone."
-                       Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap"
-                       HorizontalAlignment="Center" TextAlignment="Center" Margin="0,8,0,14"/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-              <Button x:Name="DelYesBtn" Content="Delete chat" Style="{StaticResource AccentBtn}" Padding="14,6"
-                      Background="#B3261E" BorderBrush="#B3261E" Click="DelYes_Click"/>
-              <Button x:Name="DelNoBtn" Content="Cancel" Style="{StaticResource AccentBtn}" Padding="14,6"
-                      Margin="10,0,0,0" Click="DelNo_Click"/>
-            </StackPanel>
-          </StackPanel>
-        </Border>
-
         <!-- Messages -->
         <ScrollViewer x:Name="MsgScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="12,8">
           <ItemsControl x:Name="MsgList">
@@ -376,6 +358,25 @@
         </Border>
 
         <TextBlock x:Name="ErrText" Grid.Row="3" Foreground="#FF6B6B" FontSize="12" Margin="12,4" TextWrapping="Wrap" Visibility="Collapsed"/>
+
+        <!-- Inline delete confirmation: LAST child so it renders ON TOP of
+              the message area / composer, with an opaque backdrop -->
+        <Border x:Name="DelConfirmPanel" Grid.Row="0" Grid.RowSpan="4" Background="#F0141916"
+                Visibility="Collapsed">
+          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="380" Margin="20">
+            <TextBlock x:Name="DelConfirmText" Text="Delete this chat?" FontSize="15" FontWeight="Bold"
+                       TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
+            <TextBlock Text="All messages in this conversation will be removed for you and your friend. This cannot be undone."
+                       Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap"
+                       HorizontalAlignment="Center" TextAlignment="Center" Margin="0,8,0,14"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <Button x:Name="DelYesBtn" Content="Delete chat" Style="{StaticResource AccentBtn}" Padding="14,6"
+                      Background="#B3261E" BorderBrush="#B3261E" Click="DelYes_Click"/>
+              <Button x:Name="DelNoBtn" Content="Cancel" Style="{StaticResource AccentBtn}" Padding="14,6"
+                      Margin="10,0,0,0" Click="DelNo_Click"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
       </Grid>
     </Border>
   </Grid>

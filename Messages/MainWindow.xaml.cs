@@ -35,6 +35,7 @@ namespace LatticeVeil.Messages
             _isOpen = true;
             ConvList.ItemsSource = _convs;
             MsgList.ItemsSource = _msgs;
+            FriendList.ItemsSource = _friends;
 
             var svc = App.Service;
             if (svc == null || string.IsNullOrWhiteSpace(App.LauncherToken))
@@ -464,7 +465,7 @@ namespace LatticeVeil.Messages
             FriendsPane.Visibility = friends ? Visibility.Visible : Visibility.Collapsed;
             TabChatsBtn.Foreground = friends ? ((Brush)FindResource("MutedBrush")) : ((Brush)FindResource("TextBrush"));
             TabFriendsBtn.Foreground = friends ? ((Brush)FindResource("TextBrush")) : ((Brush)FindResource("MutedBrush"));
-            if (friends) RefreshFriendList();
+            if (friends) { RefreshFriendList(); if (FriendList.ItemsSource == null) FriendList.ItemsSource = _friends; }
             else RefreshConvList();
         }
 

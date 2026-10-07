@@ -2338,12 +2338,19 @@ namespace LatticeVeil.Launcher
             var modalRect = new Rect((screenRect.width - modalWidth) * 0.5f + _skinModalOffset.x, (screenRect.height - modalHeight) * 0.5f + _skinModalOffset.y, modalWidth, modalHeight);
             GUI.Box(modalRect, "", _friendsModalBoxStyle);
 
-            // Draggable header + close button
-            var headerRect = new Rect(modalRect.x + 8, modalRect.y + 8, modalRect.width - 70, 36);
+            // Draggable header + messages/close buttons (header drag rect is
+            // shrunk so it cannot swallow clicks on the MESSAGES / X buttons).
+            var headerRect = new Rect(modalRect.x + 8, modalRect.y + 8, modalRect.width - 200, 36);
             var friendsDragDelta = GetModalDragDelta(headerRect, ref _draggingSkinModal);
             _skinModalOffset += friendsDragDelta;
             modalRect.x += friendsDragDelta.x;
             modalRect.y += friendsDragDelta.y;
+            // Shared messaging: opens the LatticeVeil Messages window (same
+            // conversations/feed as the Veilnet website messages page).
+            var messagesRect = new Rect(modalRect.x + modalRect.width - 190, modalRect.y + 8, 134, 30);
+            if (GUI.Button(messagesRect, "MESSAGES", _friendsAccentButtonStyle))
+                OpenMessagesApp();
+
             var closeRect = new Rect(modalRect.x + modalRect.width - 48, modalRect.y + 8, 34, 30);
             if (GUI.Button(closeRect, "X", _modalCloseBtnStyle))
             {
@@ -2565,6 +2572,76 @@ namespace LatticeVeil.Launcher
             {
                 if (friend.Pending) BeginFriendRequestCancel(friend);
                 else BeginFriendRemove(friend);
+            }
+        }
+
+        /// <summary>
+        /// Shared messaging: opens the LatticeVeil Messages window (same
+        /// conversations and message feed as the Veilnet website messages
+        /// page). Messaging only works through the launcher: the window is
+        /// spawned by this launcher process and inherits the launcher's
+        /// DPAPI-protected session via LV_VEILNET_ACCESS_TOKEN.
+        /// </summary>
+        private void OpenMessagesApp()
+        {
+            try
+            {
+                var exeName = "LatticeVeilMessages.exe";
+                string exePath = null;
+
+                // Shipped layout: Messages\LatticeVeilMessages.exe next to the
+                // launcher executable. Dev fallback: the local dotnet build
+                // output under the Unity project root.
+                // dataPath = <launcher dir>/LatticeVeil_Data (player) or
+                // <project>/Assets (editor) — its parent is the launcher dir
+                // in both cases.
+                var launcherDir = Path.GetDirectoryName(Application.dataPath);
+                if (!string.IsNullOrEmpty(launcherDir))
+                {
+                    var shipped = Path.Combine(launcherDir, "Messages", exeName);
+                    if (File.Exists(shipped)) exePath = shipped;
+                }
+                if (exePath == null)
+                {
+                    var devCandidates = new[]
+                    {
+                        Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Messages", "bin", "Release", "net8.0-windows", exeName),
+                        Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Messages", "bin", "Debug", "net8.0-windows", exeName),
+                    };
+                    foreach (var candidate in devCandidates)
+                    {
+                        if (File.Exists(candidate)) { exePath = candidate; break; }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(exePath))
+                {
+                    _friendsStatusMessage = "Messages app not found. Reinstall the launcher to get LatticeVeil Messages.";
+                    _log.Warn("OpenMessagesApp: LatticeVeilMessages.exe not found next to the launcher or in Messages/bin.");
+                    return;
+                }
+
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = exePath,
+                    WorkingDirectory = Path.GetDirectoryName(exePath),
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                if (_veilnetLoggedIn)
+                {
+                    startInfo.EnvironmentVariables["LV_VEILNET_USERNAME"] = _veilnetUsername;
+                    startInfo.EnvironmentVariables["LV_VEILNET_ACCESS_TOKEN"] = _veilnetToken;
+                }
+
+                Process.Start(startInfo);
+                _log.Info($"Launched LatticeVeil Messages from: {exePath}");
+                _friendsStatusMessage = "Messages opened.";
+            }
+            catch (Exception ex)
+            {
+                _friendsStatusMessage = "Could not open Messages: " + ex.Message;
+                _log.Error($"OpenMessagesApp failed: {ex.Message}");
             }
         }
 

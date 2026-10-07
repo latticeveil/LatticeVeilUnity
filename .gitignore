@@ -43,3 +43,6 @@ Assets/_Recovery.meta
 # ---- Internal notes / plans (never publish) ----
 Docs/
 
+
+# WPF messages app build output
+Messages/bin/

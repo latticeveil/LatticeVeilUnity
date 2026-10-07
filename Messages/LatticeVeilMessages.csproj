@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <AssemblyName>LatticeVeilMessages</AssemblyName>
+    <RootNamespace>LatticeVeil.Messages</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.0.0</Version>
+    <AssemblyTitle>LatticeVeil Messages</AssemblyTitle>
+    <Product>LatticeVeil</Product>
+  </PropertyGroup>
+
+</Project>

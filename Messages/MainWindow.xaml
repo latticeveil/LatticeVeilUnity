@@ -1,0 +1,161 @@
+<Window x:Class="LatticeVeil.Messages.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LatticeVeil Messages" Height="620" Width="940"
+        MinHeight="420" MinWidth="680"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BgBrush}">
+  <Window.Resources>
+    <DataTemplate x:Key="ConvTemplate">
+      <Border Padding="10,8" CornerRadius="8" Margin="4,2">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="40"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Border Width="36" Height="36" CornerRadius="18" Background="#101512">
+            <TextBlock Text="{Binding Initial}" FontSize="16" FontWeight="Bold"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="{StaticResource AccentBrush}"/>
+          </Border>
+          <StackPanel Grid.Column="1" Margin="10,0,6,0" VerticalAlignment="Center">
+            <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="14" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="{Binding Preview}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
+          </StackPanel>
+          <Border Grid.Column="2" CornerRadius="9" Background="{StaticResource AccentBrush}"
+                  Padding="6,1" VerticalAlignment="Center" Visibility="{Binding UnreadVisible}">
+            <TextBlock Text="{Binding UnreadText}" FontSize="12" FontWeight="ExtraBold" Foreground="Black"/>
+          </Border>
+        </Grid>
+      </Border>
+    </DataTemplate>
+  </Window.Resources>
+
+  <Grid Margin="10">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="300"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
+
+    <!-- Left: conversations -->
+    <Border Grid.Column="0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1" CornerRadius="10" Padding="6">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <TextBlock Text="Conversations" FontWeight="Bold" FontSize="15" Margin="8,6"/>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <ListBox x:Name="ConvList" ItemsSource="{Binding Conversations}" ItemTemplate="{StaticResource ConvTemplate}"
+                     Background="Transparent" BorderThickness="0"
+                     SelectionChanged="ConvList_SelectionChanged">
+              <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                  <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                  <Setter Property="Padding" Value="0"/>
+                  <Setter Property="Background" Value="Transparent"/>
+                  <Setter Property="Template">
+                    <Setter.Value>
+                      <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="bd" Background="Transparent" CornerRadius="8">
+                          <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                          <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource RowHoverBrush}"/>
+                          </Trigger>
+                          <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="#0E2417"/>
+                            <Setter TargetName="bd" Property="BorderBrush" Value="#1E4A30"/>
+                          </Trigger>
+                        </ControlTemplate.Triggers>
+                      </ControlTemplate>
+                    </Setter.Value>
+                  </Setter>
+                </Style>
+              </ListBox.ItemContainerStyle>
+            </ListBox>
+            <TextBlock x:Name="ConvEmpty" Text="No conversations yet — pick a friend in the launcher's Friends panel or start from the website."
+                       Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="10" Visibility="Collapsed"/>
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+    </Border>
+
+    <!-- Right: chat -->
+    <Border Grid.Column="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1" CornerRadius="10" Margin="10,0,0,0">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Chat header -->
+        <Border Grid.Row="0" Padding="12,10" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock x:Name="ChatTitle" Text="Select a conversation" FontWeight="Bold" FontSize="15" VerticalAlignment="Center"/>
+              <TextBlock x:Name="ConnText" Text="connecting…" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="12,1,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+              <Button x:Name="PinBtn" Content="Unpinned" Style="{StaticResource Btn}" Click="PinBtn_Click" ToolTip="Pin this window on top"/>
+              <Button x:Name="SoundBtn" Content="Sound: ON" Style="{StaticResource Btn}" Margin="8,0,0,0" Click="SoundBtn_Click"/>
+              <Button x:Name="CloseBtn" Content="Close" Style="{StaticResource Btn}" Margin="8,0,0,0" Click="CloseBtn_Click" ToolTip="Closes Messages only — the launcher stays open"/>
+            </StackPanel>
+          </Grid>
+        </Border>
+
+        <!-- Messages -->
+        <ScrollViewer x:Name="MsgScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="12,8">
+          <ItemsControl x:Name="MsgList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="{Binding Align}"
+                            Margin="4,3" MaxWidth="520">
+                  <Border Background="{Binding BubbleBrush}" BorderBrush="{Binding BubbleBorder}"
+                          BorderThickness="1" CornerRadius="12" Padding="10,7">
+                    <StackPanel MaxWidth="500">
+                      <TextBlock Text="{Binding Body}" TextWrapping="Wrap" FontSize="14"/>
+                      <TextBlock Text="{Binding Stamp}" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                 HorizontalAlignment="Right" Margin="0,3,0,0"/>
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+
+        <TextBlock x:Name="LoadOlderBtn" Grid.Row="1" Text="↑ load older" Foreground="{StaticResource AccentBrush}"
+                   FontSize="12" HorizontalAlignment="Center" Margin="0,6" Cursor="Hand"
+                   MouseLeftButtonUp="LoadOlder_Click" Visibility="Collapsed"/>
+
+        <!-- Composer -->
+        <Border Grid.Row="2" Padding="10,8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="MsgInput" Style="{StaticResource Input}" KeyDown="MsgInput_KeyDown"
+                     MaxLength="2000" VerticalContentAlignment="Center"/>
+            <Button x:Name="SendBtn" Grid.Column="1" Content="Send" Style="{StaticResource AccentBtn}"
+                    Margin="8,0,0,0" Click="SendBtn_Click"/>
+          </Grid>
+        </Border>
+
+        <TextBlock x:Name="ErrText" Grid.Row="3" Foreground="#FF6B6B" FontSize="12" Margin="12,4" TextWrapping="Wrap" Visibility="Collapsed"/>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

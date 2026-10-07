@@ -2640,7 +2640,15 @@ namespace LatticeVeil.Launcher
                     startInfo.EnvironmentVariables["LV_VEILNET_ACCESS_TOKEN"] = _veilnetToken;
                 }
 
-                Process.Start(startInfo);
+                // Messages runs as a SUB-PROCESS of the launcher, exactly like
+                // the game: PrepareForLaunch puts the launcher into the group
+                // job, the child inherits that membership at creation (one
+                // Task Manager collection), and kill-on-close ties its
+                // lifetime to the launcher — no orphans when the launcher
+                // exits. No sandbox nesting: messaging needs the clipboard
+                // and normal UI access.
+                GameProcessJob.PrepareForLaunch();
+                var messagesProcess = Process.Start(startInfo);
                 _log.Info($"Launched LatticeVeil Messages from: {exePath}");
                 _friendsStatusMessage = "Messages opened.";
             }

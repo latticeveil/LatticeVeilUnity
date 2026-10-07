@@ -21,8 +21,10 @@ namespace LatticeVeil.Messages
 
         private readonly ObservableCollection<ConvVm> _convs = new ObservableCollection<ConvVm>();
         private readonly ObservableCollection<MsgVm> _msgs = new ObservableCollection<MsgVm>();
+        private readonly ObservableCollection<ConvVm> _friends = new ObservableCollection<ConvVm>();
         private string _current;
         private string _lastRenderedSig;
+        private bool _onFriendsTab;
         private bool _pinned;
         public bool IsPinned => _pinned;
         private DispatcherTimer _uiTimer;
@@ -333,6 +335,7 @@ namespace LatticeVeil.Messages
         public sealed class ConvVm
         {
             public string ConversationId { get; set; }
+            public string OtherId { get; set; }
             public string Title { get; set; }
             public string Preview { get; set; }
             public string Initial { get; set; }
@@ -398,6 +401,7 @@ namespace LatticeVeil.Messages
                 _convs.Add(new ConvVm
                 {
                     ConversationId = c.ConversationId,
+                    OtherId = c.OtherId,
                     Title = name,
                     Preview = c.LastBody ?? "",
                     Initial = (string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1)).ToUpperInvariant(),
@@ -416,6 +420,7 @@ namespace LatticeVeil.Messages
                 _current = vm.ConversationId;
                 ActiveConversation = _current;
                 ChatTitle.Text = vm.Title;
+                DelChatBtn.Visibility = Visibility.Visible;
                 var conv = App.Service.Conversations.FirstOrDefault(c => c.ConversationId == _current);
                 if (conv != null && conv.Unread > 0)
                 {
@@ -425,6 +430,97 @@ namespace LatticeVeil.Messages
                 }
                 await App.Service.FetchMessagesAsync(_current);
                 ReloadMessages(_current);
+            }
+        }
+
+        // ---------------- tabs / friends (mirrors the website panel) ----------------
+        public ObservableCollection<ConvVm> Friends => _friends;
+
+        private void TabChats_Click(object sender, RoutedEventArgs e) => ShowTab(false);
+        private void TabFriends_Click(object sender, RoutedEventArgs e) => ShowTab(true);
+
+        private void ShowTab(bool friends)
+        {
+            _onFriendsTab = friends;
+            ChatsPane.Visibility = friends ? Visibility.Collapsed : Visibility.Visible;
+            FriendsPane.Visibility = friends ? Visibility.Visible : Visibility.Collapsed;
+            TabChatsBtn.Foreground = friends ? ((Brush)FindResource("MutedBrush")) : ((Brush)FindResource("TextBrush"));
+            TabFriendsBtn.Foreground = friends ? ((Brush)FindResource("TextBrush")) : ((Brush)FindResource("MutedBrush"));
+            if (friends) RefreshFriendList();
+            else RefreshConvList();
+        }
+
+        private void RefreshFriendList()
+        {
+            var svc = App.Service;
+            if (svc == null) return;
+            var snapshot = svc.FriendIds.ToList();
+            _friends.Clear();
+            foreach (var id in snapshot)
+            {
+                svc.Profiles.TryGetValue(id, out var prof);
+                var name = string.IsNullOrEmpty(prof.username)
+                    ? (id.Length > 8 ? id.Substring(0, 8) : id)
+                    : prof.username;
+                // Show the ongoing chat's last message as the row preview —
+                // friends with no conversation yet read "say hi!".
+                var conv = svc.Conversations.FirstOrDefault(c => c.ConversationId != null && c.OtherId == id);
+                string preview = conv != null && !string.IsNullOrEmpty(conv.LastBody) ? conv.LastBody : "say hi!";
+
+                _friends.Add(new ConvVm
+                {
+                    ConversationId = conv?.ConversationId,
+                    OtherId = id,
+                    Title = name,
+                    Preview = preview,
+                    Initial = (string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1)).ToUpperInvariant(),
+                    Picture = prof.picture,
+                    AvatarBrush = GetAvatarBrush(prof.picture),
+                    Unread = conv?.Unread ?? 0,
+                });
+            }
+            FriendsEmpty.Visibility = _friends.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private async void FriendList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_onFriendsTab && FriendList.SelectedItem is ConvVm vm)
+            {
+                var convoId = vm.ConversationId;
+                FriendList.SelectedItem = null;
+                if (convoId != null)
+                {
+                    // Existing chat: open it on the Chats tab.
+                    ShowTab(false);
+                    var conv = _convs.FirstOrDefault(c => c.ConversationId == convoId);
+                    if (conv != null) ConvList.SelectedItem = conv;
+                    return;
+                }
+                // No conversation yet: ensure one server-side, then open it
+                // (the website defers creation to first send; here asking for
+                // the conversation directly is an equivalent, friendlier flow).
+                var svc = App.Service;
+                var svcProfiles = svc.Profiles;
+                svcProfiles.TryGetValue(vm.OtherId, out var prof);
+                ChatTitle.Text = vm.Title;
+                DelChatBtn.Visibility = Visibility.Collapsed;
+                MsgInput.IsEnabled = true;
+                SendBtn.IsEnabled = true;
+                ClearedText.Visibility = Visibility.Collapsed;
+                _msgs.Clear();
+                try
+                {
+                    var newId = await svc.EnsureConversationAsync(vm.OtherId);
+                    await svc.BootstrapAsync();
+                    ShowTab(false);
+                    var conv = _convs.FirstOrDefault(c => c.ConversationId == newId);
+                    if (conv != null) ConvList.SelectedItem = conv;
+                }
+                catch (Exception ex)
+                {
+                    ErrText.Text = "Could not open chat (" + ex.Message + ")";
+                    ErrText.Visibility = Visibility.Visible;
+                }
             }
         }
 
@@ -511,6 +607,36 @@ namespace LatticeVeil.Messages
             {
                 MsgInput.Text = text; // keep the draft
                 ErrText.Text = "Not sent (" + ex.Message + ")";
+                ErrText.Visibility = Visibility.Visible;
+            }
+        }
+
+        // ---------------- delete chat (the launcher's clear) ----------------
+        private void DelChat_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (_current == null) return;
+            var conv = App.Service.Conversations.FirstOrDefault(c => c.ConversationId == _current);
+            var name = conv != null && !string.IsNullOrEmpty(conv.OtherUsername) ? conv.OtherUsername : ChatTitle.Text;
+            DelConfirmText.Text = "Delete your chat with " + name + "?";
+            DelConfirmPanel.Visibility = Visibility.Visible;
+        }
+
+        private void DelNo_Click(object sender, RoutedEventArgs e)
+            => DelConfirmPanel.Visibility = Visibility.Collapsed;
+
+        private async void DelYes_Click(object sender, RoutedEventArgs e)
+        {
+            var convId = _current;
+            DelConfirmPanel.Visibility = Visibility.Collapsed;
+            if (convId == null) return;
+            try
+            {
+                await App.Service.ClearConversationAsync(convId);
+                ErrText.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                ErrText.Text = "Delete failed (" + ex.Message + ")";
                 ErrText.Visibility = Visibility.Visible;
             }
         }

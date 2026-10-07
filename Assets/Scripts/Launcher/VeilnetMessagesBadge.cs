@@ -29,9 +29,17 @@ namespace LatticeVeil.Launcher
             public string LastFrom = "";
             public string LastBody = "";
             public string LastAt = "";
+            // Per-conversation latest activity, keyed by conversation id. The
+            // launcher diffs consecutive snapshots: a conversation that
+            // previously had activity but now reports last_at == null means
+            // the peer (or the same account elsewhere) DELETED the chat.
+            public readonly Dictionary<string, string> ConvLastAt = new Dictionary<string, string>(StringComparer.Ordinal);
+            // friend display name per conversation (from the embedded other.username)
+            public readonly Dictionary<string, string> ConvOtherName = new Dictionary<string, string>(StringComparer.Ordinal);
         }
 
         private static readonly Regex UnreadRx = new Regex("\"unread\"\\s*:\\s*(\\d+)", RegexOptions.Compiled);
+        private static readonly Regex ConvIdRx = new Regex("\"conversation_id\"\\s*:\\s*\"([a-f0-9-]{36})\"", RegexOptions.Compiled);
         private static readonly Regex LastAtRx = new Regex("\"last_at\"\\s*:\\s*\"([^\"]*)\"", RegexOptions.Compiled);
         private static readonly Regex LastBodyRx = new Regex("\"last_body\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"", RegexOptions.Compiled);
         private static readonly Regex UsernameRx = new Regex("\"username\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"", RegexOptions.Compiled);
@@ -84,6 +92,18 @@ namespace LatticeVeil.Launcher
                     var u = UnreadRx.Match(seg);
                     if (u.Success)
                         snap.TotalUnread += int.Parse(u.Groups[1].Value);
+
+                    // Track each conversation's last activity for delete
+                    // detection: "last_at":"..." only appears when a message
+                    // exists; after a delete it serializes as null.
+                    var cidM = ConvIdRx.Match(seg);
+                    if (cidM.Success)
+                    {
+                        var at2 = LastAtRx.Match(seg);
+                        snap.ConvLastAt[cidM.Groups[1].Value] = at2.Success && !at2.Groups[1].Value.StartsWith("null") ? at2.Groups[1].Value : null;
+                        var un = UsernameRx.Match(seg);
+                        snap.ConvOtherName[cidM.Groups[1].Value] = un.Success ? UnescapeJson(un.Groups[1].Value) : "";
+                    }
 
                     var at = LastAtRx.Match(seg);
                     var uname = UsernameRx.Match(seg);

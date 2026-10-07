@@ -83,6 +83,62 @@
         </Setter.Value>
       </Setter>
     </Style>
+    <!-- Friend row for the Friends tab (same look as conversations) -->
+    <DataTemplate x:Key="FriendTemplate">
+      <Border Padding="8,6">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Grid Width="36" Height="36">
+            <Border CornerRadius="18" Background="#101512" Visibility="{Binding InitialVisible}">
+              <TextBlock Text="{Binding Initial}" FontSize="16" FontWeight="Bold"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                         Foreground="{StaticResource AccentBrush}"/>
+            </Border>
+            <Ellipse Width="36" Height="36" Visibility="{Binding PictureVisible}">
+              <Ellipse.Fill>
+                <ImageBrush ImageSource="{Binding Picture}"/>
+              </Ellipse.Fill>
+            </Ellipse>
+          </Grid>
+          <StackPanel Grid.Column="1" Margin="10,0,6,0" VerticalAlignment="Center">
+            <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="14" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="{Binding Preview}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
+          </StackPanel>
+          <Border Grid.Column="2" CornerRadius="9" Background="{StaticResource AccentBrush}"
+                  Padding="6,1" VerticalAlignment="Center" Visibility="{Binding UnreadVisible}">
+            <TextBlock Text="{Binding UnreadText}" FontSize="12" FontWeight="ExtraBold" Foreground="Black"/>
+          </Border>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
+    <!-- Chats / Friends tab buttons -->
+    <Style x:Key="TabBtn" TargetType="Button">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Padding" Value="10,5"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#1A221C"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
 
   <Border BorderBrush="#1E4A30" BorderThickness="1">
@@ -127,8 +183,19 @@
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        <TextBlock Text="Conversations" FontWeight="Bold" FontSize="15" Margin="8,6"/>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <!-- Chats / Friends tabs — mirrors the website's messaging panel -->
+        <Grid Margin="6,6,6,2">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <Button x:Name="TabChatsBtn" Content="Chats" Style="{StaticResource TabBtn}"
+                  FontWeight="Bold" Click="TabChats_Click"/>
+          <Button x:Name="TabFriendsBtn" Grid.Column="1" Content="Friends" Style="{StaticResource TabBtn}"
+                  FontWeight="Bold" Click="TabFriends_Click"/>
+        </Grid>
+        <!-- Chats tab -->
+        <ScrollViewer x:Name="ChatsPane" Grid.Row="1" VerticalScrollBarVisibility="Auto">
           <StackPanel>
             <ListBox x:Name="ConvList" ItemsSource="{Binding Conversations}" ItemTemplate="{StaticResource ConvTemplate}"
                      Background="Transparent" BorderThickness="0"
@@ -164,6 +231,41 @@
                        Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="10" Visibility="Collapsed"/>
           </StackPanel>
         </ScrollViewer>
+        <!-- Friends tab -->
+        <ScrollViewer x:Name="FriendsPane" Grid.Row="1" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+          <StackPanel>
+            <ListBox x:Name="FriendList" ItemTemplate="{StaticResource FriendTemplate}"
+                     Background="Transparent" BorderThickness="0"
+                     SelectionChanged="FriendList_SelectionChanged">
+              <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                  <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                  <Setter Property="Padding" Value="0"/>
+                  <Setter Property="Background" Value="Transparent"/>
+                  <Setter Property="Template">
+                    <Setter.Value>
+                      <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="bd" Background="Transparent" CornerRadius="8">
+                          <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                          <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource RowHoverBrush}"/>
+                          </Trigger>
+                          <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="#0E2417"/>
+                          </Trigger>
+                        </ControlTemplate.Triggers>
+                      </ControlTemplate>
+                    </Setter.Value>
+                  </Setter>
+                </Style>
+              </ListBox.ItemContainerStyle>
+            </ListBox>
+            <TextBlock x:Name="FriendsEmpty" Text="No friends yet — add friends from the launcher or the website."
+                       Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="10" Visibility="Collapsed"/>
+          </StackPanel>
+        </ScrollViewer>
       </Grid>
     </Border>
 
@@ -178,9 +280,37 @@
           <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Chat header -->
-        <Border Grid.Row="0" Padding="12,10" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
-          <TextBlock x:Name="ChatTitle" Text="Select a conversation" FontWeight="Bold" FontSize="15" VerticalAlignment="Center"/>
+        <!-- Chat header: name + delete (trash) -->
+        <Border x:Name="ChatHeader" Grid.Row="0" Padding="12,6" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="ChatTitle" Text="Select a conversation" FontWeight="Bold" FontSize="15" VerticalAlignment="Center"/>
+            <Border x:Name="DelChatBtn" Grid.Column="1" Background="Transparent" CornerRadius="6"
+                    Padding="8,3" Cursor="Hand" ToolTip="Delete chat — removes all messages for you and your friend"
+                    MouseLeftButtonUp="DelChat_Click" VerticalAlignment="Center">
+              <TextBlock Text="\U0001F5D1" FontSize="14"/>
+            </Border>
+          </Grid>
+        </Border>
+        <!-- Inline delete confirmation (in place of the message area) -->
+        <Border x:Name="DelConfirmPanel" Grid.Row="0" Grid.RowSpan="4" Background="#0C0F0DEE"
+                Visibility="Collapsed">
+          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="380" Margin="20">
+            <TextBlock x:Name="DelConfirmText" Text="Delete this chat?" FontSize="15" FontWeight="Bold"
+                       TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
+            <TextBlock Text="All messages in this conversation will be removed for you and your friend. This cannot be undone."
+                       Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap"
+                       HorizontalAlignment="Center" TextAlignment="Center" Margin="0,8,0,14"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <Button x:Name="DelYesBtn" Content="Delete chat" Style="{StaticResource AccentBtn}" Padding="14,6"
+                      Background="#B3261E" BorderBrush="#B3261E" Click="DelYes_Click"/>
+              <Button x:Name="DelNoBtn" Content="Cancel" Style="{StaticResource AccentBtn}" Padding="14,6"
+                      Margin="10,0,0,0" Click="DelNo_Click"/>
+            </StackPanel>
+          </StackPanel>
         </Border>
 
         <!-- Messages -->

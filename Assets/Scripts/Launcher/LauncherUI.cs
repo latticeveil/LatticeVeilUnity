@@ -132,6 +132,12 @@ namespace LatticeVeil.Launcher
         private int _msgUnreadTotal;
         private string _msgLastFrom = "";
         private string _msgLastBody = "";
+        // Per-conversation last-activity from the previous badge poll; a conv
+        // whose last_at vanishes between polls means someone DELETED the chat.
+        private Dictionary<string, string> _msgPrevConvLastAt;
+        // The conv we already announced as deleted; re-arms once messages
+        // flow into that conversation again (new last_at).
+        private string _msgDeletedConvId;
         private bool _msgPollRunning;
         private double _nextMsgPollAt;
         private string _addFriendInput = "";
@@ -1073,6 +1079,39 @@ namespace LatticeVeil.Launcher
                         _friendsStatusMessage = $"✉ New message from {_msgLastFrom}: {preview}";
                         _log.Info($"[Messages] new message from {_msgLastFrom} (unread={_msgUnreadTotal})");
                     }
+
+                    // Peer deleted a chat: a conversation that had activity on
+                    // the previous poll now reports none (last_at null). Sent
+                    // clear/first-message transitions are filtered out so a
+                    // brand-new empty conv or one we cleared ourselves doesn't
+                    // announce as a deletion.
+                    if (_msgPrevConvLastAt != null)
+                    {
+                        // Re-arm once the cleared conversation gets new activity.
+                        if (!string.IsNullOrEmpty(_msgDeletedConvId) &&
+                            snap.ConvLastAt.TryGetValue(_msgDeletedConvId, out var back) &&
+                            !string.IsNullOrEmpty(back))
+                        {
+                            _msgDeletedConvId = null;
+                        }
+
+                        foreach (var kv in _msgPrevConvLastAt)
+                        {
+                            if (string.IsNullOrEmpty(kv.Value)) continue; // was already empty
+                            snap.ConvLastAt.TryGetValue(kv.Key, out var nowAt);
+                            if (!string.IsNullOrEmpty(nowAt)) continue;   // still has activity
+                            if (!string.IsNullOrEmpty(_msgDeletedConvId)) continue; // one announce at a time
+                            snap.ConvOtherName.TryGetValue(kv.Key, out var who);
+                            if (!string.IsNullOrEmpty(who))
+                            {
+                                _friendsStatusMessage = $"🗑 {who} deleted the conversation";
+                                _log.Info($"[Messages] peer deleted conversation {kv.Key} ({who})");
+                                _msgDeletedConvId = kv.Key;
+                            }
+                            break;
+                        }
+                    }
+                    _msgPrevConvLastAt = snap.ConvLastAt;
                 });
             });
         }

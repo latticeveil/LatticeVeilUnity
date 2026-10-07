@@ -292,6 +292,20 @@ namespace LatticeVeil.Messages
             return el.GetProperty("conversation_id").GetString();
         }
 
+        /// <summary>
+        /// clears ALL messages in a conversation (server does the same for the
+        /// peer) and resets local state. Same semantics as the website's
+        /// "delete conversation": the conversation itself stays, the peer is
+        /// told via the conversation-cleared broadcast.
+        /// </summary>
+        public async Task<int> ClearConversationAsync(string conversationId)
+        {
+            var el = await PostAsync("clear", new { conversation_id = conversationId });
+            int deleted = el.TryGetProperty("deleted", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetInt32() : 0;
+            OnConversationCleared(conversationId, App.UserId);
+            return deleted;
+        }
+
         // ------------------------------------------------------------------
         // Realtime: one WebSocket, one broadcast channel per conversation.
         // Payload carries ids only; bodies are fetched via authed API (dedupe).

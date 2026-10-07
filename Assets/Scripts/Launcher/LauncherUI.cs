@@ -126,6 +126,14 @@ namespace LatticeVeil.Launcher
         private bool _showFriendsModal;
         private int _friendsTabIndex;               // 0 = FRIENDS, 1 = INVITES
         private string _friendsStatusMessage = "";
+
+        // Live "new message" surface for the MESSAGES button: unread total +
+        // latest arrival, refreshed by VeilnetMessagesBadge while signed in.
+        private int _msgUnreadTotal;
+        private string _msgLastFrom = "";
+        private string _msgLastBody = "";
+        private bool _msgPollRunning;
+        private double _nextMsgPollAt;
         private string _addFriendInput = "";
         private Vector2 _friendsScroll;
         private readonly List<VeilnetFriendsClient.FriendUser> _friendsList = new List<VeilnetFriendsClient.FriendUser>();
@@ -1025,6 +1033,48 @@ namespace LatticeVeil.Launcher
                 _nextFriendsRefreshAt = now + 45.0;
                 StartFriendsRefresh();
             }
+
+            // Live message badge: poll every 8s while signed in (works with the
+            // friends modal open OR closed) so new arrivals are visible without
+            // opening the Messages window.
+            if (_veilnetLoggedIn && !_msgPollRunning && now >= _nextMsgPollAt)
+            {
+                _nextMsgPollAt = now + 8.0;
+                StartMessagesBadgePoll();
+            }
+        }
+
+        private void StartMessagesBadgePoll()
+        {
+            if (string.IsNullOrWhiteSpace(_veilnetToken)) return;
+            _msgPollRunning = true;
+            var badge = new VeilnetMessagesBadge(GetVeilnetFunctionsBaseUrl(), GetSupabaseAnonKey(), _veilnetToken, _httpClient);
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                var snap = await badge.PollAsync().ConfigureAwait(false);
+                EnqueueMainThread(() =>
+                {
+                    _msgPollRunning = false;
+                    if (!snap.Ok) return; // transient - next cycle retries
+
+                    var grew = snap.TotalUnread > _msgUnreadTotal;
+                    _msgUnreadTotal = snap.TotalUnread;
+                    if (!string.IsNullOrEmpty(snap.LastFrom))
+                    {
+                        _msgLastFrom = snap.LastFrom;
+                        _msgLastBody = snap.LastBody;
+                    }
+
+                    if (grew && !string.IsNullOrEmpty(_msgLastFrom))
+                    {
+                        // Announce the arrival right where the user is looking.
+                        var preview = _msgLastBody ?? "";
+                        if (preview.Length > 60) preview = preview.Substring(0, 60) + "…";
+                        _friendsStatusMessage = $"✉ New message from {_msgLastFrom}: {preview}";
+                        _log.Info($"[Messages] new message from {_msgLastFrom} (unread={_msgUnreadTotal})");
+                    }
+                });
+            });
         }
 
         private void StartInvitePoll()
@@ -2348,7 +2398,8 @@ namespace LatticeVeil.Launcher
             // Shared messaging: opens the LatticeVeil Messages window (same
             // conversations/feed as the Veilnet website messages page).
             var messagesRect = new Rect(modalRect.x + modalRect.width - 190, modalRect.y + 8, 134, 30);
-            if (GUI.Button(messagesRect, "MESSAGES", _friendsAccentButtonStyle))
+            var messagesLabel = _msgUnreadTotal > 0 ? $"MESSAGES ● {_msgUnreadTotal}" : "MESSAGES";
+            if (GUI.Button(messagesRect, messagesLabel, _friendsAccentButtonStyle))
                 OpenMessagesApp();
 
             var closeRect = new Rect(modalRect.x + modalRect.width - 48, modalRect.y + 8, 34, 30);

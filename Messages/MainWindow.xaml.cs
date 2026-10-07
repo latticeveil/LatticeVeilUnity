@@ -115,6 +115,42 @@ namespace LatticeVeil.Messages
             PinBtn.Content = _pinned ? "\U0001F4CC\u2713" : "\U0001F4CC";
             PinBtn.Opacity = _pinned ? 1.0 : 0.55;
             PinBtn.ToolTip = _pinned ? "Unpin (stop staying on top)" : "Pin this window on top (stay open)";
+
+            // Owned windows hide when the launcher minimizes; a PINNED window
+            // must stay open separately, so pinning detaches ownership (and
+            // gives it a taskbar entry while standalone). Unpinning re-attaches
+            // it to the launcher (no taskbar entry again).
+            if (_ownedByLauncher || _pinned)
+            {
+                try
+                {
+                    var me = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                    if (me != IntPtr.Zero)
+                    {
+                        if (_pinned)
+                        {
+                            SetWindowOwnerHwnd(me, IntPtr.Zero);
+                            ShowInTaskbar = true;
+                        }
+                        else
+                        {
+                            var hwndStr = Environment.GetEnvironmentVariable("LV_LAUNCHER_HWND");
+                            if (long.TryParse(hwndStr, out var l) && l != 0)
+                            {
+                                var owner = new IntPtr(l);
+                                if (IsWindow(owner))
+                                {
+                                    SetWindowOwnerHwnd(me, owner);
+                                    ShowInTaskbar = false;
+                                }
+                                else ShowInTaskbar = true;
+                            }
+                            else ShowInTaskbar = true;
+                        }
+                    }
+                }
+                catch { /* keep whatever state is safe */ }
+            }
         }
 
         private void SoundBtn_Click(object sender, RoutedEventArgs e)
@@ -127,7 +163,57 @@ namespace LatticeVeil.Messages
             SoundBtn.ToolTip = "Sound: " + (svc.SoundEnabled ? "ON" : "OFF");
         }
 
-        private void MinBtn_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+        // When owned by the launcher there is no taskbar entry to restore
+        // from, so "minimize" tucks the window away; the launcher's MESSAGES
+        // button brings it back (messaging keeps running either way).
+        private bool _ownedByLauncher;
+
+        private void MinBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (_ownedByLauncher) Hide();
+            else WindowState = WindowState.Minimized;
+        }
+
+        // ---------------- launcher ownership (one taskbar entry) ----------------
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool IsWindow(IntPtr hWnd);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+        private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+        private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        private const int GWL_HWNDPARENT = -8;
+
+        private static IntPtr SetWindowOwnerHwnd(IntPtr hWnd, IntPtr owner)
+        {
+            if (IntPtr.Size == 8) return SetWindowLongPtr64(hWnd, GWL_HWNDPARENT, owner);
+            return new IntPtr(SetWindowLong32(hWnd, GWL_HWNDPARENT, owner.ToInt32()));
+        }
+
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+            try
+            {
+                var hwndStr = Environment.GetEnvironmentVariable("LV_LAUNCHER_HWND");
+                if (long.TryParse(hwndStr, out var l) && l != 0)
+                {
+                    var owner = new IntPtr(l);
+                    if (IsWindow(owner))
+                    {
+                        var me = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                        SetWindowOwnerHwnd(me, owner);
+                        _ownedByLauncher = true;
+                        // Attached to the launcher: no taskbar entry of its own.
+                        ShowInTaskbar = false;
+                        MinBtn.ToolTip = "Tuck away (reopen from the launcher's MESSAGES button)";
+                    }
+                }
+            }
+            catch { /* standalone fallback: normal taskbar behavior */ }
+        }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {

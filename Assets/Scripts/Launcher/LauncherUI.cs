@@ -2691,6 +2691,17 @@ namespace LatticeVeil.Launcher
                     startInfo.EnvironmentVariables["LV_VEILNET_ACCESS_TOKEN"] = _veilnetToken;
                 }
 
+                // Own the Messages window so it attaches to the launcher's
+                // window instead of spawning its own taskbar entry — one
+                // program in the taskbar, messaging as an extension.
+                try
+                {
+                    var hwnd = LauncherWindowInitializer.MainWindowHandle;
+                    if (hwnd != IntPtr.Zero)
+                        startInfo.EnvironmentVariables["LV_LAUNCHER_HWND"] = hwnd.ToInt64().ToString();
+                }
+                catch { /* window handle unavailable — window runs standalone */ }
+
                 // Messages runs as a SUB-PROCESS of the launcher, exactly like
                 // the game: PrepareForLaunch puts the launcher into the group
                 // job, the child inherits that membership at creation (one

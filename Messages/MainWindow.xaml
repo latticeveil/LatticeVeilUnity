@@ -112,7 +112,7 @@
                   ToolTip="Pin this window on top (stay open)"/>
           <Button x:Name="SoundBtn" Content="🔊" Style="{StaticResource WinBtn}" Click="SoundBtn_Click"
                   ToolTip="Toggle message sound"/>
-          <Button Content="—" Style="{StaticResource WinBtn}" Click="MinBtn_Click" ToolTip="Minimize"/>
+          <Button x:Name="MinBtn" Content="—" Style="{StaticResource WinBtn}" Click="MinBtn_Click" ToolTip="Minimize"/>
           <Button Content="✕" Style="{StaticResource CloseWinBtn}" Click="CloseBtn_Click"
                   ToolTip="Close Messages — the launcher stays open"/>
         </StackPanel>

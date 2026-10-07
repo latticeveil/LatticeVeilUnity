@@ -11,6 +11,14 @@
     <Version>1.0.0</Version>
     <AssemblyTitle>LatticeVeil Messages</AssemblyTitle>
     <Product>LatticeVeil</Product>
+
+    <!-- One-exe deployment: everything bundled into LatticeVeilMessages.exe.
+         Framework-dependent (uses the .NET 8 runtime already on the machine),
+         no sidecar DLLs next to the launcher. -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
 </Project>

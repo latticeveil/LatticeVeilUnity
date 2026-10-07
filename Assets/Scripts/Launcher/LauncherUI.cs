@@ -2589,8 +2589,9 @@ namespace LatticeVeil.Launcher
                 var exeName = "LatticeVeilMessages.exe";
                 string exePath = null;
 
-                // Shipped layout: Messages\LatticeVeilMessages.exe next to the
-                // launcher executable. Dev fallback: the local dotnet build
+                // Shipped layout: Messages\LatticeVeilMessages.exe (single-file
+                // publish — one exe, no sidecar DLLs) next to the launcher
+                // executable. Dev fallbacks: the local dotnet publish/build
                 // output under the Unity project root.
                 // dataPath = <launcher dir>/LatticeVeil_Data (player) or
                 // <project>/Assets (editor) — its parent is the launcher dir
@@ -2598,15 +2599,20 @@ namespace LatticeVeil.Launcher
                 var launcherDir = Path.GetDirectoryName(Application.dataPath);
                 if (!string.IsNullOrEmpty(launcherDir))
                 {
-                    var shipped = Path.Combine(launcherDir, "Messages", exeName);
-                    if (File.Exists(shipped)) exePath = shipped;
+                    var shippedSingle = Path.Combine(launcherDir, "Messages", "publish", exeName);
+                    var shippedPlain = Path.Combine(launcherDir, "Messages", exeName);
+                    if (File.Exists(shippedSingle)) exePath = shippedSingle;
+                    else if (File.Exists(shippedPlain)) exePath = shippedPlain;
                 }
                 if (exePath == null)
                 {
+                    var projectRoot = Directory.GetParent(Application.dataPath).FullName;
                     var devCandidates = new[]
                     {
-                        Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Messages", "bin", "Release", "net8.0-windows", exeName),
-                        Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Messages", "bin", "Debug", "net8.0-windows", exeName),
+                        Path.Combine(projectRoot, "Messages", "publish", exeName),
+                        Path.Combine(projectRoot, "Messages", "bin", "Release", "net8.0-windows", "win-x64", "publish", exeName),
+                        Path.Combine(projectRoot, "Messages", "bin", "Release", "net8.0-windows", exeName),
+                        Path.Combine(projectRoot, "Messages", "bin", "Debug", "net8.0-windows", exeName),
                     };
                     foreach (var candidate in devCandidates)
                     {

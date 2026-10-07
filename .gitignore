@@ -46,3 +46,6 @@ Docs/
 
 # WPF messages app build output
 Messages/bin/
+
+# Single-file publish output
+Messages/publish/

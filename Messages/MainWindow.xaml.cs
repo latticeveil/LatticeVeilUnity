@@ -23,6 +23,7 @@ namespace LatticeVeil.Messages
         private readonly ObservableCollection<MsgVm> _msgs = new ObservableCollection<MsgVm>();
         private string _current;
         private bool _pinned;
+        public bool IsPinned => _pinned;
         private DispatcherTimer _uiTimer;
 
         public MainWindow()
@@ -85,13 +86,31 @@ namespace LatticeVeil.Messages
             base.OnClosed(e);
         }
 
-        // ---------------- pin ----------------
+        // ---------------- pin / sound / window controls ----------------
         private void PinBtn_Click(object sender, RoutedEventArgs e)
         {
             _pinned = !_pinned;
             Topmost = _pinned;
-            PinBtn.Content = _pinned ? "Pinned" : "Unpinned";
-            PinBtn.Style = (Style)FindResource(_pinned ? "AccentBtn" : "Btn");
+            PinBtn.Content = _pinned ? "\U0001F4CC\u2713" : "\U0001F4CC";
+            PinBtn.Opacity = _pinned ? 1.0 : 0.55;
+            PinBtn.ToolTip = _pinned ? "Unpin (stop staying on top)" : "Pin this window on top (stay open)";
+        }
+
+        private void SoundBtn_Click(object sender, RoutedEventArgs e)
+        {
+            var svc = App.Service;
+            if (svc == null) return;
+            svc.SoundEnabled = !svc.SoundEnabled;
+            SoundBtn.Content = svc.SoundEnabled ? "\U0001F50A" : "\U0001F507";
+            SoundBtn.Opacity = svc.SoundEnabled ? 1.0 : 0.55;
+            SoundBtn.ToolTip = "Sound: " + (svc.SoundEnabled ? "ON" : "OFF");
+        }
+
+        private void MinBtn_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+        private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ButtonState == MouseButtonState.Pressed) DragMove();
         }
 
         private void CloseBtn_Click(object sender, RoutedEventArgs e)
@@ -286,12 +305,5 @@ namespace LatticeVeil.Messages
             }
         }
 
-        private void SoundBtn_Click(object sender, RoutedEventArgs e)
-        {
-            var svc = App.Service;
-            if (svc == null) return;
-            svc.SoundEnabled = !svc.SoundEnabled;
-            SoundBtn.Content = "Sound: " + (svc.SoundEnabled ? "ON" : "OFF");
-        }
     }
 }

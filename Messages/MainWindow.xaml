@@ -4,7 +4,10 @@
         Title="LatticeVeil Messages" Height="620" Width="940"
         MinHeight="420" MinWidth="680"
         WindowStartupLocation="CenterScreen"
-        Background="{StaticResource BgBrush}">
+        WindowStyle="None" AllowsTransparency="False" Background="{StaticResource BgBrush}">
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" CornerRadius="0" GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
+  </WindowChrome.WindowChrome>
   <Window.Resources>
     <DataTemplate x:Key="ConvTemplate">
       <Border Padding="10,8" CornerRadius="8" Margin="4,2">
@@ -20,8 +23,7 @@
                          HorizontalAlignment="Center" VerticalAlignment="Center"
                          Foreground="{StaticResource AccentBrush}"/>
             </Border>
-            <Ellipse Width="36" Height="36"
-                     Visibility="{Binding PictureVisible}">
+            <Ellipse Width="36" Height="36" Visibility="{Binding PictureVisible}">
               <Ellipse.Fill>
                 <ImageBrush ImageSource="{Binding Picture}"/>
               </Ellipse.Fill>
@@ -38,16 +40,87 @@
         </Grid>
       </Border>
     </DataTemplate>
+
+    <!-- Custom window-control buttons (no OS chrome) -->
+    <Style x:Key="WinBtn" TargetType="Button">
+      <Setter Property="Width" Value="40"/>
+      <Setter Property="Height" Value="30"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#1A221C"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="CloseWinBtn" TargetType="Button" BasedOn="{StaticResource WinBtn}">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#C42B1C"/>
+                <Setter Property="Foreground" Value="White"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
 
+  <Border BorderBrush="#1E4A30" BorderThickness="1">
   <Grid Margin="10">
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="300"/>
       <ColumnDefinition Width="*"/>
     </Grid.ColumnDefinitions>
 
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <!-- Custom title bar: draggable, no OS buttons -->
+    <Border Grid.ColumnSpan="2" Grid.Row="0" Background="#050706" Height="38" Margin="-11,-11,-11,0"
+            MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+      <Grid>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+          <TextBlock Text="LATTICEVEIL MESSAGES" FontWeight="Bold" FontSize="12"
+                     Foreground="{StaticResource AccentBrush}"/>
+          <TextBlock x:Name="ConnText" Text="connecting…" Foreground="{StaticResource MutedBrush}"
+                     FontSize="11" Margin="12,1,0,0" VerticalAlignment="Center"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+          <Button x:Name="PinBtn" Content="📌" Style="{StaticResource WinBtn}" Click="PinBtn_Click"
+                  ToolTip="Pin this window on top (stay open)"/>
+          <Button x:Name="SoundBtn" Content="🔊" Style="{StaticResource WinBtn}" Click="SoundBtn_Click"
+                  ToolTip="Toggle message sound"/>
+          <Button Content="—" Style="{StaticResource WinBtn}" Click="MinBtn_Click" ToolTip="Minimize"/>
+          <Button Content="✕" Style="{StaticResource CloseWinBtn}" Click="CloseBtn_Click"
+                  ToolTip="Close Messages — the launcher stays open"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
     <!-- Left: conversations -->
-    <Border Grid.Column="0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+    <Border Grid.Column="0" Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
             BorderThickness="1" CornerRadius="10" Padding="6">
       <Grid>
         <Grid.RowDefinitions>
@@ -86,6 +159,7 @@
                 </Style>
               </ListBox.ItemContainerStyle>
             </ListBox>
+
             <TextBlock x:Name="ConvEmpty" Text="No conversations yet — pick a friend in the launcher's Friends panel or start from the website."
                        Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="10" Visibility="Collapsed"/>
           </StackPanel>
@@ -94,7 +168,7 @@
     </Border>
 
     <!-- Right: chat -->
-    <Border Grid.Column="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+    <Border Grid.Column="1" Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
             BorderThickness="1" CornerRadius="10" Margin="10,0,0,0">
       <Grid>
         <Grid.RowDefinitions>
@@ -106,21 +180,7 @@
 
         <!-- Chat header -->
         <Border Grid.Row="0" Padding="12,10" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
-          <Grid>
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-              <TextBlock x:Name="ChatTitle" Text="Select a conversation" FontWeight="Bold" FontSize="15" VerticalAlignment="Center"/>
-              <TextBlock x:Name="ConnText" Text="connecting…" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="12,1,0,0" VerticalAlignment="Center"/>
-            </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal">
-              <Button x:Name="PinBtn" Content="Unpinned" Style="{StaticResource Btn}" Click="PinBtn_Click" ToolTip="Pin this window on top"/>
-              <Button x:Name="SoundBtn" Content="Sound: ON" Style="{StaticResource Btn}" Margin="8,0,0,0" Click="SoundBtn_Click"/>
-              <Button x:Name="CloseBtn" Content="Close" Style="{StaticResource Btn}" Margin="8,0,0,0" Click="CloseBtn_Click" ToolTip="Closes Messages only — the launcher stays open"/>
-            </StackPanel>
-          </Grid>
+          <TextBlock x:Name="ChatTitle" Text="Select a conversation" FontWeight="Bold" FontSize="15" VerticalAlignment="Center"/>
         </Border>
 
         <!-- Messages -->
@@ -166,4 +226,5 @@
       </Grid>
     </Border>
   </Grid>
+  </Border>
 </Window>

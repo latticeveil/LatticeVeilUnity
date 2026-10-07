@@ -36,6 +36,8 @@ namespace LatticeVeil.Messages
         private readonly object _wsLock = new object();
         private readonly SemaphoreSlim _wsSendLock = new(1, 1);
         private readonly HashSet<string> _joinedTopics = new HashSet<string>();
+        private readonly object _pingGate = new object();
+        private readonly HashSet<string> _pingsInFlight = new HashSet<string>();
 
         public bool SoundEnabled { get; set; }
             = !string.Equals(Environment.GetEnvironmentVariable("LV_MSG_SOUND"), "off", StringComparison.OrdinalIgnoreCase);
@@ -305,7 +307,14 @@ namespace LatticeVeil.Messages
                     _heartbeats = 0;
                     await SendJson(ws, new { topic = "phoenix", @event = "phx_join", @ref = "0", payload = new { } });
 
-                    // Re-join everything we know about on (re)connect.
+                    // The SERVER broadcasts every new-message ping on the global
+                    // "realtime:veilnet-msgs-live" channel (same one the
+                    // website joins) — instant, regardless of which
+                    // conversations we have bootstrapped. Join it FIRST.
+                    await JoinChannel(ws, "realtime:veilnet-msgs-live");
+                    lock (_joinedTopics) _joinedTopics.Add("realtime:veilnet-msgs-live");
+
+                    // ... and the per-conversation channels as a secondary feed.
                     lock (_joinedTopics) _joinedTopics.Clear();
                     List<string> toJoin;
                     lock (this) toJoin = Conversations.Select(c => c.ConversationId).ToList();
@@ -421,7 +430,8 @@ namespace LatticeVeil.Messages
                 if (r != null && (r.StartsWith("hb") || r == "0"))
                     _lastHeartbeatAck = DateTime.UtcNow;
             }
-            else if (@event == "broadcast" && topic != null && topic.StartsWith("veilnet-dm:"))
+            else if (@event == "broadcast" && topic != null &&
+                     (topic.StartsWith("veilnet-dm:") || topic == "realtime:veilnet-msgs-live"))
             {
                 try
                 {
@@ -443,9 +453,16 @@ namespace LatticeVeil.Messages
 
         private async Task OnRemotePing(string conversationId, string messageId)
         {
+            // Both the global channel and the per-conversation channel deliver
+            // the same ping; process each message id only once.
+            if (string.IsNullOrEmpty(messageId)) return;
+            lock (_pingGate)
+            {
+                if (!_pingsInFlight.Add(messageId)) return;
+            }
             try
             {
-                if (string.IsNullOrEmpty(messageId) || SeenMessageIds.Contains(messageId)) return;
+                if (SeenMessageIds.Contains(messageId)) return;
                 var conv = Conversations.FirstOrDefault(c => c.ConversationId == conversationId);
                 if (conv == null) return;
 
@@ -471,6 +488,10 @@ namespace LatticeVeil.Messages
                 }
             }
             catch (Exception ex) { ErrorOccurred?.Invoke(ex.Message); }
+            finally
+            {
+                lock (_pingGate) _pingsInFlight.Remove(messageId);
+            }
         }
 
         public async Task ReconcileAsync()

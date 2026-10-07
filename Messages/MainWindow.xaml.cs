@@ -433,6 +433,11 @@ namespace LatticeVeil.Messages
                 _current = vm.ConversationId;
                 ActiveConversation = _current;
                 ChatTitle.Text = vm.Title;
+                // Re-enable the composer — a previously open CLEAR chat may
+                // have left it disabled.
+                MsgInput.IsEnabled = true;
+                SendBtn.IsEnabled = true;
+                DelChatBtn.Visibility = Visibility.Visible;
                 DelChatBtn.Visibility = Visibility.Visible;
                 var conv = App.Service.Conversations.FirstOrDefault(c => c.ConversationId == _current);
                 if (conv != null && conv.Unread > 0)

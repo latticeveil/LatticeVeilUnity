@@ -53,7 +53,11 @@ namespace LatticeVeil.Messages
             // even though messaging was live.
             ConnText.Text = svc.ConnState == "on" ? "live"
                 : svc.ConnState == "wait" ? "connecting…" : "offline";
-            svc.DataChanged += () => Dispatcher.BeginInvoke(RefreshConvList);
+            svc.DataChanged += () => Dispatcher.BeginInvoke(() =>
+            {
+                RefreshConvList();
+                if (_onFriendsTab) RefreshFriendList();
+            });
             svc.MessageArrived += convId => Dispatcher.BeginInvoke(() =>
             {
                 RefreshConvList();
@@ -342,10 +346,15 @@ namespace LatticeVeil.Messages
             public string Picture { get; set; }
             public Brush AvatarBrush { get; set; }
             public int Unread { get; set; }
+            // Friends-tab profile card fields
+            public string Banner { get; set; }
+            public string About { get; set; }
             public Visibility UnreadVisible => Unread > 0 ? Visibility.Visible : Visibility.Collapsed;
             public string UnreadText => Unread > 99 ? "99+" : (Unread > 0 ? Unread.ToString() : "");
             public Visibility PictureVisible => string.IsNullOrEmpty(Picture) ? Visibility.Collapsed : Visibility.Visible;
             public Visibility InitialVisible => string.IsNullOrEmpty(Picture) ? Visibility.Visible : Visibility.Collapsed;
+            public Visibility BannerVisible => string.IsNullOrEmpty(Banner) ? Visibility.Collapsed : Visibility.Visible;
+            public Visibility AboutVisible => string.IsNullOrEmpty(About) ? Visibility.Collapsed : Visibility.Visible;
         }
 
         // Frozen ImageBrush per avatar URL (thread-safe UI-side cache).
@@ -379,7 +388,11 @@ namespace LatticeVeil.Messages
         {
             var svc = App.Service;
             if (svc == null) return;
+            // Chats tab shows only people you actually have messages with —
+            // "chatted with" (a conversation with no messages yet is
+            // reachable through the Friends tab instead, mirroring the site).
             var snapshot = svc.Conversations
+                .Where(c => !string.IsNullOrEmpty(c.LastAt))
                 .OrderByDescending(c => c.LastAt ?? "")
                 .ToList();
             _convs.Clear();
@@ -458,10 +471,21 @@ namespace LatticeVeil.Messages
             _friends.Clear();
             foreach (var id in snapshot)
             {
-                svc.Profiles.TryGetValue(id, out var prof);
-                var name = string.IsNullOrEmpty(prof.username)
+                // Prefer the rich profile (banner/about) for the Friends tab;
+                // fall back to the light Profiles map.
+                string username, picture, banner = "", about = "";
+                if (svc.FriendProfiles.TryGetValue(id, out var rich))
+                {
+                    username = rich.username; picture = rich.picture; banner = rich.banner; about = rich.about;
+                }
+                else if (svc.Profiles.TryGetValue(id, out var prof))
+                {
+                    username = prof.username; picture = prof.picture;
+                }
+                else { username = ""; picture = ""; }
+                var name = string.IsNullOrEmpty(username)
                     ? (id.Length > 8 ? id.Substring(0, 8) : id)
-                    : prof.username;
+                    : username;
                 // Show the ongoing chat's last message as the row preview —
                 // friends with no conversation yet read "say hi!".
                 var conv = svc.Conversations.FirstOrDefault(c => c.ConversationId != null && c.OtherId == id);
@@ -474,8 +498,10 @@ namespace LatticeVeil.Messages
                     Title = name,
                     Preview = preview,
                     Initial = (string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1)).ToUpperInvariant(),
-                    Picture = prof.picture,
-                    AvatarBrush = GetAvatarBrush(prof.picture),
+                    Picture = picture,
+                    AvatarBrush = GetAvatarBrush(picture),
+                    Banner = banner,
+                    About = about,
                     Unread = conv?.Unread ?? 0,
                 });
             }
@@ -488,36 +514,30 @@ namespace LatticeVeil.Messages
             {
                 var convoId = vm.ConversationId;
                 FriendList.SelectedItem = null;
-                if (convoId != null)
-                {
-                    // Existing chat: open it on the Chats tab.
-                    ShowTab(false);
-                    var conv = _convs.FirstOrDefault(c => c.ConversationId == convoId);
-                    if (conv != null) ConvList.SelectedItem = conv;
-                    return;
-                }
-                // No conversation yet: ensure one server-side, then open it
-                // (the website defers creation to first send; here asking for
-                // the conversation directly is an equivalent, friendlier flow).
-                var svc = App.Service;
-                var svcProfiles = svc.Profiles;
-                svcProfiles.TryGetValue(vm.OtherId, out var prof);
+                // "Start a chat": ALWAYS land on the Chats side with the
+                // composer ready, whether the friend has history or not.
                 ChatTitle.Text = vm.Title;
-                DelChatBtn.Visibility = Visibility.Collapsed;
-                MsgInput.IsEnabled = true;
-                SendBtn.IsEnabled = true;
-                ClearedText.Visibility = Visibility.Collapsed;
+                _current = null;
                 _msgs.Clear();
+                _lastRenderedSig = null;
+                ClearedText.Visibility = Visibility.Collapsed;
+                DelChatBtn.Visibility = convoId != null ? Visibility.Visible : Visibility.Collapsed;
+
                 try
                 {
-                    var newId = await svc.EnsureConversationAsync(vm.OtherId);
-                    await svc.BootstrapAsync();
+                    // Because Chats only lists friends with history, a brand
+                    // new chat is created right here (ensure is friendship-
+                    // gated server-side; no-op when it already exists).
+                    var targetId = convoId ?? await App.Service.EnsureConversationAsync(vm.OtherId);
+                    await App.Service.BootstrapAsync();
                     ShowTab(false);
-                    var conv = _convs.FirstOrDefault(c => c.ConversationId == newId);
+                    var conv = _convs.FirstOrDefault(c => c.ConversationId == targetId);
                     if (conv != null) ConvList.SelectedItem = conv;
+                    else { ActiveConversation = targetId; await App.Service.FetchMessagesAsync(targetId); ReloadMessages(targetId); }
                 }
                 catch (Exception ex)
                 {
+                    ShowTab(false);
                     ErrText.Text = "Could not open chat (" + ex.Message + ")";
                     ErrText.Visibility = Visibility.Visible;
                 }

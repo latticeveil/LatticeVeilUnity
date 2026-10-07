@@ -77,6 +77,10 @@ namespace LatticeVeil.Messages
         public HashSet<string> FriendIds { get; } = new HashSet<string>();
         public Dictionary<string, (string username, string picture)> Profiles { get; }
             = new Dictionary<string, (string, string)>();
+        // Rich friend profiles for the Friends tab (bootstrap `friends` rows):
+        // id -> (username, pictureUrl, bannerUrl, aboutMe)
+        public Dictionary<string, (string username, string picture, string banner, string about)> FriendProfiles { get; }
+            = new Dictionary<string, (string, string, string, string)>();
         public HashSet<string> SeenMessageIds { get; } = new HashSet<string>();
 
         private readonly Dictionary<string, List<Msg>> _cache = new Dictionary<string, List<Msg>>();
@@ -157,12 +161,18 @@ namespace LatticeVeil.Messages
                 Conversations.Clear();
                 FriendIds.Clear();
                 Profiles.Clear();
+                FriendProfiles.Clear();
 
                 foreach (var f in el.GetProperty("friends").EnumerateArray())
                 {
                     var id = f.GetProperty("productUserId").GetString();
                     FriendIds.Add(id);
-                    Profiles[id] = (f.GetProperty("username").GetString() ?? "", f.GetProperty("pictureUrl").GetString() ?? "");
+                    var username = f.GetProperty("username").GetString() ?? "";
+                    var picture = f.GetProperty("pictureUrl").GetString() ?? "";
+                    var banner = f.TryGetProperty("bannerUrl", out var bn) && bn.ValueKind == JsonValueKind.String ? bn.GetString() ?? "" : "";
+                    var about = f.TryGetProperty("aboutMe", out var ab) && ab.ValueKind == JsonValueKind.String ? ab.GetString() ?? "" : "";
+                    Profiles[id] = (username, picture);
+                    FriendProfiles[id] = (username, picture, banner, about);
                 }
 
                 foreach (var c in el.GetProperty("conversations").EnumerateArray())

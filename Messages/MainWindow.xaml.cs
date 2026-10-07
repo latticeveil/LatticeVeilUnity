@@ -439,7 +439,6 @@ namespace LatticeVeil.Messages
                 MsgInput.IsEnabled = true;
                 SendBtn.IsEnabled = true;
                 DelChatBtn.Visibility = Visibility.Visible;
-                DelChatBtn.Visibility = Visibility.Visible;
                 var conv = App.Service.Conversations.FirstOrDefault(c => c.ConversationId == _current);
                 if (conv != null && conv.Unread > 0)
                 {

@@ -129,21 +129,17 @@ namespace LatticeVeil.Messages
                     {
                         if (_pinned)
                         {
-                            SetWindowOwnerHwnd(me, IntPtr.Zero);
+                            // Detach: taskbar entry back first (WPF re-owns to
+                            // its hidden window), then clear the native owner.
                             ShowInTaskbar = true;
+                            SetWindowOwnerHwnd(me, IntPtr.Zero);
                         }
                         else
                         {
-                            var hwndStr = Environment.GetEnvironmentVariable("LV_LAUNCHER_HWND");
-                            if (long.TryParse(hwndStr, out var l) && l != 0)
+                            if (_launcherOwner != IntPtr.Zero && IsWindow(_launcherOwner))
                             {
-                                var owner = new IntPtr(l);
-                                if (IsWindow(owner))
-                                {
-                                    SetWindowOwnerHwnd(me, owner);
-                                    ShowInTaskbar = false;
-                                }
-                                else ShowInTaskbar = true;
+                                ShowInTaskbar = false;
+                                SetWindowOwnerHwnd(me, _launcherOwner);
                             }
                             else ShowInTaskbar = true;
                         }
@@ -192,27 +188,117 @@ namespace LatticeVeil.Messages
             return new IntPtr(SetWindowLong32(hWnd, GWL_HWNDPARENT, owner.ToInt32()));
         }
 
+        // The launcher window we attached to (explicit handoff or discovered
+        // from the parent process) — reused when unpinning re-attaches.
+        private IntPtr _launcherOwner;
+
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
+            AttachToLauncherIfAvailable();
+        }
+
+        /// <summary>
+        /// Attaches this window to the launcher so there is exactly ONE
+        /// taskbar entry. Resolution order:
+        ///   1. explicit handoff (LV_LAUNCHER_HWND from new launcher builds)
+        ///   2. self-discovery: our PARENT process is the LatticeVeil
+        ///      launcher — own its main window. This works with the launcher
+        ///      as shipped today, no rebuild needed.
+        /// If neither applies (genuinely standalone), normal taskbar
+        /// behavior is kept.
+        /// </summary>
+        private void AttachToLauncherIfAvailable()
+        {
             try
             {
-                var hwndStr = Environment.GetEnvironmentVariable("LV_LAUNCHER_HWND");
-                if (long.TryParse(hwndStr, out var l) && l != 0)
+                if (long.TryParse(Environment.GetEnvironmentVariable("LV_LAUNCHER_HWND"), out var l) && l != 0)
                 {
-                    var owner = new IntPtr(l);
-                    if (IsWindow(owner))
-                    {
-                        var me = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-                        SetWindowOwnerHwnd(me, owner);
-                        _ownedByLauncher = true;
-                        // Attached to the launcher: no taskbar entry of its own.
-                        ShowInTaskbar = false;
-                        MinBtn.ToolTip = "Tuck away (reopen from the launcher's MESSAGES button)";
-                    }
+                    var h = new IntPtr(l);
+                    if (IsWindow(h)) { AttachTo(h); return; }
+                }
+
+                var parentPid = GetParentProcessId();
+                if (parentPid <= 0) return;
+                using (var parent = System.Diagnostics.Process.GetProcessById(parentPid))
+                {
+                    if (parent == null) return;
+                    var name = parent.ProcessName ?? "";
+                    if (name.Equals("LatticeVeilMessages", StringComparison.OrdinalIgnoreCase)) return;
+                    if (!name.StartsWith("LatticeVeil", StringComparison.OrdinalIgnoreCase)) return;
+                    var hwnd = parent.MainWindowHandle;
+                    if (hwnd != IntPtr.Zero && IsWindow(hwnd)) AttachTo(hwnd);
                 }
             }
             catch { /* standalone fallback: normal taskbar behavior */ }
+        }
+
+        private void AttachTo(IntPtr owner)
+        {
+            var me = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            if (me == IntPtr.Zero) return;
+            // ORDER MATTERS: ShowInTaskbar=false makes WPF re-own the window
+            // to its internal hidden window, which would CLOBBER the native
+            // launcher ownership. Hide from the taskbar first, then attach.
+            ShowInTaskbar = false;
+            SetWindowOwnerHwnd(me, owner);
+            _launcherOwner = owner;
+            _ownedByLauncher = true;
+            MinBtn.ToolTip = "Tuck away (reopen from the launcher's MESSAGES button)";
+        }
+
+        // ---------------- parent process discovery ----------------
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private struct PROCESSENTRY32W
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ProcessID;
+            public System.IntPtr th32DefaultHeapID;
+            public uint th32ModuleID;
+            public uint cntThreads;
+            public uint th32ParentProcessID;
+            public int pcPriClassBase;
+            public uint dwFlags;
+            [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szExeFile;
+        }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern System.IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern bool Process32FirstW(System.IntPtr hSnapshot, ref PROCESSENTRY32W lppe);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern bool Process32NextW(System.IntPtr hSnapshot, ref PROCESSENTRY32W lppe);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(System.IntPtr hObject);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern int GetCurrentProcessId();
+
+        private const uint TH32CS_SNAPPROCESS = 0x2;
+
+        private static int GetParentProcessId()
+        {
+            var snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snap == System.IntPtr.Zero || snap == (System.IntPtr)(-1)) return 0;
+            try
+            {
+                var pe = new PROCESSENTRY32W { dwSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(PROCESSENTRY32W)) };
+                int me = GetCurrentProcessId();
+                if (Process32FirstW(snap, ref pe))
+                {
+                    do
+                    {
+                        if ((int)pe.th32ProcessID == me) return (int)pe.th32ParentProcessID;
+                    } while (Process32NextW(snap, ref pe));
+                }
+                return 0;
+            }
+            finally { CloseHandle(snap); }
         }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

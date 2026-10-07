@@ -22,6 +22,7 @@ namespace LatticeVeil.Messages
         private readonly ObservableCollection<ConvVm> _convs = new ObservableCollection<ConvVm>();
         private readonly ObservableCollection<MsgVm> _msgs = new ObservableCollection<MsgVm>();
         private string _current;
+        private string _lastRenderedSig;
         private bool _pinned;
         public bool IsPinned => _pinned;
         private DispatcherTimer _uiTimer;
@@ -48,6 +49,7 @@ namespace LatticeVeil.Messages
             svc.DataChanged += () => Dispatcher.BeginInvoke(RefreshConvList);
             svc.MessageArrived += convId => Dispatcher.BeginInvoke(() =>
             {
+                RefreshConvList();
                 if (ActiveConversation == convId) ReloadMessages(convId);
             });
             svc.ErrorOccurred += msg => Dispatcher.BeginInvoke(() =>
@@ -62,7 +64,21 @@ namespace LatticeVeil.Messages
                 try { await svc.BootstrapAsync(); } catch (Exception ex) { ErrText.Dispatcher.BeginInvoke(() => { ErrText.Text = ex.Message; ErrText.Visibility = Visibility.Visible; }); }
             });
             _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            _uiTimer.Tick += (s, e) => RefreshConvList();
+            _uiTimer.Tick += (s, e) =>
+            {
+                RefreshConvList();
+                // Auto-refresh the open chat from the service cache — even if
+                // an event was missed, rendered content can lag at most 2s.
+                if (_current != null)
+                {
+                    var cached = App.Service?.GetCachedMessages(_current);
+                    if (cached != null)
+                    {
+                        var sig = cached.Count + ":" + (cached.Count > 0 ? cached[cached.Count - 1].Id : "");
+                        if (sig != _lastRenderedSig) ReloadMessages(_current);
+                    }
+                }
+            };
             _uiTimer.Start();
 
             Closing += (s, e) =>
@@ -257,6 +273,8 @@ namespace LatticeVeil.Messages
                     BubbleBorder = new SolidColorBrush(mine ? Color.FromRgb(0x00, 0xE6, 0x76) : Color.FromRgb(0x24, 0x40, 0x2E)),
                 });
             }
+            var ordered = list.OrderBy(x => x.CreatedAt, StringComparer.Ordinal).ToList();
+            _lastRenderedSig = ordered.Count + ":" + (ordered.Count > 0 ? ordered[ordered.Count - 1].Id : "");
             LoadOlderBtn.Visibility = list.Count >= 50 ? Visibility.Visible : Visibility.Collapsed;
             MsgScroll.ScrollToEnd();
         }

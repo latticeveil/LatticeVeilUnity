@@ -1,5 +1,7 @@
 using System;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
@@ -58,6 +60,25 @@ namespace LatticeVeil.Messages
             }
 
             Service = new MessagingService(LauncherToken);
+
+            // The env-var handoff carries no user id; decode it from the JWT
+            // ("sub") so own-message detection (no self-ping/unread) works.
+            if (string.IsNullOrEmpty(UserId) && !string.IsNullOrEmpty(LauncherToken))
+            {
+                try
+                {
+                    var parts = LauncherToken.Split('.');
+                    if (parts.Length >= 2)
+                    {
+                        var payload = parts[1].Replace('-', '+').Replace('_', '/');
+                        payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+                        var json = JsonSerializer.Deserialize<JsonElement>(Encoding.UTF8.GetString(Convert.FromBase64String(payload)));
+                        UserId = json.TryGetProperty("sub", out var sub) ? (sub.GetString() ?? "") : "";
+                    }
+                }
+                catch { /* UserId stays empty — worst case: own pings counted */ }
+            }
+
             Service.Start();
 
             ShowNewWindow();

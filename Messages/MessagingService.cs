@@ -38,6 +38,9 @@ namespace LatticeVeil.Messages
         private readonly HashSet<string> _joinedTopics = new HashSet<string>();
         private readonly object _pingGate = new object();
         private readonly HashSet<string> _pingsInFlight = new HashSet<string>();
+        // Messages whose unread/ping side-effects were already applied
+        // (ping path or reconcile path — whichever got there first).
+        private readonly HashSet<string> _countedUnreadIds = new HashSet<string>();
 
         public bool SoundEnabled { get; set; }
             = !string.Equals(Environment.GetEnvironmentVariable("LV_MSG_SOUND"), "off", StringComparison.OrdinalIgnoreCase);
@@ -462,7 +465,6 @@ namespace LatticeVeil.Messages
             }
             try
             {
-                if (SeenMessageIds.Contains(messageId)) return;
                 var conv = Conversations.FirstOrDefault(c => c.ConversationId == conversationId);
                 if (conv == null) return;
 
@@ -470,10 +472,13 @@ namespace LatticeVeil.Messages
                 var msg = list.FirstOrDefault(m => m.Id == messageId);
                 if (msg == null) return; // RLS would hide it; not ours
 
+                // ALWAYS refresh the UI — even if the 20s sweep already cached
+                // this message, the open chat must not sit stale ("click into
+                // it again" bug).
                 MessageArrived?.Invoke(conversationId);
 
                 bool isActive = MainWindow.ActiveConversation == conversationId;
-                if (msg.SenderId != App.UserId)
+                if (msg.SenderId != App.UserId && _countedUnreadIds.Add(msg.Id))
                 {
                     if (isActive && !MainWindow.IsHidden)
                     {
@@ -507,9 +512,8 @@ namespace LatticeVeil.Messages
                     var convRef = conv;
                     foreach (var m in list)
                     {
-                        if (m.SenderId != App.UserId && !SeenMessageIds.Contains(m.Id))
+                        if (m.SenderId != App.UserId && _countedUnreadIds.Add(m.Id))
                         {
-                            SeenMessageIds.Add(m.Id);
                             bool active = MainWindow.ActiveConversation == convRef.ConversationId && !MainWindow.IsHidden;
                             if (active) { /* will be marked read */ }
                             else { convRef.Unread++; if (SoundEnabled) Sound.PlayPing(); }

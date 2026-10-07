@@ -208,6 +208,13 @@
                    FontSize="12" HorizontalAlignment="Center" Margin="0,6" Cursor="Hand"
                    MouseLeftButtonUp="LoadOlder_Click" Visibility="Collapsed"/>
 
+        <!-- Cleared notice: shown inside the message area when the chat was
+             emptied (this device or the peer). Sent messages still work. -->
+        <TextBlock x:Name="ClearedText" Grid.Row="1" Text=""
+                   Foreground="{StaticResource MutedBrush}" FontSize="12" FontStyle="Italic"
+                   HorizontalAlignment="Center" Margin="12,10" TextWrapping="Wrap"
+                   Visibility="Collapsed"/>
+
         <!-- Composer -->
         <Border Grid.Row="2" Padding="10,8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
           <Grid>

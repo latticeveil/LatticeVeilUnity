@@ -57,6 +57,12 @@ namespace LatticeVeil.Messages
                 RefreshConvList();
                 if (ActiveConversation == convId) ReloadMessages(convId);
             });
+            // Handler must exist BEFORE the first clear event can arrive.
+            svc.ConversationCleared += (convId, by) => Dispatcher.BeginInvoke(() =>
+            {
+                RefreshConvList();
+                if (ActiveConversation == convId) ReloadMessages(convId);
+            });
             svc.ErrorOccurred += msg => Dispatcher.BeginInvoke(() =>
             {
                 ErrText.Text = msg;
@@ -452,6 +458,15 @@ namespace LatticeVeil.Messages
             }
             var ordered = list.OrderBy(x => x.CreatedAt, StringComparer.Ordinal).ToList();
             _lastRenderedSig = ordered.Count + ":" + (ordered.Count > 0 ? ordered[ordered.Count - 1].Id : "");
+            // Cleared-state banner: any conversation whose cache is empty gets
+            // a notice — "cleared from another device" when the peer or this
+            // account elsewhere wiped it, plain "no messages yet" for a brand
+            // new chat. Sending still works either way.
+            bool cleared = ordered.Count == 0 && svc.Conversations.Any(c => c.ConversationId == convId);
+            ClearedText.Text = cleared
+                ? "Chat cleared — messages were removed. You can still send new ones."
+                : "";
+            ClearedText.Visibility = cleared ? Visibility.Visible : Visibility.Collapsed;
             LoadOlderBtn.Visibility = list.Count >= 50 ? Visibility.Visible : Visibility.Collapsed;
             MsgScroll.ScrollToEnd();
         }

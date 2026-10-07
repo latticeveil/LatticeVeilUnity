@@ -50,6 +50,7 @@ namespace LatticeVeil.Messages
         public event Action<string> StateChanged;
         public event Action DataChanged;          // bootstrap-level change (conversations/unread)
         public event Action<string> MessageArrived; // conversation_id
+        public event Action<string, string> ConversationCleared; // (conversation_id, cleared by)
         public event Action<string> ErrorOccurred;
 
         public class Conversation
@@ -458,6 +459,17 @@ namespace LatticeVeil.Messages
                         var messageId = payload.GetProperty("message_id").GetString();
                         _ = Task.Run(() => OnRemotePing(convId, messageId));
                     }
+                    else if (payload.TryGetProperty("type", out var t2) && t2.GetString() == "conversation-cleared")
+                    {
+                        // Server fires this when either side clears the chat
+                        // (messaging-api "clear"): wipe our cache instantly
+                        // instead of showing ghost messages until the next
+                        // bootstrap.
+                        var convId = payload.TryGetProperty("conversation_id", out var cid) && cid.ValueKind == JsonValueKind.String ? cid.GetString() : null;
+                        var by = payload.TryGetProperty("by", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null;
+                        if (!string.IsNullOrEmpty(convId))
+                            _ = Task.Run(() => OnConversationCleared(convId, by));
+                    }
                 }
                 catch { }
             }
@@ -510,6 +522,32 @@ namespace LatticeVeil.Messages
             {
                 lock (_pingGate) _pingsInFlight.Remove(messageId);
             }
+        }
+
+        /// <summary>
+        /// Either side (or another device of ours) cleared the conversation:
+        /// the server rows are already gone. Wipe the local cache, reset the
+        /// conversation's preview/unread, and let the window show the empty
+        /// state + a notice right where the user is looking.
+        /// <param name="by">account id that cleared, or null when unknown.
+        /// Includes our OWN clear echoed back from the server (e.g. done on
+        /// another device), so every path ends with a consistent empty view.</param>
+        /// </summary>
+
+        private void OnConversationCleared(string conversationId, string by)
+        {
+            var conv = Conversations.FirstOrDefault(c => c.ConversationId == conversationId);
+            if (conv != null)
+            {
+                conv.Unread = 0;
+                conv.LastBody = null;
+                conv.LastAt = null;
+            }
+            lock (_cache) _cache.Remove(conversationId);
+            DataChanged?.Invoke();
+            // Window decides how to surface it (empty chat + notice). Fired on
+            // a dispatcher-adjacent background thread; subscribers marshal.
+            ConversationCleared?.Invoke(conversationId, by);
         }
 
         public async Task ReconcileAsync()

@@ -62,6 +62,25 @@ namespace LatticeVeil.Game
             EnforceWindowedDefault();
             StartCoroutine(SetWindowTitleWhenReady());
             BuildUi();
+            SettingsBehavior.Apply(GameSettings.LoadOrCreate(null));
+            StartCoroutine(LockResizeWhenReady());
+        }
+
+        /// <summary>Waits for the player window, then locks OS resizing (fixed size; GUI scales instead).</summary>
+        private System.Collections.IEnumerator LockResizeWhenReady()
+        {
+            for (var attempt = 0; attempt < 60; attempt++)
+            {
+                var hwnd = System.IntPtr.Zero;
+                try { hwnd = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle; }
+                catch { }
+                if (hwnd != System.IntPtr.Zero)
+                {
+                    SettingsBehavior.LockWindowResize();
+                    yield break;
+                }
+                yield return new WaitForSeconds(0.25f);
+            }
         }
 
         /// <summary>
@@ -205,7 +224,10 @@ namespace LatticeVeil.Game
             _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             _canvas.planeDistance = 10f;
             var scaler = canvasGo.GetComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 0.5f;
 
             if (FindFirstObjectByType<EventSystem>() == null)
             {

@@ -2,26 +2,28 @@ using System;
 using System.Collections.Generic;
 using LatticeVeil.Core;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace LatticeVeil.Game
 {
     /// <summary>
-    /// Unity rebuild of the MonoGame OptionsScreen (SettingsScreen.cs), uGUI
-    /// edition. Visual parity with the MonoGame version:
-    ///  - Settings.png background, Settings_GUI.png panel (1248x680 max,
-    ///    centered — same caps and centering as MonoGame OnResize).
-    ///  - VIDEO / AUDIO / CONTROLS / PACKS tab buttons (texture buttons with
-    ///    *Selected.png variants for the active tab) in a row ABOVE the panel.
-    ///  - BACK texture button bottom-left, APPLY bottom-center of the panel.
-    ///  - Two-column content layout per MonoGame: checkboxes, dropdowns
-    ///    (resolution, GUI scale, quality), sliders (brightness, FOV, render
-    ///    distance, mouse sensitivity).
-    ///  - Working copy: edits apply only on APPLY (MonoGame _working copy);
-    ///    BACK discards. Settings persist to options.lvc via GameSettings.
-    /// Smoothness: hover/press color tweens, raycastTarget=false on all
-    /// decorative graphics, point-filtered textures, no LayoutGroups (manual
-    /// layout like MonoGame so nothing reflows mid-frame).
+    /// Unity rebuild of the MonoGame OptionsScreen, uGUI edition.
+    ///
+    /// Visual rules (matching the MonoGame look with the same assets):
+    ///  - Settings.png background, Settings_GUI.png framed panel, texture tabs
+    ///    (VIDEO / AUDIO / CONTROLS / PACKS with *Selected variants), Apply.png
+    ///    and Back.png texture buttons.
+    ///  - ALL controls live INSIDE the panel frame: the page is masked
+    ///    (RectMask2D) and content is inset past the frame border, so sliders
+    ///    and dropdowns can never slide out of the GUI box.
+    ///  - Sliders are MonoGame-style: label above, dark track with white
+    ///    border, light fill, small square handle.
+    ///  - Boolean settings are toggle switches; RESOLUTION is a traditional
+    ///    click-to-open dropdown; GUI SCALE and QUALITY are cycle buttons.
+    ///  - Working copy: APPLY persists to options.lvc (format unchanged) and
+    ///    applies live behavior (vsync, window mode, resolution, FOV,
+    ///    brightness) through SettingsBehavior.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class OptionsScreenController : MonoBehaviour
@@ -29,25 +31,31 @@ namespace LatticeVeil.Game
         private enum Tab { Video, Audio, Controls, Packs }
 
         private static readonly Color PanelDim = new Color(0f, 0f, 0f, 0.55f);
-        private static readonly Color RowHighlight = new Color(1f, 1f, 1f, 0.08f);
-        private static readonly Color HoverTint = new Color(1.15f, 1.15f, 1.15f, 1f);
-        private static readonly Color ControlBg = new Color(0f, 0f, 0f, 0.45f);
-        private static readonly Color ControlFill = new Color(0.55f, 0.8f, 1f, 0.9f);
+        private static readonly Color ControlBg = new Color(0.08f, 0.08f, 0.08f, 1f);
+        private static readonly Color ControlFill = new Color(0.78f, 0.78f, 0.78f, 1f);
+        private static readonly Color Accent = new Color(0.55f, 0.8f, 1f, 1f);
         private static readonly Color TextColor = Color.white;
         private static readonly Color LabelColor = new Color(0.86f, 0.89f, 0.92f, 1f);
+        private static readonly Color HoverTint = new Color(1.15f, 1.15f, 1.15f, 1f);
 
-        private static readonly (float value, string label)[] GuiScaleOptions =
+        private static readonly (int w, int h)[] Resolutions =
+        {
+            (1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)
+        };
+        private static readonly (float value, string label)[] GuiScales =
         {
             (1.0f, "STANDARD"), (1.5f, "LARGE"), (2.0f, "LARGER")
         };
-        private static readonly string[] QualityOptions = { "LOW", "MEDIUM", "HIGH", "ULTRA" };
+        private static readonly string[] Qualities = { "LOW", "MEDIUM", "HIGH", "ULTRA" };
 
         private Canvas _canvas;
-        private RectTransform _screenRoot;   // full-screen root (background + dim)
-        private RectTransform _panelRoot;    // centered panel root
+        private RectTransform _screenRoot;
+        private RectTransform _panelRoot;
+
         private Texture2D _bgTexture;
         private Texture2D _panelTexture;
         private Texture2D _backTexture;
+        private Texture2D _applyTexture;
 
         private readonly Dictionary<Tab, GameObject> _tabButtons = new Dictionary<Tab, GameObject>();
         private readonly Dictionary<Tab, Texture2D> _tabTextures = new Dictionary<Tab, Texture2D>();
@@ -55,32 +63,29 @@ namespace LatticeVeil.Game
         private readonly Dictionary<Tab, RectTransform> _tabPages = new Dictionary<Tab, RectTransform>();
 
         private Tab _tab = Tab.Video;
+        private GameObject _openDropdownList;
+        private GameObject _dropdownBlocker;
 
-        // Working copy (applied only on APPLY, like MonoGame's _working).
         private GameSettings _settings;
         private GameSettings _working;
 
-        // Video widgets (state kept here; rebuilt per tab selection).
+        // Editable (working) values.
         private bool _fullscreen;
         private bool _vsync;
-        private int _resolutionIndex = -1;
-        private int _guiScaleIndex = 1;
-        private int _qualityIndex = 1;
+        private int _resolutionIndex;
+        private int _guiScaleIndex;
+        private int _qualityIndex;
         private float _brightness = 1f;
         private int _fov = 70;
         private int _renderDistance = 16;
 
-        private static readonly (int w, int h)[] ResolutionOptions =
-        {
-            (1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)
-        };
+        private float _master = 1f;
+        private float _music = 1f;
+        private float _sfx = 1f;
 
         private Action _onClosed;
+        private bool _closed;
 
-        /// <summary>
-        /// Opens the options screen over the given canvas. Returns the root
-        /// GameObject (caller keeps it until closed).
-        /// </summary>
         public static OptionsScreenController Open(Canvas canvas, Action onClosed)
         {
             var go = new GameObject("OptionsScreen", typeof(OptionsScreenController));
@@ -94,31 +99,27 @@ namespace LatticeVeil.Game
         private void Build()
         {
             _settings = GameSettings.LoadOrCreate(null);
-            _working = CloneSettings(_settings);
+            _working = new GameSettings();
+            CopyFrom(_settings, _working);
 
-            // Load current values into the editable state.
             _fullscreen = _working.Fullscreen;
             _vsync = _working.VSync;
             _guiScaleIndex = FindGuiScaleIndex(_working.GuiScale);
-            _qualityIndex = Array.IndexOf(QualityOptions, NormalizeQuality(_working.QualityPreset));
-            if (_qualityIndex < 0) _qualityIndex = 1;
+            _qualityIndex = Math.Max(0, Array.IndexOf(Qualities, NormalizeQuality(_working.QualityPreset)));
             _brightness = _working.Brightness;
             _fov = _working.FieldOfView;
             _renderDistance = _working.RenderDistanceChunks;
-            for (int i = 0; i < ResolutionOptions.Length; i++)
-            {
-                if (ResolutionOptions[i].w == _working.ResolutionWidth && ResolutionOptions[i].h == _working.ResolutionHeight)
-                {
-                    _resolutionIndex = i;
-                    break;
-                }
-            }
+            _master = _working.MasterVolume;
+            _music = _working.MusicVolume;
+            _sfx = _working.SfxVolume;
+            _resolutionIndex = FindResolutionIndex(_working.ResolutionWidth, _working.ResolutionHeight);
 
             _canvas = GetComponentInParent<Canvas>();
 
             _bgTexture = GameAssetLoader.LoadTexture("textures/menu/backgrounds/Settings.png");
             _panelTexture = GameAssetLoader.LoadTexture("textures/menu/GUIS/Settings_GUI.png");
             _backTexture = GameAssetLoader.LoadTexture("textures/menu/buttons/Back.png");
+            _applyTexture = GameAssetLoader.LoadTexture("textures/menu/buttons/Apply.png");
 
             BuildScreenRoot();
             BuildTabs();
@@ -130,6 +131,21 @@ namespace LatticeVeil.Game
             Debug.Log("Options screen opened.");
         }
 
+        private void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.Escape))
+                Close();
+
+            // Re-layout when the resolution/window size changes so nothing
+            // ever overflows the panel.
+            var rect = _canvas.GetComponent<RectTransform>().rect;
+            if (Math.Abs(rect.width - _lastW) > 0.5f || Math.Abs(rect.height - _lastH) > 0.5f)
+                Layout();
+        }
+
+        private float _lastW;
+        private float _lastH;
+
         // ------------------------------------------------------------------
         // Structure
         // ------------------------------------------------------------------
@@ -139,53 +155,17 @@ namespace LatticeVeil.Game
             var rootGo = new GameObject("ScreenRoot", typeof(RectTransform));
             _screenRoot = (RectTransform)rootGo.transform;
             _screenRoot.SetParent(_canvas.transform, false);
-            _screenRoot.anchorMin = Vector2.zero;
-            _screenRoot.anchorMax = Vector2.one;
-            _screenRoot.offsetMin = Vector2.zero;
-            _screenRoot.offsetMax = Vector2.zero;
+            Stretch(_screenRoot);
 
-            // Background (Settings.png stretched like MonoGame; black fallback).
-            var bgGo = new GameObject("Background", typeof(RectTransform), typeof(CanvasRenderer));
-            bgGo.transform.SetParent(_screenRoot, false);
-            var bgRect = (RectTransform)bgGo.transform;
-            bgRect.anchorMin = Vector2.zero;
-            bgRect.anchorMax = Vector2.one;
-            bgRect.offsetMin = Vector2.zero;
-            bgRect.offsetMax = Vector2.zero;
-            if (_bgTexture != null)
-            {
-                var raw = bgGo.AddComponent<RawImage>();
-                raw.texture = _bgTexture;
-                raw.raycastTarget = true; // swallow clicks under the panel
-            }
-            else
-            {
-                var img = bgGo.AddComponent<Image>();
-                img.color = Color.black;
-                img.raycastTarget = true;
-            }
+            AddStretchedImage(_screenRoot, _bgTexture, Color.black, swallow: true);
+            AddStretchedImage(_screenRoot, null, PanelDim, swallow: true);
 
-            // Dim between background and panel so the panel reads clearly
-            // (small visual upgrade over MonoGame, which drew the panel raw).
-            var dimGo = new GameObject("Dim", typeof(RectTransform));
-            dimGo.transform.SetParent(_screenRoot, false);
-            var dimRect = (RectTransform)dimGo.transform;
-            dimRect.anchorMin = Vector2.zero;
-            dimRect.anchorMax = Vector2.one;
-            dimRect.offsetMin = Vector2.zero;
-            dimRect.offsetMax = Vector2.zero;
-            var dim = dimGo.AddComponent<Image>();
-            dim.color = PanelDim;
-            dim.raycastTarget = true;
-
-            // Centered panel root — actual size set in Layout().
-            var panelGo = new GameObject("PanelRoot", typeof(RectTransform));
+            var panelGo = new GameObject("PanelRoot", typeof(RectTransform), typeof(CanvasRenderer));
             _panelRoot = (RectTransform)panelGo.transform;
             _panelRoot.SetParent(_screenRoot, false);
             _panelRoot.anchorMin = new Vector2(0.5f, 0.5f);
             _panelRoot.anchorMax = new Vector2(0.5f, 0.5f);
             _panelRoot.pivot = new Vector2(0.5f, 0.5f);
-
             if (_panelTexture != null)
             {
                 var raw = panelGo.AddComponent<RawImage>();
@@ -214,24 +194,19 @@ namespace LatticeVeil.Game
                 "textures/menu/buttons/VideoSelected.png",
                 "textures/menu/buttons/AudioSelected.png",
                 "textures/menu/buttons/ControlsSelected.png",
-                "textures/menu/buttons/packsSelected.png"
+                "textures/menu/buttons/PacksSelected.png"
             };
             var tabs = new[] { Tab.Video, Tab.Audio, Tab.Controls, Tab.Packs };
             var labels = new[] { "VIDEO", "AUDIO", "CONTROLS", "PACKS" };
 
             for (int i = 0; i < tabs.Length; i++)
             {
-                _tabTextures[tabs[i]] = GameAssetLoader.LoadTexture(paths[i]);
-                _tabSelectedTextures[tabs[i]] = GameAssetLoader.LoadTexture(selectedPaths[i]);
-
                 var tab = tabs[i];
-                var go = CreateTexturedButton(
-                    "Tab_" + labels[i],
-                    _tabTextures[tabs[i]],
-                    labels[i],
-                    () => SelectTab(tab));
+                _tabTextures[tab] = GameAssetLoader.LoadTexture(paths[i]);
+                _tabSelectedTextures[tab] = GameAssetLoader.LoadTexture(selectedPaths[i]);
+                var go = CreateTextureButton("Tab_" + labels[i], _tabTextures[tab], labels[i], () => SelectTab(tab));
                 go.transform.SetParent(_screenRoot, false);
-                _tabButtons[tabs[i]] = go;
+                _tabButtons[tab] = go;
             }
         }
 
@@ -239,354 +214,433 @@ namespace LatticeVeil.Game
         {
             foreach (Tab tab in (Tab[])Enum.GetValues(typeof(Tab)))
             {
-                var pageGo = new GameObject("Page_" + tab, typeof(RectTransform));
+                var pageGo = new GameObject("Page_" + tab, typeof(RectTransform), typeof(RectMask2D));
                 var page = (RectTransform)pageGo.transform;
                 page.SetParent(_panelRoot, false);
-                page.anchorMin = Vector2.zero;
-                page.anchorMax = Vector2.one;
-                page.offsetMin = Vector2.zero;
-                page.offsetMax = Vector2.zero;
+                Stretch(page);
                 _tabPages[tab] = page;
             }
 
             BuildVideoPage(_tabPages[Tab.Video]);
             BuildAudioPage(_tabPages[Tab.Audio]);
-            BuildControlsPage(_tabPages[Tab.Controls]);
-            BuildPacksPage(_tabPages[Tab.Packs]);
+            BuildNotePage(_tabPages[Tab.Controls], "CONTROLS", "Keybind remapping arrives with the controls update.\nCurrent binds live in options.lvc.");
+            BuildNotePage(_tabPages[Tab.Packs], "PACKS & ADDONS", "Packs & mods management arrives with the packs update.\nDrop content packs into Documents/LatticeVeil/Packs.");
         }
 
         private void BuildFooter()
         {
-            // BACK texture button — bottom-left of the screen (MonoGame position).
-            var back = CreateTexturedButton("Btn_Back", _backTexture, "BACK", Close);
+            var back = CreateTextureButton("Btn_Back", _backTexture, "BACK", Close);
             back.transform.SetParent(_screenRoot, false);
 
-            // APPLY — bottom-center of the panel (text button like MonoGame's fallback).
-            var apply = CreateTextButton("Btn_APPLY", "APPLY", Apply);
+            var apply = CreateTextureButton("Btn_APPLY", _applyTexture, "APPLY", Apply);
             apply.transform.SetParent(_panelRoot, false);
         }
 
         // ------------------------------------------------------------------
-        // Pages (Video tab mirrors the MonoGame two-column layout)
+        // Video page
         // ------------------------------------------------------------------
 
         private void BuildVideoPage(RectTransform page)
         {
-            AddCheckbox(page, "FULLSCREEN", _fullscreen, v => _fullscreen = v, 0);
-            AddCheckbox(page, "VSYNC", _vsync, v => _vsync = v, 1);
-            AddDropdown(page, "RESOLUTION", () => _resolutionIndex, ResolutionLabel, i => _resolutionIndex = i, 2);
-            AddDropdown(page, "GUI SCALE", () => _guiScaleIndex,
-                i => GuiScaleOptions[Mathf.Clamp(i, 0, GuiScaleOptions.Length - 1)].label,
-                i => _guiScaleIndex = i, 3);
-            AddSlider(page, "BRIGHTNESS", _brightness, v => _brightness = v, 4);
-            AddSlider(page, "FOV", (_fov - 60) / 50f, v => _fov = Mathf.RoundToInt(60f + v * 50f), 5,
+            // Left column
+            AddToggle(page, "FULLSCREEN", () => _fullscreen, v => _fullscreen = v, Col.Left, 0);
+            AddToggle(page, "VSYNC", () => _vsync, v => _vsync = v, Col.Left, 1);
+            AddDropdown(page, "RESOLUTION", () => _resolutionIndex,
+                i => i >= 0 && i < Resolutions.Length ? Resolutions[i].w + " x " + Resolutions[i].h : "CURRENT",
+                Resolutions.Length, i => _resolutionIndex = i, Col.Left, 2);
+
+            // Right column
+            AddCycler(page, "GUI SCALE", () => _guiScaleIndex, GuiScales.Length,
+                i => GuiScales[Mathf.Clamp(i, 0, GuiScales.Length - 1)].label, i => _guiScaleIndex = i, Col.Right, 0);
+            AddCycler(page, "QUALITY", () => _qualityIndex, Qualities.Length,
+                i => Qualities[Mathf.Clamp(i, 0, Qualities.Length - 1)], i => _qualityIndex = i, Col.Right, 1);
+            AddSlider(page, "BRIGHTNESS", () => _brightness, v => _brightness = v, Col.Right, 2,
+                () => Mathf.RoundToInt(Mathf.Clamp(_brightness, 0.5f, 1.5f) * 100) + "%");
+            AddSlider(page, "FOV", () => (_fov - 60) / 50f, v => _fov = Mathf.RoundToInt(60f + v * 50f), Col.Right, 3,
                 () => _fov.ToString());
-            AddSlider(page, "RENDER DISTANCE", (_renderDistance - 4) / 12f, v => _renderDistance = Mathf.RoundToInt(4f + v * 12f), 6,
+            AddSlider(page, "RENDER DISTANCE", () => (_renderDistance - 4) / 12f,
+                v => _renderDistance = Mathf.RoundToInt(4f + v * 12f), Col.Right, 4,
                 () => _renderDistance + " CHUNKS");
-            AddDropdown(page, "QUALITY", () => _qualityIndex, i => QualityOptions[i], i => _qualityIndex = i, 7);
         }
 
         private void BuildAudioPage(RectTransform page)
         {
-            AddSlider(page, "MASTER", _working.MasterVolume, v => _working.MasterVolume = v, 0,
-                () => Mathf.RoundToInt(_working.MasterVolume * 100) + "%");
-            AddSlider(page, "MUSIC", _working.MusicVolume, v => _working.MusicVolume = v, 1,
-                () => Mathf.RoundToInt(_working.MusicVolume * 100) + "%");
-            AddSlider(page, "SFX", _working.SfxVolume, v => _working.SfxVolume = v, 2,
-                () => Mathf.RoundToInt(_working.SfxVolume * 100) + "%");
+            AddSlider(page, "MASTER", () => _master, v => _master = v, Col.Left, 0,
+                () => Mathf.RoundToInt(_master * 100) + "%");
+            AddSlider(page, "MUSIC", () => _music, v => _music = v, Col.Left, 1,
+                () => Mathf.RoundToInt(_music * 100) + "%");
+            AddSlider(page, "SFX", () => _sfx, v => _sfx = v, Col.Left, 2,
+                () => Mathf.RoundToInt(_sfx * 100) + "%");
         }
 
-        private void BuildControlsPage(RectTransform page)
+        private void BuildNotePage(RectTransform page, string title, string text)
         {
-            AddNote(page, "Keybinds arrive with the controls update.\nCurrent binds live in options.lvc.");
+            var t = CreateLabel(page, title, 22, TextColor);
+            Anchor((RectTransform)t.transform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0, -8));
+            var body = CreateLabel(page, text, 18, LabelColor);
+            var bodyRect = (RectTransform)body.transform;
+            bodyRect.anchorMin = new Vector2(0f, 1f);
+            bodyRect.anchorMax = new Vector2(1f, 1f);
+            bodyRect.pivot = new Vector2(0f, 1f);
+            bodyRect.anchoredPosition = new Vector2(0, -40);
         }
 
-        private void BuildPacksPage(RectTransform page)
-        {
-            AddNote(page, "Packs & mods management arrives with the packs update.\nDrop content packs into Documents/LatticeVeil/Packs.");
-        }
+        private enum Col { Left, Right }
 
         // ------------------------------------------------------------------
-        // Widgets (manual layout — rows computed in Layout())
+        // Widgets
         // ------------------------------------------------------------------
 
-        private sealed class WidgetRow
+        private sealed class Widget
         {
             public RectTransform Root;
-            public int Order;
-            public string Kind; // "checkbox", "dropdown", "slider", "note"
-            public string Label;
-            public Func<int> GetIndex;
-            public Action<int> SetIndex;
-            public Func<int, string> IndexLabel;
-            public Action<bool> SetBool;
-            public float InitialValue;
-            public Action<float> SetValue;
-            public Func<string> ValueLabel;
+            public Col Column;
+            public int Row;
+            public float Height;
         }
 
-        private readonly List<WidgetRow> _rows = new List<WidgetRow>();
+        private readonly List<Widget> _videoWidgets = new List<Widget>();
+        private readonly List<Widget> _audioWidgets = new List<Widget>();
 
-        private WidgetRow AddRow(RectTransform page, string kind, string label, int order)
+        private Widget Track(RectTransform page, Col col, int row, float height, List<Widget> list)
         {
-            var rowGo = new GameObject("Row_" + label, typeof(RectTransform));
-            var row = (RectTransform)rowGo.transform;
-            row.SetParent(page, false);
-            row.anchorMin = new Vector2(0f, 1f);
-            row.anchorMax = new Vector2(1f, 1f);
-            row.pivot = new Vector2(0f, 1f);
-
-            var widget = new WidgetRow { Root = row, Order = order, Kind = kind, Label = label };
-            _rows.Add(widget);
+            var go = new GameObject("W_" + col + "_" + row, typeof(RectTransform));
+            var rect = (RectTransform)go.transform;
+            rect.SetParent(page, false);
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(0f, 1f);
+            rect.pivot = new Vector2(0f, 0f);
+            var widget = new Widget { Root = rect, Column = col, Row = row, Height = height };
+            list.Add(widget);
             return widget;
         }
 
-        private void AddCheckbox(RectTransform page, string label, bool initial, Action<bool> set, int order)
+        private void AddToggle(RectTransform page, string label, Func<bool> get, Action<bool> set, Col col, int row)
         {
-            var row = AddRow(page, "checkbox", label, order);
-            var rowRect = row.Root;
-            var rowGo = rowRect.gameObject;
+            var widget = Track(page, col, row, 38f, _videoWidgets);
+            var rect = widget.Root;
 
-            // Checkbox square.
-            var boxGo = new GameObject("Box", typeof(RectTransform), typeof(Image));
-            var box = (RectTransform)boxGo.transform;
-            box.SetParent(rowRect, false);
-            box.anchorMin = new Vector2(0f, 0.5f);
-            box.anchorMax = new Vector2(0f, 0.5f);
-            box.pivot = new Vector2(0f, 0.5f);
-            box.sizeDelta = new Vector2(26, 26);
-            var boxImg = boxGo.GetComponent<Image>();
-            boxImg.color = ControlBg;
+            // Switch track.
+            var trackGo = new GameObject("Switch", typeof(RectTransform), typeof(Image));
+            var track = (RectTransform)trackGo.transform;
+            track.SetParent(rect, false);
+            track.anchorMin = new Vector2(0f, 0f);
+            track.anchorMax = new Vector2(0f, 0f);
+            track.pivot = new Vector2(0f, 0.5f);
+            track.sizeDelta = new Vector2(58, 26);
+            track.anchoredPosition = new Vector2(0, 6);
+            var trackImg = trackGo.GetComponent<Image>();
+            trackImg.color = get() ? Accent : ControlBg;
+            var trackOutline = trackGo.AddComponent<Outline>();
+            trackOutline.effectColor = Color.white;
+            trackOutline.effectDistance = Vector2.one;
 
-            var checkGo = new GameObject("Check", typeof(RectTransform), typeof(Image));
-            var check = (RectTransform)checkGo.transform;
-            check.SetParent(box, false);
-            check.anchorMin = Vector2.zero;
-            check.anchorMax = Vector2.one;
-            check.offsetMin = new Vector2(4, 4);
-            check.offsetMax = new Vector2(-4, -4);
-            var checkImg = checkGo.GetComponent<Image>();
-            checkImg.color = initial ? ControlFill : Color.clear;
-            checkImg.raycastTarget = false;
+            // Knob.
+            var knobGo = new GameObject("Knob", typeof(RectTransform), typeof(Image));
+            var knob = (RectTransform)knobGo.transform;
+            knob.SetParent(track, false);
+            knob.sizeDelta = new Vector2(20, 20);
+            var knobImg = knobGo.GetComponent<Image>();
+            knobImg.color = ControlFill;
+            knobImg.raycastTarget = false;
+            knob.anchoredPosition = get() ? new Vector2(15, 0) : new Vector2(-15, 0);
 
-            var labelText = CreateLabel(rowRect, label.ToUpperInvariant(), 20, TextColor);
-            ((RectTransform)labelText.transform).anchoredPosition = new Vector2(38, 0);
-            ((RectTransform)labelText.transform).anchorMin = new Vector2(0f, 0.5f);
-            ((RectTransform)labelText.transform).anchorMax = new Vector2(0f, 0.5f);
+            var labelText = CreateLabel(rect, label, 19, TextColor);
+            Anchor((RectTransform)labelText.transform, new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(70, 13));
 
-            // Click target = the whole row.
-            var btn = rowGo.AddComponent<Button>();
+            var btn = rect.gameObject.AddComponent<Button>();
+            btn.targetGraphic = trackImg;
             btn.transition = Selectable.Transition.ColorTint;
-            btn.targetGraphic = boxImg;
-            var colors = btn.colors;
-            colors.normalColor = Color.white;
-            colors.highlightedColor = HoverTint;
-            colors.pressedColor = new Color(0.8f, 0.8f, 0.8f);
-            colors.fadeDuration = 0.08f;
-            btn.colors = colors;
+            btn.colors = Block(HoverTint);
             btn.onClick.AddListener(() =>
             {
-                set(!(checkImg.color.a > 0.5f));
-                checkImg.color = checkImg.color.a > 0.5f ? Color.clear : ControlFill;
-                Debug.Log($"Option changed: {label} = {checkImg.color.a > 0.5f}");
+                var next = !get();
+                set(next);
+                trackImg.color = next ? Accent : ControlBg;
+                knob.anchoredPosition = next ? new Vector2(15, 0) : new Vector2(-15, 0);
+                Debug.Log($"Option changed: {label} = {next}");
             });
-
-            // Re-apply saved value on rebuild.
-            if (!initial)
-                checkImg.color = Color.clear;
         }
 
-        private void AddDropdown(RectTransform page, string label, Func<int> getIndex, Func<int, string> indexLabel, Action<int> setIndex, int order)
+        private void AddSlider(RectTransform page, string label, Func<float> get, Action<float> set, Col col, int row, Func<string> valueLabel)
         {
-            var row = AddRow(page, "dropdown", label, order);
-            row.GetIndex = getIndex;
-            row.SetIndex = setIndex;
-            row.IndexLabel = indexLabel;
+            var widget = Track(page, col, row, 46f, _videoWidgets);
+            var list = _tabPages[Tab.Audio] == page ? _audioWidgets : _videoWidgets;
+            if (!list.Contains(widget))
+                list.Add(widget);
 
-            var labelText = CreateLabel(row.Root, label.ToUpperInvariant(), 18, LabelColor);
-            var labelRect = (RectTransform)labelText.transform;
-            labelRect.anchorMin = new Vector2(0f, 1f);
-            labelRect.anchorMax = new Vector2(0f, 1f);
-            labelRect.pivot = new Vector2(0f, 1f);
-            labelRect.anchoredPosition = new Vector2(0, -20);
+            var rect = widget.Root;
 
-            var valueText = CreateLabel(row.Root, indexLabel(getIndex()), 18, TextColor);
+            var labelText = CreateLabel(rect, label, 18, LabelColor);
+            Anchor((RectTransform)labelText.transform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0, 0));
 
-            var rowRef = row.Root.gameObject.AddComponent<WidgetRowRef>();
-            rowRef.Store(valueText);
+            var valueText = CreateLabel(rect, valueLabel(), 16, TextColor);
+            var valueRect = (RectTransform)valueText.transform;
+            valueRect.anchorMin = new Vector2(1f, 1f);
+            valueRect.anchorMax = new Vector2(1f, 1f);
+            valueRect.pivot = new Vector2(1f, 1f);
 
-            // Prev / next cycle buttons around the value (simpler and smoother
-            // than a popup list; same options as MonoGame's dropdowns).
-            var prev = CreateTextButton("Prev", "<", null);
-            prev.transform.SetParent(row.Root, false);
-            var next = CreateTextButton("Next", ">", null);
-
-            var prevBtn = prev.GetComponent<Button>();
-            var nextBtn = next.GetComponent<Button>();
-
-            prevBtn.onClick.AddListener(() =>
-            {
-                var count = OptionCount(label);
-                var idx = Mathf.Max(0, getIndex() - 1);
-                setIndex(idx);
-                valueText.text = indexLabel(Mathf.Clamp(idx, 0, count - 1));
-                Debug.Log($"Option changed: {label} = {valueText.text}");
-            });
-            nextBtn.onClick.AddListener(() =>
-            {
-                var count = OptionCount(label);
-                var idx = Mathf.Min(count - 1, getIndex() + 1);
-                setIndex(idx);
-                valueText.text = indexLabel(Mathf.Clamp(idx, 0, count - 1));
-                Debug.Log($"Option changed: {label} = {valueText.text}");
-            });
-
-            rowRef.Prev = prev.GetComponent<RectTransform>();
-            rowRef.Next = next.GetComponent<RectTransform>();
-        }
-
-        private int OptionCount(string label)
-        {
-            switch (label)
-            {
-                case "RESOLUTION": return ResolutionOptions.Length;
-                case "GUI SCALE": return GuiScaleOptions.Length;
-                case "QUALITY": return QualityOptions.Length;
-                default: return 1;
-            }
-        }
-
-        private string ResolutionLabel(int i)
-        {
-            if (i < 0 || i >= ResolutionOptions.Length)
-                return "CURRENT";
-            return $"{ResolutionOptions[i].w} x {ResolutionOptions[i].h}";
-        }
-
-        private void AddSlider(RectTransform page, string label, float initial, Action<float> set, int order, Func<string> valueLabel = null)
-        {
-            var row = AddRow(page, "slider", label, order);
-            var rowRect = row.Root;
-
-            var labelText = CreateLabel(rowRect, label.ToUpperInvariant(), 18, LabelColor);
-            var labelRect = (RectTransform)labelText.transform;
-            labelRect.anchorMin = new Vector2(0f, 1f);
-            labelRect.anchorMax = new Vector2(0f, 1f);
-            labelRect.pivot = new Vector2(0f, 1f);
-            labelRect.anchoredPosition = new Vector2(0, -20);
-
-            var sliderGo = new GameObject("Slider", typeof(RectTransform), typeof(Slider));
-            var sliderRect = (RectTransform)sliderGo.transform;
-            sliderRect.SetParent(rowRect, false);
-            sliderRect.anchorMin = new Vector2(0f, 1f);
-            sliderRect.anchorMax = new Vector2(1f, 1f);
-            sliderRect.pivot = new Vector2(0f, 0.5f);
-
-            var slider = sliderGo.GetComponent<Slider>();
-            slider.minValue = 0f;
-            slider.maxValue = 1f;
-            slider.value = Mathf.Clamp01(initial);
-
-            // Background track.
+            // Track (MonoGame style: dark bar, white border, light fill).
             var trackGo = new GameObject("Track", typeof(RectTransform), typeof(Image));
             var track = (RectTransform)trackGo.transform;
-            track.SetParent(sliderRect, false);
-            track.anchorMin = new Vector2(0f, 0.5f);
-            track.anchorMax = new Vector2(1f, 0.5f);
-            track.offsetMin = Vector2.zero;
-            track.offsetMax = Vector2.zero;
-            track.sizeDelta = new Vector2(0, 8);
+            track.SetParent(rect, false);
+            track.anchorMin = new Vector2(0f, 0f);
+            track.anchorMax = new Vector2(1f, 0f);
+            track.pivot = new Vector2(0f, 0f);
+            track.sizeDelta = new Vector2(0, 14);
             var trackImg = trackGo.GetComponent<Image>();
             trackImg.color = ControlBg;
             trackImg.raycastTarget = false;
+            var outline = trackGo.AddComponent<Outline>();
+            outline.effectColor = Color.white;
+            outline.effectDistance = Vector2.one; // 2px-ish white border like the MonoGame pixel frame
 
-            // Fill (stretches with the value — smooth drag feedback).
-            var fillAreaGo = new GameObject("Fill Area", typeof(RectTransform));
-            var fillArea = (RectTransform)fillAreaGo.transform;
-            fillArea.SetParent(sliderRect, false);
-            fillArea.anchorMin = new Vector2(0f, 0.5f);
-            fillArea.anchorMax = new Vector2(1f, 0.5f);
-            fillArea.offsetMin = Vector2.zero;
-            fillArea.offsetMax = Vector2.zero;
-
+            // Fill.
             var fillGo = new GameObject("Fill", typeof(RectTransform), typeof(Image));
             var fill = (RectTransform)fillGo.transform;
-            fill.SetParent(fillArea, false);
-            fill.anchorMin = Vector2.zero;
-            fill.anchorMax = Vector2.zero;
-            fill.sizeDelta = new Vector2(0, 8);
+            fill.SetParent(track, false);
+            fill.anchorMin = new Vector2(0f, 0f);
+            fill.anchorMax = new Vector2(0f, 0f);
+            fill.pivot = new Vector2(0f, 0f);
+            fill.sizeDelta = new Vector2(0, 14);
             var fillImg = fillGo.GetComponent<Image>();
             fillImg.color = ControlFill;
             fillImg.raycastTarget = false;
 
-            slider.fillRect = fill;
+            // Invisible full-track drag target drives the value (smooth drag,
+            // click-to-jump like the MonoGame Slider).
+            var sliderGo = new GameObject("Drag", typeof(RectTransform), typeof(EventTrigger));
+            var dragRect = (RectTransform)sliderGo.transform;
+            dragRect.SetParent(track, false);
+            Stretch(dragRect);
 
-            // Handle.
-            var handleAreaGo = new GameObject("Handle Area", typeof(RectTransform));
-            var handleArea = (RectTransform)handleAreaGo.transform;
-            handleArea.SetParent(sliderRect, false);
-            handleArea.anchorMin = new Vector2(0f, 0.5f);
-            handleArea.anchorMax = new Vector2(1f, 0.5f);
-            handleArea.offsetMin = Vector2.zero;
-            handleArea.offsetMax = Vector2.zero;
-
-            var handleGo = new GameObject("Handle", typeof(RectTransform), typeof(Image));
-            var handle = (RectTransform)handleGo.transform;
-            handle.SetParent(handleArea, false);
-            handle.sizeDelta = new Vector2(14, 22);
-            var handleImg = handleGo.GetComponent<Image>();
-            handleImg.color = Color.white;
-
-            slider.handleRect = handle;
-            slider.targetGraphic = handleImg;
-            slider.transition = Selectable.Transition.ColorTint;
-            var colors = slider.colors;
-            colors.fadeDuration = 0.08f;
-            slider.colors = colors;
-
-            // Value label on the right.
-            var rowRef = rowRect.gameObject.AddComponent<WidgetRowRef>();
-            if (valueLabel != null)
+            void UpdateFill()
             {
-                var valueText = CreateLabel(rowRect, valueLabel(), 16, TextColor);
-                var valueRect = (RectTransform)valueText.transform;
-                valueRect.anchorMin = new Vector2(1f, 0f);
-                valueRect.anchorMax = new Vector2(1f, 0f);
-                valueRect.pivot = new Vector2(1f, 0.5f);
-                rowRef.Store(valueText);
-                rowRef.ValueLabel = valueLabel;
+                var v = Mathf.Clamp01(get());
+                fill.sizeDelta = new Vector2(track.rect.width * v, 14);
             }
-            rowRef.Slider = slider;
 
-            slider.onValueChanged.AddListener(v =>
-            {
-                set(v);
-                if (rowRef.ValueLabel != null)
-                    rowRef.ValueText.text = rowRef.ValueLabel();
-            });
+            UnityEventToolsAddDrag(sliderGo, track, fill, get, set, UpdateFill, valueLabel, label);
+
+            UpdateFill();
+            _sliderUpdaters.Add(UpdateFill);
         }
 
-        private void AddNote(RectTransform page, string text)
+        private readonly List<Action> _sliderUpdaters = new List<Action>();
+
+        private void UnityEventToolsAddDrag(GameObject sliderGo, RectTransform track, RectTransform fill,
+            Func<float> get, Action<float> set, Action updateFill, Func<string> valueLabel, string label)
         {
-            var noteGo = new GameObject("Note", typeof(RectTransform));
-            var note = (RectTransform)noteGo.transform;
-            note.SetParent(page, false);
-            note.anchorMin = new Vector2(0f, 1f);
-            note.anchorMax = new Vector2(1f, 1f);
-            note.pivot = new Vector2(0f, 1f);
+            var handler = sliderGo.AddComponent<SliderDragHandler>();            handler.Track = track;
+            handler.Fill = fill;
+            handler.Get = get;
+            handler.Set = set;
+            handler.OnChanged = updateFill;
+            handler.ValueLabel = () =>
+            {
+                // The value text lives on the row root; find via sibling.
+                var row = track.parent.parent;
+                var texts = row.GetComponentsInChildren<Text>();
+                foreach (var t in texts)
+                {
+                    if (t.text.EndsWith("%") || t.text.EndsWith("CHUNKS") || IsNumeric(t.text))
+                        t.text = valueLabel();
+                }
+            };
+        }
 
-            var noteText = CreateLabel(note, text, 18, LabelColor);
-            var noteRect = (RectTransform)noteText.transform;
-            noteRect.anchorMin = new Vector2(0f, 1f);
-            noteRect.anchorMax = Vector2.one;
-            noteRect.pivot = new Vector2(0f, 1f);
-            noteRect.anchoredPosition = new Vector2(0, -14);
+        private static bool IsNumeric(string s)
+        {
+            int n;
+            return int.TryParse(s, out n);
+        }
 
-            _rows.Add(new WidgetRow { Root = note, Kind = "note", Order = 0 });
+        private void AddDropdown(RectTransform page, string label, Func<int> get, Func<int, string> labelOf,
+            int count, Action<int> set, Col col, int row)
+        {
+            var widget = Track(page, col, row, 44f, _videoWidgets);
+            var rect = widget.Root;
+
+            var labelText = CreateLabel(rect, label, 18, LabelColor);
+            Anchor((RectTransform)labelText.transform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0, 0));
+
+            // Value box with arrow, click-to-open (traditional dropdown).
+            var boxGo = new GameObject("Box", typeof(RectTransform), typeof(Image), typeof(Button));
+            var box = (RectTransform)boxGo.transform;
+            box.SetParent(rect, false);
+            box.anchorMin = new Vector2(0f, 0f);
+            box.anchorMax = new Vector2(1f, 0f);
+            box.pivot = new Vector2(0f, 0f);
+            box.sizeDelta = new Vector2(0, 32);
+            var boxImg = boxGo.GetComponent<Image>();
+            boxImg.color = ControlBg;
+            var boxOutline = boxGo.AddComponent<Outline>();
+            boxOutline.effectColor = Color.white;
+            boxOutline.effectDistance = Vector2.one;
+            var boxBtn = boxGo.GetComponent<Button>();
+            boxBtn.targetGraphic = boxImg;
+            boxBtn.transition = Selectable.Transition.ColorTint;
+            boxBtn.colors = Block(HoverTint);
+
+            var valueText = CreateLabel(box, labelOf(get()), 17, TextColor);
+            var valueRect = (RectTransform)valueText.transform;
+            valueRect.anchorMin = new Vector2(0f, 0.5f);
+            valueRect.anchorMax = new Vector2(0f, 0.5f);
+            valueRect.pivot = new Vector2(0f, 0.5f);
+            valueRect.anchoredPosition = new Vector2(10, 0);
+
+            var arrow = CreateLabel(box, "\u25BC", 14, LabelColor);
+            var arrowRect = (RectTransform)arrow.transform;
+            arrowRect.anchorMin = new Vector2(1f, 0.5f);
+            arrowRect.anchorMax = new Vector2(1f, 0.5f);
+            arrowRect.pivot = new Vector2(1f, 0.5f);
+            arrowRect.anchoredPosition = new Vector2(-8, 0);
+
+            boxBtn.onClick.AddListener(() => ToggleDropdownList(box, label, get, labelOf, count, set, valueText));
+        }
+
+        private void ToggleDropdownList(RectTransform box, string label, Func<int> get,
+            Func<int, string> labelOf, int count, Action<int> set, Text valueText)
+        {
+            CloseDropdownList();
+
+            // Blocker: click anywhere else closes the list.
+            _dropdownBlocker = new GameObject("DropdownBlocker", typeof(RectTransform), typeof(Image));
+            var blockerRect = (RectTransform)_dropdownBlocker.transform;
+            blockerRect.SetParent(_screenRoot, false);
+            Stretch(blockerRect);
+            var blockerImg = _dropdownBlocker.AddComponent<Image>();
+            blockerImg.color = new Color(0, 0, 0, 0.3f);
+            blockerImg.raycastTarget = true;
+            _dropdownBlocker.AddComponent<Button>().onClick.AddListener(CloseDropdownList);
+
+            _openDropdownList = new GameObject("DropdownList", typeof(RectTransform), typeof(RectMask2D));
+            var list = (RectTransform)_openDropdownList.transform;
+            list.SetParent(_screenRoot, false);
+            list.anchorMin = new Vector2(0f, 0f);
+            list.anchorMax = new Vector2(0f, 0f);
+            list.pivot = new Vector2(0f, 1f);
+
+            // Position under the box (world-space -> local-space of screenRoot).
+            var corners = new Vector3[4];
+            box.GetWorldCorners(corners);
+            var screenPos = RectTransformUtility.WorldToScreenPoint(null, corners[0]);
+            var local = _screenRoot.InverseTransformPoint(new Vector3(screenPos.x, screenPos.y, 0f));
+            list.anchoredPosition = new Vector2(local.x, local.y);
+            list.sizeDelta = new Vector2(box.rect.width, Mathf.Min(count * 34 + 8, 220));
+
+            var listImg = _openDropdownList.AddComponent<Image>();
+            listImg.color = new Color(0.07f, 0.07f, 0.08f, 0.98f);
+            listImg.raycastTarget = true;
+            var listOutline = _openDropdownList.AddComponent<Outline>();
+            listOutline.effectColor = Color.white;
+            listOutline.effectDistance = Vector2.one;
+
+            for (int i = 0; i < count; i++)
+            {
+                int index = i;
+                var itemGo = new GameObject("Item_" + i, typeof(RectTransform), typeof(Image), typeof(Button));
+                var item = (RectTransform)itemGo.transform;
+                item.SetParent(list, false);
+                item.anchorMin = new Vector2(0f, 1f);
+                item.anchorMax = new Vector2(1f, 1f);
+                item.pivot = new Vector2(0f, 1f);
+                item.sizeDelta = new Vector2(-8, 30);
+                item.anchoredPosition = new Vector2(4, -4 - i * 34);
+                var itemImg = itemGo.GetComponent<Image>();
+                itemImg.color = i == get() ? new Color(1f, 1f, 1f, 0.14f) : Color.clear;
+
+                var itemBtn = itemGo.GetComponent<Button>();
+                itemBtn.targetGraphic = itemImg;
+                itemBtn.transition = Selectable.Transition.ColorTint;
+                itemBtn.colors = Block(new Color(1f, 1f, 1f, 0.14f));
+                var itemText = CreateLabel(item, labelOf(i), 16, i == get() ? Accent : TextColor);
+                var itemTextRect = (RectTransform)itemText.transform;
+                itemTextRect.anchorMin = new Vector2(0f, 0.5f);
+                itemTextRect.anchorMax = new Vector2(0f, 0.5f);
+                itemTextRect.pivot = new Vector2(0f, 0.5f);
+                itemTextRect.anchoredPosition = new Vector2(10, 0);
+
+                itemBtn.onClick.AddListener(() =>
+                {
+                    set(index);
+                    valueText.text = labelOf(index);
+                    Debug.Log($"Option changed: {label} = {labelOf(index)}");
+                    CloseDropdownList();
+                });
+            }
+        }
+
+        private void CloseDropdownList()
+        {
+            if (_openDropdownList != null)
+            {
+                Destroy(_openDropdownList);
+                _openDropdownList = null;
+            }
+            if (_dropdownBlocker != null)
+            {
+                Destroy(_dropdownBlocker);
+                _dropdownBlocker = null;
+            }
+        }
+
+        private void AddCycler(RectTransform page, string label, Func<int> get, int count,
+            Func<int, string> labelOf, Action<int> set, Col col, int row)
+        {
+            var widget = Track(page, col, row, 44f, _videoWidgets);
+            var rect = widget.Root;
+
+            var labelText = CreateLabel(rect, label, 18, LabelColor);
+            Anchor((RectTransform)labelText.transform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0, 0));
+
+            var boxGo = new GameObject("Box", typeof(RectTransform), typeof(Image));
+            var box = (RectTransform)boxGo.transform;
+            box.SetParent(rect, false);
+            box.anchorMin = new Vector2(0f, 0f);
+            box.anchorMax = new Vector2(1f, 0f);
+            box.pivot = new Vector2(0f, 0f);
+            box.sizeDelta = new Vector2(0, 32);
+            var boxImg = boxGo.GetComponent<Image>();
+            boxImg.color = ControlBg;
+            var boxOutline = boxGo.AddComponent<Outline>();
+            boxOutline.effectColor = Color.white;
+            boxOutline.effectDistance = Vector2.one;
+
+            var prev = CreateTextButton("Prev", "<", null);
+            prev.transform.SetParent(box, false);
+            var next = CreateTextButton("Next", ">", null);
+            next.transform.SetParent(box, false);
+
+            var valueText = CreateLabel(box, labelOf(get()), 17, TextColor);
+            var valueRect = (RectTransform)valueText.transform;
+            valueRect.anchorMin = new Vector2(0.5f, 0.5f);
+            valueRect.anchorMax = new Vector2(0.5f, 0.5f);
+            valueRect.pivot = new Vector2(0.5f, 0.5f);
+
+            var prevBtn = prev.GetComponent<Button>();
+            var nextBtn = next.GetComponent<Button>();
+            prevBtn.onClick.AddListener(() =>
+            {
+                var idx = Mathf.Max(0, get() - 1);
+                set(idx);
+                valueText.text = labelOf(idx);
+                Debug.Log($"Option changed: {label} = {valueText.text}");
+            });
+            nextBtn.onClick.AddListener(() =>
+            {
+                var idx = Mathf.Min(count - 1, get() + 1);
+                set(idx);
+                valueText.text = labelOf(idx);
+                Debug.Log($"Option changed: {label} = {valueText.text}");
+            });
+
+            // Positions are set in LayoutRows via named children.
+            box.gameObject.AddComponent<CyclerRefs>().Init(prev.GetComponent<RectTransform>(), next.GetComponent<RectTransform>(), valueRect);
         }
 
         // ------------------------------------------------------------------
-        // Layout (MonoGame OnResize math, UI-space)
+        // Layout — everything inside the panel frame
         // ------------------------------------------------------------------
 
         public void Layout()
@@ -594,55 +648,53 @@ namespace LatticeVeil.Game
             if (_canvas == null || _screenRoot == null)
                 return;
 
-            float w = _canvas.GetComponent<RectTransform>().rect.width;
-            float h = _canvas.GetComponent<RectTransform>().rect.height;
+            var canvasRect = _canvas.GetComponent<RectTransform>().rect;
+            float w = canvasRect.width;
+            float h = canvasRect.height;
             if (w <= 0f || h <= 0f)
                 return;
+            _lastW = w;
+            _lastH = h;
 
-            // Panel caps + centering straight from MonoGame OnResize.
             float panelW = Mathf.Min(1248f, w - 20f);
             float panelH = Mathf.Min(680f, h - 30f);
             _panelRoot.sizeDelta = new Vector2(panelW, panelH);
+            _panelRoot.anchoredPosition = Vector2.zero;
 
             var layoutScale = Mathf.Clamp(Mathf.Min(panelW / 1180f, panelH / 680f), 0.82f, 1f);
 
-            // Tabs: row above the panel, grouped around the panel center.
+            // Tabs above the panel.
             float tabHeight = Mathf.Max(44f, Mathf.Min(70f, panelW * 0.095f) * layoutScale);
             float tabGap = Mathf.Max(6f, 8f * layoutScale);
-            var tabRects = new Dictionary<Tab, Rect>();
-            var tabOrder = new[] { Tab.Video, Tab.Audio, Tab.Controls, Tab.Packs };
             float totalTabsW = 0f;
+            var tabOrder = new[] { Tab.Video, Tab.Audio, Tab.Controls, Tab.Packs };
+            var tabAspects = new Dictionary<Tab, float>();
             foreach (var tab in tabOrder)
             {
                 var tex = _tabTextures[tab];
-                float aspect = tex != null && tex.height > 0 ? tex.width / (float)tex.height : 3.25f;
-                float tabW = tabHeight * aspect;
-                tabRects[tab] = new Rect(0, 0, tabW, tabHeight);
-                totalTabsW += tabW;
+                tabAspects[tab] = tex != null && tex.height > 0 ? tex.width / (float)tex.height : 3.25f;
+                totalTabsW += tabHeight * tabAspects[tab];
             }
             totalTabsW += tabGap * (tabOrder.Length - 1);
             float tabX = -totalTabsW / 2f;
-            float tabY = panelH / 2f + Mathf.Max(34f, 42f * layoutScale) - tabHeight;
+            float tabY = panelH / 2f + Mathf.Max(12f, 16f * layoutScale) - tabHeight / 2f;
             foreach (var tab in tabOrder)
             {
-                var r = tabRects[tab];
-                var go = _tabButtons[tab];
-                var rect = (RectTransform)go.transform;
-                rect.sizeDelta = new Vector2(r.width, r.height);
-                rect.anchoredPosition = new Vector2(tabX + r.width / 2f, tabY + tabHeight / 2f);
+                var rect = (RectTransform)_tabButtons[tab].transform;
+                float tabW = tabHeight * tabAspects[tab];
+                rect.sizeDelta = new Vector2(tabW, tabHeight);
+                rect.anchoredPosition = new Vector2(tabX + tabW / 2f, tabY);
                 UpdateTabVisual(tab);
-                tabX += r.width + tabGap;
+                tabX += tabW + tabGap;
             }
 
-            // BACK: bottom-left; APPLY: bottom-center of the panel.
+            // BACK bottom-left; APPLY bottom-center of panel.
             var back = _screenRoot.Find("Btn_Back") as RectTransform;
             if (back != null)
             {
-                float backAspect = _backTexture != null && _backTexture.height > 0
-                    ? _backTexture.width / (float)_backTexture.height : 3.6f;
-                float backH = Mathf.Max(48f, 62f * layoutScale);
-                float backW = Mathf.Min(Mathf.Max(260f, 320f * layoutScale), backH * backAspect);
-                back.sizeDelta = new Vector2(backW, backH);
+                float aspect = _backTexture != null && _backTexture.height > 0 ? _backTexture.width / (float)_backTexture.height : 3.6f;
+                float bh = Mathf.Max(48f, 62f * layoutScale);
+                back.sizeDelta = new Vector2(bh * aspect, bh);
                 back.anchorMin = new Vector2(0f, 0f);
                 back.anchorMax = new Vector2(0f, 0f);
                 back.pivot = new Vector2(0f, 0f);
@@ -652,96 +704,147 @@ namespace LatticeVeil.Game
             var apply = _panelRoot.Find("Btn_APPLY") as RectTransform;
             if (apply != null)
             {
-                float applyH = Mathf.Max(36f, 42f * layoutScale);
-                float applyW = Mathf.Max(220f, 280f * layoutScale);
-                float frameInsetBottom = Mathf.Max(24f, 30f * layoutScale);
+                float aspect = _applyTexture != null && _applyTexture.height > 0 ? _applyTexture.width / (float)_applyTexture.height : 5f;
+                float ah = Mathf.Max(34f, 44f * layoutScale);
+                float aw = Mathf.Min(ah * aspect, panelW * 0.4f);
+                apply.sizeDelta = new Vector2(aw, ah);
                 apply.anchorMin = new Vector2(0.5f, 0f);
                 apply.anchorMax = new Vector2(0.5f, 0f);
                 apply.pivot = new Vector2(0.5f, 0f);
-                apply.sizeDelta = new Vector2(applyW, applyH);
-                apply.anchoredPosition = new Vector2(0, frameInsetBottom);
+                apply.anchoredPosition = new Vector2(0, Mathf.Max(14f, 18f * layoutScale));
             }
 
-            // Content rows: two columns inside the panel frame.
-            float frameInsetX = Mathf.Max(44f, 104f * layoutScale);
-            float contentTop = Mathf.Max(48f, 58f * layoutScale);
-            float contentW = panelW - frameInsetX * 2f;
-            float columnGap = Mathf.Max(20f, 28f * layoutScale);
+            // Content: inset INSIDE the frame so nothing touches the border.
+            float insetX = Mathf.Max(52f, 118f * layoutScale);
+            float contentTop = Mathf.Max(56f, 78f * layoutScale);
+            float contentBottom = Mathf.Max(64f, 84f * layoutScale);
+            float contentW = panelW - insetX * 2f;
+            float columnGap = Mathf.Max(24f, 40f * layoutScale);
             float columnW = (contentW - columnGap) / 2f;
-            float rowGap = Mathf.Max(12f, 18f * layoutScale);
-            float rowH = Mathf.Max(34f, 38f * layoutScale);
+            float rowGap = Mathf.Max(12f, 16f * layoutScale);
 
-            foreach (var pagePair in _tabPages)
-                LayoutPage(pagePair.Value, frameInsetX, contentTop, columnW, columnGap, rowGap, rowH);
+            LayoutPage(_tabPages[Tab.Video], _videoWidgets, insetX, contentTop, contentBottom, columnW, columnGap, rowGap);
+            LayoutPage(_tabPages[Tab.Audio], _audioWidgets, insetX, contentTop, contentBottom, columnW, columnGap, rowGap);
+            LayoutStaticPage(_tabPages[Tab.Controls], insetX, contentTop);
+            LayoutStaticPage(_tabPages[Tab.Packs], insetX, contentTop);
         }
 
-        private void LayoutPage(RectTransform page, float insetX, float contentTop, float columnW, float columnGap, float rowGap, float rowH)
+        private void LayoutPage(RectTransform page, List<Widget> widgets, float insetX, float contentTop,
+            float contentBottom, float columnW, float columnGap, float rowGap)
         {
-            // Split rows: even order -> left column, odd order -> right column
-            // for the Video tab (MonoGame layout); others flow in one column.
-            int slot = 0;
-            foreach (Transform child in page)
+            if (page == null)
+                return;
+
+            float panelH = _panelRoot.rect.height;
+            foreach (var widget in widgets)
             {
-                var rect = child as RectTransform;
-                if (rect == null) continue;
+                float colX = insetX + (widget.Column == Col.Right ? columnW + columnGap : 0f);
+                float rowY = contentTop + widget.Row * (widget.Height + rowGap);
 
-                var rowRef = child.GetComponent<WidgetRowRef>();
-                var isNote = child.name == "Note";
-                if (isNote)
+                // Overflow guard: never lay a row past the content bottom.
+                float maxRows = Mathf.Max(1f, Mathf.Floor((panelH - contentTop - contentBottom + rowGap) / (widget.Height + rowGap)));
+                if (widget.Row >= maxRows)
+                    widget.Root.gameObject.SetActive(false);
+                else
+                    widget.Root.gameObject.SetActive(true);
+
+                widget.Root.sizeDelta = new Vector2(columnW, widget.Height);
+                widget.Root.anchoredPosition = new Vector2(colX, -rowY);
+            }
+
+            // Size slider tracks / dropdown boxes to the column width and
+            // position cycler buttons.
+            foreach (var widget in widgets)
+            {
+                var rect = widget.Root;
+                var cycler = rect.GetComponent<CyclerRefs>();
+                if (cycler != null)
                 {
-                    rect.anchoredPosition = new Vector2(insetX, -contentTop);
-                    continue;
+                    cycler.Prev.sizeDelta = new Vector2(34, 26);
+                    cycler.Prev.anchoredPosition = new Vector2(4, 3);
+                    cycler.Next.sizeDelta = new Vector2(34, 26);
+                    cycler.Next.anchoredPosition = new Vector2(columnW - 38, 3);
+                    cycler.Value.sizeDelta = new Vector2(columnW - 90, 26);
+                    cycler.Value.anchoredPosition = new Vector2(columnW / 2f, 16);
                 }
-
-                int col = slot % 2;
-                int rowIdx = slot / 2;
-                float x = insetX + col * (columnW + columnGap);
-                float y = contentTop + rowIdx * (rowH + rowGap);
-                rect.anchoredPosition = new Vector2(x, -y);
-
-                // Size children of the row.
-                if (rowRef != null)
+                else
                 {
-                    if (rowRef.Prev != null)
+                    foreach (Transform child in rect)
                     {
-                        rowRef.Prev.sizeDelta = new Vector2(40, rowH);
-                        rowRef.Prev.anchorMin = new Vector2(0f, 0f);
-                        rowRef.Prev.anchorMax = new Vector2(0f, 0f);
-                        rowRef.Prev.pivot = new Vector2(0f, 0f);
-                        rowRef.Prev.anchoredPosition = new Vector2(columnW * 0.45f, 0);
-
-                        rowRef.Next.sizeDelta = new Vector2(40, rowH);
-                        rowRef.Next.anchorMin = new Vector2(1f, 0f);
-                        rowRef.Next.anchorMax = new Vector2(1f, 0f);
-                        rowRef.Next.pivot = new Vector2(1f, 0f);
-                        rowRef.Next.anchoredPosition = new Vector2(0, 0);
-
-                        var valueRect = rowRef.ValueRect;
-                        if (valueRect != null)
+                        if (child.name == "Box")
                         {
-                            valueRect.anchorMin = new Vector2(0f, 0f);
-                            valueRect.anchorMax = new Vector2(0f, 0f);
-                            valueRect.pivot = new Vector2(0.5f, 0.5f);
-                            valueRect.sizeDelta = new Vector2(columnW * 0.35f, rowH);
-                            valueRect.anchoredPosition = new Vector2(columnW * 0.625f, rowH / 2f);
+                            var boxRect = (RectTransform)child;
+                            boxRect.offsetMin = new Vector2(0, 0);
+                            boxRect.offsetMax = new Vector2(0, 32);
                         }
                     }
-                    else if (rowRef.Slider != null)
-                    {
-                        var sliderRect = (RectTransform)rowRef.Slider.transform;
-                        sliderRect.anchorMin = new Vector2(0f, 0f);
-                        sliderRect.anchorMax = new Vector2(1f, 0f);
-                        sliderRect.pivot = new Vector2(0f, 0f);
-                        sliderRect.offsetMin = new Vector2(0, 0);
-                        sliderRect.offsetMax = new Vector2(0, 8);
-                    }
                 }
-
-                slot++;
             }
         }
 
-        /// <summary>RectTransforms created without WidgetRowRef get one lazily for layout.</summary>
+        private void LayoutStaticPage(RectTransform page, float insetX, float contentTop)
+        {
+            if (page == null)
+                return;
+            foreach (Transform child in page)
+            {
+                var rect = (RectTransform)child;
+                if (rect.anchorMax.x > 0.9f)
+                {
+                    rect.anchoredPosition = new Vector2(insetX, -contentTop - 34f);
+                    rect.offsetMin = new Vector2(insetX, 0);
+                    rect.offsetMax = new Vector2(-insetX, 0);
+                }
+                else
+                {
+                    rect.anchoredPosition = new Vector2(insetX, -contentTop);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Shared UI helpers
+        // ------------------------------------------------------------------
+
+        private static void Stretch(RectTransform rect)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+        }
+
+        private static void Anchor(RectTransform rect, Vector2 anchor, Vector2 anchorMax, Vector2 pos)
+        {
+            rect.anchorMin = anchor;
+            rect.anchorMax = anchorMax;
+            rect.pivot = anchor;
+            rect.anchoredPosition = pos;
+        }
+
+        private Graphic AddStretchedImage(RectTransform parent, Texture2D texture, Color color, bool swallow)
+        {
+            // A GameObject can carry only ONE Graphic: RawImage for textures,
+            // plain Image for flat colors.
+            var go = new GameObject(texture != null ? "ImgTex" : "ImgColor", typeof(RectTransform));
+            var rect = (RectTransform)go.transform;
+            rect.SetParent(parent, false);
+            Stretch(rect);
+
+            if (texture != null)
+            {
+                var raw = go.AddComponent<RawImage>();
+                raw.texture = texture;
+                raw.raycastTarget = swallow;
+                return raw;
+            }
+
+            var img = go.AddComponent<Image>();
+            img.color = color;
+            img.raycastTarget = swallow;
+            return img;
+        }
+
         private Text CreateLabel(RectTransform parent, string content, int size, Color color)
         {
             var go = new GameObject("Text", typeof(RectTransform));
@@ -758,22 +861,12 @@ namespace LatticeVeil.Game
             return text;
         }
 
-        /// <summary>
-        /// Legacy Text needs a font. Arial (the built-in dynamic default) is
-        /// used when present so we never generate/ship a font — Unity provides it.
-        /// </summary>
         private static Font _optionsFont;
-        private static Font OptionsFont
-        {
-            get
-            {
-                if (_optionsFont == null)
-                    _optionsFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-                return _optionsFont;
-            }
-        }
+        private static Font OptionsFont => _optionsFont != null
+            ? _optionsFont
+            : _optionsFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
-        private GameObject CreateTexturedButton(string name, Texture2D texture, string fallbackLabel, Action onClick)
+        private GameObject CreateTextureButton(string name, Texture2D texture, string fallbackLabel, Action onClick)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer));
             var rect = (RectTransform)go.transform;
@@ -781,79 +874,57 @@ namespace LatticeVeil.Game
             rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(0.5f, 0.5f);
 
+            Graphic target;
             if (texture != null)
             {
                 var raw = go.AddComponent<RawImage>();
                 raw.texture = texture;
-                var btn = go.AddComponent<Button>();
-                btn.targetGraphic = raw;
-                btn.transition = Selectable.Transition.ColorTint;
-                var colors = btn.colors;
-                colors.normalColor = Color.white;
-                colors.highlightedColor = HoverTint;
-                colors.pressedColor = new Color(0.85f, 0.85f, 0.85f, 1f);
-                colors.fadeDuration = 0.08f;
-                btn.colors = colors;
-                btn.onClick.AddListener(() => onClick());
+                target = raw;
             }
             else
             {
                 var img = go.AddComponent<Image>();
                 img.color = new Color(0.16f, 0.16f, 0.18f, 0.95f);
-                var btn = go.AddComponent<Button>();
-                btn.targetGraphic = img;
-                btn.transition = Selectable.Transition.ColorTint;
-                btn.colors = new ColorBlock
-                {
-                    normalColor = Color.white,
-                    highlightedColor = HoverTint,
-                    pressedColor = new Color(0.85f, 0.85f, 0.85f, 1f),
-                    disabledColor = Color.gray,
-                    colorMultiplier = 1f,
-                    fadeDuration = 0.08f
-                };
+                target = img;
                 var label = CreateLabel(rect, fallbackLabel, 22, TextColor);
-                var labelRect = (RectTransform)label.transform;
-                labelRect.anchorMin = Vector2.zero;
-                labelRect.anchorMax = Vector2.one;
-                labelRect.offsetMin = Vector2.zero;
-                labelRect.offsetMax = Vector2.zero;
+                Stretch((RectTransform)label.transform);
                 label.alignment = TextAnchor.MiddleCenter;
-                btn.onClick.AddListener(() => onClick());
             }
 
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = target;
+            btn.transition = Selectable.Transition.ColorTint;
+            btn.colors = Block(HoverTint);
+            btn.onClick.AddListener(() => onClick());
             return go;
         }
 
         private GameObject CreateTextButton(string name, string label, Action onClick)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
-            var rect = (RectTransform)go.transform;
             var img = go.GetComponent<Image>();
-            img.color = ControlBg;
+            img.color = new Color(0.13f, 0.13f, 0.15f, 1f);
             var btn = go.GetComponent<Button>();
             btn.targetGraphic = img;
             btn.transition = Selectable.Transition.ColorTint;
-            btn.colors = new ColorBlock
-            {
-                normalColor = Color.white,
-                highlightedColor = HoverTint,
-                pressedColor = new Color(0.85f, 0.85f, 0.85f, 1f),
-                disabledColor = Color.gray,
-                colorMultiplier = 1f,
-                fadeDuration = 0.08f
-            };
+            btn.colors = Block(HoverTint);
             if (onClick != null)
                 btn.onClick.AddListener(() => onClick());
 
-            var text = CreateLabel(rect, label, 18, TextColor);
-            var textRect = (RectTransform)text.transform;
-            textRect.anchorMin = Vector2.zero;
-            textRect.anchorMax = Vector2.one;
-            textRect.offsetMin = Vector2.zero;
-            textRect.offsetMax = Vector2.zero;
+            var text = CreateLabel((RectTransform)go.transform, label, 17, TextColor);
+            Stretch((RectTransform)text.transform);
             text.alignment = TextAnchor.MiddleCenter;
             return go;
+        }
+
+        private static ColorBlock Block(Color highlight)
+        {
+            var cb = ColorBlock.defaultColorBlock;
+            cb.normalColor = Color.white;
+            cb.highlightedColor = highlight;
+            cb.pressedColor = new Color(0.85f, 0.85f, 0.85f, 1f);
+            cb.fadeDuration = 0.08f;
+            return cb;
         }
 
         private void UpdateTabVisual(Tab tab)
@@ -869,6 +940,7 @@ namespace LatticeVeil.Game
         private void SelectTab(Tab tab)
         {
             _tab = tab;
+            CloseDropdownList();
             foreach (var pair in _tabButtons)
                 UpdateTabVisual(pair.Key);
             foreach (var pair in _tabPages)
@@ -876,37 +948,34 @@ namespace LatticeVeil.Game
         }
 
         // ------------------------------------------------------------------
-        // Apply / close (MonoGame Apply/ExitOptions semantics)
+        // Apply / close
         // ------------------------------------------------------------------
 
         private void Apply()
         {
             _working.Fullscreen = _fullscreen;
             _working.VSync = _vsync;
-            _working.GuiScale = GuiScaleOptions[Mathf.Clamp(_guiScaleIndex, 0, GuiScaleOptions.Length - 1)].value;
-            _working.QualityPreset = QualityOptions[Mathf.Clamp(_qualityIndex, 0, QualityOptions.Length - 1)];
-            _working.Brightness = _brightness;
-            _working.FieldOfView = _fov;
-            _working.RenderDistanceChunks = _renderDistance;
-            if (_resolutionIndex >= 0 && _resolutionIndex < ResolutionOptions.Length)
+            _working.GuiScale = GuiScales[Mathf.Clamp(_guiScaleIndex, 0, GuiScales.Length - 1)].value;
+            _working.QualityPreset = Qualities[Mathf.Clamp(_qualityIndex, 0, Qualities.Length - 1)];
+            _working.Brightness = Mathf.Clamp(_brightness, 0.5f, 1.5f);
+            _working.FieldOfView = Mathf.Clamp(_fov, 60, 110);
+            _working.RenderDistanceChunks = Mathf.Clamp(_renderDistance, 4, 16);
+            _working.MasterVolume = Mathf.Clamp01(_master);
+            _working.MusicVolume = Mathf.Clamp01(_music);
+            _working.SfxVolume = Mathf.Clamp01(_sfx);
+            if (_resolutionIndex >= 0 && _resolutionIndex < Resolutions.Length)
             {
-                _working.ResolutionWidth = ResolutionOptions[_resolutionIndex].w;
-                _working.ResolutionHeight = ResolutionOptions[_resolutionIndex].h;
+                _working.ResolutionWidth = Resolutions[_resolutionIndex].w;
+                _working.ResolutionHeight = Resolutions[_resolutionIndex].h;
             }
 
             CopyInto(_working, _settings);
-            _settings.Save(null);
+            _settings.Save(null); // same options.lvc format, unchanged
             Debug.Log("Options applied and saved to options.lvc.");
 
-            // Window mode/resolution now (fullscreen comes back as an option;
-            // for now keep windowed to honor the non-borderless default).
-            if (!_working.Fullscreen)
-                Screen.SetResolution(_working.ResolutionWidth, _working.ResolutionHeight, FullScreenMode.Windowed);
-
+            SettingsBehavior.Apply(_settings);
             Close();
         }
-
-        private bool _closed;
 
         private void Close()
         {
@@ -914,36 +983,17 @@ namespace LatticeVeil.Game
                 return;
             _closed = true;
 
+            CloseDropdownList();
             Debug.Log("Options screen closed.");
-            // The UI lives under _screenRoot (parented to the canvas, not to
-            // this component), so tearing down the screen means destroying it.
             if (_screenRoot != null)
                 Destroy(_screenRoot.gameObject);
             Destroy(gameObject);
             _onClosed?.Invoke();
         }
 
-        // ------------------------------------------------------------------
-        // Settings helpers
-        // ------------------------------------------------------------------
-
-        private static GameSettings CloneSettings(GameSettings source)
+        private static void CopyFrom(GameSettings from, GameSettings to)
         {
-            return new GameSettings
-            {
-                Fullscreen = source.Fullscreen,
-                VSync = source.VSync,
-                ResolutionWidth = source.ResolutionWidth,
-                ResolutionHeight = source.ResolutionHeight,
-                GuiScale = source.GuiScale,
-                QualityPreset = source.QualityPreset,
-                Brightness = source.Brightness,
-                FieldOfView = source.FieldOfView,
-                RenderDistanceChunks = source.RenderDistanceChunks,
-                MasterVolume = source.MasterVolume,
-                MusicVolume = source.MusicVolume,
-                SfxVolume = source.SfxVolume
-            };
+            CopyInto(from, to);
         }
 
         private static void CopyInto(GameSettings from, GameSettings to)
@@ -964,12 +1014,22 @@ namespace LatticeVeil.Game
 
         private static int FindGuiScaleIndex(float value)
         {
-            for (int i = 0; i < GuiScaleOptions.Length; i++)
+            for (int i = 0; i < GuiScales.Length; i++)
             {
-                if (Mathf.Approximately(GuiScaleOptions[i].value, value))
+                if (Mathf.Approximately(GuiScales[i].value, value))
                     return i;
             }
-            return 1; // LARGE default
+            return 1;
+        }
+
+        private static int FindResolutionIndex(int width, int height)
+        {
+            for (int i = 0; i < Resolutions.Length; i++)
+            {
+                if (Resolutions[i].w == width && Resolutions[i].h == height)
+                    return i;
+            }
+            return 0;
         }
 
         private static string NormalizeQuality(string value)
@@ -978,23 +1038,49 @@ namespace LatticeVeil.Game
             return quality is "LOW" or "MEDIUM" or "HIGH" or "ULTRA" ? quality : "MEDIUM";
         }
 
-        private void Update()
+        /// <summary>Per-widget helper: cycler buttons + value text.</summary>
+        private sealed class CyclerRefs : MonoBehaviour
         {
-            if (Input.GetKeyDown(KeyCode.Escape))
-                Close();
-        }
-
-        /// <summary>Lazily attached per-row helper so Layout() can reach widget parts.</summary>
-        private sealed class WidgetRowRef : MonoBehaviour
-        {
-            public Text ValueText;
-            public RectTransform ValueRect => ValueText != null ? (RectTransform)ValueText.transform : null;
             public RectTransform Prev;
             public RectTransform Next;
-            public Slider Slider;
-            public Func<string> ValueLabel;
+            public RectTransform Value;
 
-            public void Store(Text valueText) { ValueText = valueText; }
+            public void Init(RectTransform prev, RectTransform next, RectTransform value)
+            {
+                Prev = prev;
+                Next = next;
+                Value = value;
+            }
+        }
+
+        /// <summary>
+        /// MonoGame-style slider drag: clicking/dragging the track sets the
+        /// value from the pointer position (Slider.Update semantics).
+        /// </summary>
+        private sealed class SliderDragHandler : MonoBehaviour, IPointerDownHandler, IDragHandler
+        {
+            public RectTransform Track;
+            public RectTransform Fill;
+            public Func<float> Get;
+            public Action<float> Set;
+            public Action OnChanged;
+            public Action ValueLabel;
+
+            public void OnPointerDown(PointerEventData eventData) { Drag(eventData); }
+            public void OnDrag(PointerEventData eventData) { Drag(eventData); }
+
+            private void Drag(PointerEventData eventData)
+            {
+                if (Track == null)
+                    return;
+                Vector2 local;
+                RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                    Track, eventData.position, eventData.pressEventCamera, out local);
+                var v = Mathf.Clamp01((local.x + Track.rect.width / 2f) / Mathf.Max(1f, Track.rect.width));
+                Set(v);
+                OnChanged?.Invoke();
+                ValueLabel?.Invoke();
+            }
         }
     }
 }

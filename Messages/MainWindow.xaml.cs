@@ -390,6 +390,12 @@ namespace LatticeVeil.Messages
         {
             var svc = App.Service;
             if (svc == null) return;
+            // Preserve the row highlight through rebuilds: remember what is
+            // selected (real conv, or the active draft) and re-select it
+            // below. Re-selecting the same conv is a no-op in the selection
+            // handler, so this cannot cause refetch loops.
+            string wantSel = _current ?? (!string.IsNullOrEmpty(_draftFriendIdActive) && _current == null
+                ? "draft:" + _draftFriendIdActive : null);
             // Chats tab shows only people you actually have messages with —
             // "chatted with" (a conversation with no messages yet is
             // reachable through the Friends tab instead, mirroring the site).
@@ -451,6 +457,14 @@ namespace LatticeVeil.Messages
                 });
             }
             if (draftRow != null) _convs.Insert(0, draftRow);
+            if (wantSel != null)
+            {
+                var sel = wantSel.StartsWith("draft:", StringComparison.Ordinal)
+                    ? _convs.FirstOrDefault(c => c.ConversationId == null && c.OtherId == _draftFriendIdActive)
+                    : _convs.FirstOrDefault(c => c.ConversationId == wantSel);
+                if (sel != null && !ReferenceEquals(ConvList.SelectedItem, sel))
+                    ConvList.SelectedItem = sel;
+            }
             ConvEmpty.Visibility = _convs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
 
@@ -461,6 +475,9 @@ namespace LatticeVeil.Messages
                 if (vm.ConversationId == null)
                 {
                     // Draft thread row clicked: restore draft composition.
+                    // (Re-selection of the SAME draft — e.g. from the 2s timer
+                    // re-establishing selection — is a no-op.)
+                    if (vm.OtherId == _draftFriendIdActive) return;
                     _current = null;
                     _draftFriendIdActive = vm.OtherId;
                     _draftBackingConvId = null;
@@ -474,6 +491,9 @@ namespace LatticeVeil.Messages
                     _lastRenderedSig = "draft:0";
                     return;
                 }
+                // Already-open chat re-selected (timer keeps it fresh) — do
+                // NOT refetch; that would turn list rebuilds into 2s polls.
+                if (vm.ConversationId == _current) return;
                 _draftFriendIdActive = null;
                 _current = vm.ConversationId;
                 ActiveConversation = _current;
@@ -724,14 +744,17 @@ namespace LatticeVeil.Messages
                 if (_current == null)
                 {
                     // First message of a draft thread creates the conversation.
+                    // Order matters for perceived latency: ensure -> SEND ->
+                    // reconcile. The heavy bootstrap runs AFTER the message is
+                    // already on its way.
                     var convId = await App.Service.EnsureConversationAsync(_draftFriendIdActive);
-                    await App.Service.BootstrapAsync();
                     _draftBackingConvId = convId;
                     _current = convId;
                     ActiveConversation = convId;
                     DelChatBtn.Visibility = Visibility.Visible;
 
                     await App.Service.SendAsync(convId, text);
+                    await App.Service.BootstrapAsync();
 
                     // The draft row becomes the REAL row: the thread STAYS in
                     // Chats now that it has messages. RefreshConvList filters

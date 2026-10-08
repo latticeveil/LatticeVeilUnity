@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using LatticeVeil.Core;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -55,8 +56,56 @@ namespace LatticeVeil.Game
 
         private void Awake()
         {
+            EnforceWindowedDefault();
+            StartCoroutine(SetWindowTitleWhenReady());
             BuildUi();
         }
+
+        /// <summary>
+        /// The game must NOT be borderless by default: force normal windowed
+        /// mode (borders + title bar). Borderless/fullscreen returns later as
+        /// an explicit user option in the Options screen.
+        /// </summary>
+        private static void EnforceWindowedDefault()
+        {
+            if (Screen.fullScreenMode != FullScreenMode.Windowed)
+            {
+                Debug.Log($"MainMenuController: forcing windowed mode (was {Screen.fullScreenMode}).");
+                Screen.fullScreenMode = FullScreenMode.Windowed;
+            }
+        }
+
+        /// <summary>
+        /// Sets the player window title to "LatticeVeil - V#" (Unity names the
+        /// window after the product by default). Retries while the player is
+        /// still creating its window; a no-op when embedded, where the title
+        /// is not visible and the handle may never resolve.
+        /// </summary>
+        private System.Collections.IEnumerator SetWindowTitleWhenReady()
+        {
+            var title = GameVersion.WindowTitle;
+
+            for (var attempt = 0; attempt < 40; attempt++) // up to ~10s
+            {
+                var hwnd = IntPtr.Zero;
+                try { hwnd = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle; }
+                catch { /* retry */ }
+
+                if (hwnd != IntPtr.Zero)
+                {
+                    if (!SetWindowTextW(hwnd, title))
+                        Debug.LogWarning("MainMenuController: SetWindowText failed for the game window title.");
+                    yield break;
+                }
+
+                yield return new WaitForSeconds(0.25f);
+            }
+
+            Debug.LogWarning("MainMenuController: window handle never appeared; title stays default.");
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool SetWindowTextW(IntPtr hWnd, string text);
 
         private void Update()
         {

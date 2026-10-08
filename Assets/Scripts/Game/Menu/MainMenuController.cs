@@ -28,6 +28,8 @@ namespace LatticeVeil.Game
     public sealed class MainMenuController : MonoBehaviour
     {
         private static readonly Color GlowColor = new Color32(188, 232, 255, 76);
+        private const int DefaultWindowWidth = 1440;
+        private const int DefaultWindowHeight = 900;
         private static readonly Color PanelBg = new Color(30f / 255f, 30f / 255f, 30f / 255f);
         private static readonly Color DisabledText = new Color(160f / 255f, 160f / 255f, 160f / 255f);
 
@@ -65,14 +67,15 @@ namespace LatticeVeil.Game
         /// The game must NOT be borderless by default: force normal windowed
         /// mode (borders + title bar). Borderless/fullscreen returns later as
         /// an explicit user option in the Options screen.
+        ///
+        /// Verified on Windows: the player can boot with a WS_POPUP (borderless)
+        /// window even when the serialized fullscreenMode is Windowed, and
+        /// assigning Screen.fullScreenMode alone does NOT recreate the window —
+        /// only Screen.SetResolution with the mode reliably applies it.
         /// </summary>
         private static void EnforceWindowedDefault()
         {
-            if (Screen.fullScreenMode != FullScreenMode.Windowed)
-            {
-                Debug.Log($"MainMenuController: forcing windowed mode (was {Screen.fullScreenMode}).");
-                Screen.fullScreenMode = FullScreenMode.Windowed;
-            }
+            Screen.SetResolution(DefaultWindowWidth, DefaultWindowHeight, FullScreenMode.Windowed);
         }
 
         /// <summary>
@@ -95,6 +98,8 @@ namespace LatticeVeil.Game
                 {
                     if (!SetWindowTextW(hwnd, title))
                         Debug.LogWarning("MainMenuController: SetWindowText failed for the game window title.");
+
+                    EnsureWindowFrame(hwnd);
                     yield break;
                 }
 
@@ -106,6 +111,50 @@ namespace LatticeVeil.Game
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool SetWindowTextW(IntPtr hWnd, string text);
+
+        /// <summary>
+        /// Verified on Windows: this player can create its window as WS_POPUP
+        /// (no caption, no thickframe) even with FullScreenMode.Windowed set,
+        /// and Unity's Screen APIs do not rebuild the frame. As a last-resort
+        /// for standalone (non-embedded) play, add the missing WS_CAPTION /
+        /// WS_THICKFRAME style to OUR OWN top-level window and reapply it to
+        /// refresh the non-client frame. Only runs when the window is borderless,
+        /// so a correct player never gets touched, and never runs when hosted
+        /// inside the launcher (the launcher owns that window then).
+        /// </summary>
+        private static void EnsureWindowFrame(IntPtr hwnd)
+        {
+            const int GWL_STYLE = -16;
+            const long WS_CAPTION = 0x00C00000;
+            const long WS_THICKFRAME = 0x00040000;
+            const long WS_MINIMIZEBOX = 0x00020000;
+            const long WS_MAXIMIZEBOX = 0x00010000;
+            const long WS_SYSMENU = 0x00080000;
+            const uint SWP_FRAMECHANGED = 0x0020;
+            const uint SWP_NOMOVE = 0x0002;
+            const uint SWP_NOSIZE = 0x0001;
+            const uint SWP_NOZORDER = 0x0004;
+
+            var style = GetWindowLongW(hwnd, GWL_STYLE);
+            if ((style & WS_CAPTION) != 0 && (style & WS_THICKFRAME) != 0)
+                return; // already framed — nothing to do
+
+            Debug.Log($"MainMenuController: player window is borderless (style 0x{style:X}); adding caption + thickframe.");
+
+            var newStyle = style | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+            SetWindowLongW(hwnd, GWL_STYLE, newStyle);
+            SetWindowPosW(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
+        }
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+        private static extern long GetWindowLongW(IntPtr hWnd, int index);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+        private static extern long SetWindowLongW(IntPtr hWnd, int index, long newStyle);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowPos")]
+        private static extern bool SetWindowPosW(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
 
         private void Update()
         {

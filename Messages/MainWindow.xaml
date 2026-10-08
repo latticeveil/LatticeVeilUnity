@@ -115,10 +115,10 @@
                 <TextBlock Text="{Binding UnreadText}" FontSize="12" FontWeight="ExtraBold" Foreground="Black"/>
               </Border>
             </Grid>
-            <!-- profile card affordance: clicking opens the PROFILE on the
-                 right, where the banner/avatar/about are displayed -->
-            <TextBlock Text="👤 view profile" FontSize="12" Foreground="{StaticResource AccentBrush}"
-                       Margin="0,6,0,0"/>
+            <!-- direct message button: opens the thread on the Chats side -->
+            <Button Content="💬 Message" Style="{StaticResource AccentBtn}"
+                    FontSize="12" Padding="10,3" HorizontalAlignment="Left"
+                    Margin="0,6,0,0" Click="FriendMsgBtn_Click"/>
           </StackPanel>
         </Grid>
       </Border>
@@ -350,49 +350,6 @@
         </Border>
 
         <TextBlock x:Name="ErrText" Grid.Row="3" Foreground="#FF6B6B" FontSize="12" Margin="12,4" TextWrapping="Wrap" Visibility="Collapsed"/>
-
-        <!-- Friend PROFILE (right side): banner + avatar + about + Message btn.
-             Shown when a Friends-tab card is clicked; hidden by anything that
-             opens a real chat. Last-but-one child so it sits above content
-             but below the delete-confirm overlay (declared after it). -->
-        <Grid x:Name="ProfilePane" Grid.Row="0" Grid.RowSpan="4"
-              Background="{StaticResource PanelBrush}" Visibility="Collapsed">
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-          </Grid.RowDefinitions>
-          <Border x:Name="ProfBanner" Grid.Row="0" Height="110" CornerRadius="0,0,10,10"
-                  Background="{Binding ProfileBannerBrush}">
-            <!-- (brush set from the shared frozen-cache path — raw URL
-                 ImageSource bindings don't resolve in this pane) -->
-          </Border>
-          <StackPanel Grid.Row="1" Margin="16,-34,16,0">
-            <Grid>
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <Grid Width="68" Height="68">
-                <Border CornerRadius="34" Background="#101512" Visibility="{Binding ProfileInitialVisible}">
-                  <TextBlock Text="{Binding ProfileInitial}" FontSize="26" FontWeight="Bold"
-                             HorizontalAlignment="Center" VerticalAlignment="Center"
-                             Foreground="{StaticResource AccentBrush}"/>
-                </Border>
-                <Ellipse Width="68" Height="68" Visibility="{Binding ProfilePictureVisible}"
-                         Fill="{Binding ProfileAvatarBrush}"/>
-              </Grid>
-              <StackPanel Grid.Column="1" Margin="14,40,0,0" VerticalAlignment="Top">
-                <TextBlock x:Name="ProfName" FontWeight="Bold" FontSize="19"/>
-              </StackPanel>
-            </Grid>
-            <Button x:Name="ProfMessageBtn" Content="Message" Style="{StaticResource AccentBtn}"
-                    Padding="16,7" Margin="0,12,0,0" HorizontalAlignment="Left" Click="ProfMessage_Click"/>
-            <TextBlock x:Name="ProfAbout" Text="" FontSize="13" Foreground="{StaticResource TextBrush}"
-                       TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed"/>
-          </StackPanel>
-          <StackPanel Grid.Row="2" Margin="16,8"/>
-        </Grid>
 
         <!-- Inline delete confirmation: LAST child so it renders ON TOP of
               the message area / composer, with an opaque backdrop -->

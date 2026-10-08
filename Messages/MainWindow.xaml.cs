@@ -15,29 +15,6 @@ namespace LatticeVeil.Messages
 {
     public partial class MainWindow : Window
     {
-        // Currently displayed friend profile (right-side pane).
-        private string _profileFriendId;
-
-        // INotifySurface for the profile pane bindings (WPF needs public
-        // properties; a minimal INPC impl keeps banner/avatar reactive).
-        public event System.ComponentModel.PropertyChangedEventHandler PropertyChanged;
-        private void Raise(string name) => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
-
-        string _profileBanner, _profilePicture, _profileInitial;
-        public string ProfileBanner { get => _profileBanner; set { _profileBanner = value; Raise(nameof(ProfileBanner)); Raise(nameof(ProfileBannerVisible)); } }
-        public string ProfilePicture { get => _profilePicture; set { _profilePicture = value; Raise(nameof(ProfilePicture)); Raise(nameof(ProfilePictureVisible)); } }
-        public string ProfileInitial { get => _profileInitial; set { _profileInitial = value; Raise(nameof(ProfileInitial)); } }
-        public Visibility ProfileBannerVisible => string.IsNullOrEmpty(_profileBanner) ? Visibility.Collapsed : Visibility.Visible;
-        public Visibility ProfilePictureVisible => string.IsNullOrEmpty(_profilePicture) ? Visibility.Collapsed : Visibility.Visible;
-        public Visibility ProfileInitialVisible => string.IsNullOrEmpty(_profilePicture) ? Visibility.Visible : Visibility.Collapsed;
-
-        // SAME rendering path as the friends/conversation lists: the frozen
-        // ImageBrush cache. Raw ImageSource="{Binding url}" did not resolve
-        // here, so the pane binds ready-made brushes instead.
-        Brush _profileBannerBrush, _profileAvatarBrush;
-        public Brush ProfileBannerBrush { get => _profileBannerBrush; set { _profileBannerBrush = value; Raise(nameof(ProfileBannerBrush)); } }
-        public Brush ProfileAvatarBrush { get => _profileAvatarBrush; set { _profileAvatarBrush = value; Raise(nameof(ProfileAvatarBrush)); } }
-
         public static string ActiveConversation;
         public static bool IsHidden => !_isOpen || Application.Current == null || !Application.Current.Windows.OfType<MainWindow>().Any(w => w.IsVisible);
         private static bool _isOpen;
@@ -500,7 +477,6 @@ namespace LatticeVeil.Messages
                 _draftFriendIdActive = null;
                 _current = vm.ConversationId;
                 ActiveConversation = _current;
-                HideProfile();
                 ChatTitle.Text = vm.Title;
                 // Re-enable the composer — a previously open CLEAR chat may
                 // have left it disabled.
@@ -529,7 +505,6 @@ namespace LatticeVeil.Messages
 
         private void ShowTab(bool friends)
         {
-            HideProfile();
             _onFriendsTab = friends;
             ChatsPane.Visibility = friends ? Visibility.Collapsed : Visibility.Visible;
             FriendsPane.Visibility = friends ? Visibility.Visible : Visibility.Collapsed;
@@ -585,49 +560,22 @@ namespace LatticeVeil.Messages
         }
 
         // Clicking a friend card: show their profile on the right.
+        // Clicking a friend ROW opens the thread directly (no profile pane —
+        // profiles live in the launcher's Friends modal / the website).
         private void FriendList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_onFriendsTab && FriendList.SelectedItem is ConvVm vm)
             {
                 FriendList.SelectedItem = null;
-                ShowProfile(vm.OtherId, vm.Title, vm.Picture, vm.Banner, vm.About);
+                _ = OpenThreadWithFriendAsync(vm.OtherId);
             }
         }
 
-        // ------------- friend profile pane (right side, like the site) -------------
-        private void ShowProfile(string friendId, string name, string picture, string banner, string about)
+        // The 💬 Message button on a friend row (same behavior as row click).
+        private async void FriendMsgBtn_Click(object sender, RoutedEventArgs e)
         {
-            _profileFriendId = friendId;
-            ProfileBanner = banner;
-            ProfilePicture = picture;
-            ProfileBannerBrush = string.IsNullOrEmpty(banner) ? null : GetAvatarBrush(banner);
-            ProfileAvatarBrush = string.IsNullOrEmpty(picture) ? null : GetAvatarBrush(picture);
-            ProfileInitial = string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1).ToUpperInvariant();
-            ProfName.Text = name;
-            ProfAbout.Text = string.IsNullOrEmpty(about) ? "No about yet." : about;
-            ProfAbout.Visibility = Visibility.Visible;
-            // Message button reads "Open chat" when a thread already exists.
-            var existing = App.Service.Conversations.FirstOrDefault(c => c.OtherId == friendId);
-            ProfMessageBtn.Content = existing != null ? "Open chat" : "Message";
-            ProfilePane.Visibility = Visibility.Visible;
-        }
-
-        private void HideProfile()
-        {
-            ProfilePane.Visibility = Visibility.Collapsed;
-            _profileFriendId = null;
-        }
-
-        // Message/Open chat from the profile pane: opens a THREAD in the
-        // Chats section. For a friend with no messages yet this creates a
-        // draft thread row in Chats — the server conversation is only created
-        // when the first message is actually sent (matches the website).
-        private async void ProfMessage_Click(object sender, RoutedEventArgs e)
-        {
-            var friendId = _profileFriendId;
-            if (string.IsNullOrEmpty(friendId)) return;
-            HideProfile();
-            await OpenThreadWithFriendAsync(friendId);
+            if ((sender as FrameworkElement)?.DataContext is ConvVm vm && !string.IsNullOrEmpty(vm.OtherId))
+                await OpenThreadWithFriendAsync(vm.OtherId);
         }
 
         /// <summary>

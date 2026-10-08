@@ -390,6 +390,7 @@ namespace LatticeVeil.Launcher
             if (_gameProcess != null && _gameProcess.HasExited)
             {
                 _log.Info("Game process exited.");
+                EmbeddedGameHost.End(_log);
                 _gameProcess = null;
                 _isLaunching = false;
 
@@ -401,6 +402,12 @@ namespace LatticeVeil.Launcher
                     _log.Info("Returned to launcher after game exit.");
                 }
             }
+
+            // Embedded play: keep the game window filling the launcher client
+            // area every frame while it runs inside the launcher (no-op when
+            // the game was launched in its own window).
+            if (_gameProcess != null && !_gameProcess.HasExited)
+                EmbeddedGameHost.Poll(_gameProcess, _log);
 
             // Update log display periodically (keep the same string instance
             // while unchanged so log-text selection survives between frames).
@@ -3374,6 +3381,14 @@ namespace LatticeVeil.Launcher
                 }
 
                 rowY += rowHeight + 10;
+                var newEmbed = DrawSwitch(new Rect(contentX, rowY, contentWidth, rowHeight), _settings.EmbedGameInLauncher, "Run Game Inside Launcher", "Play the game embedded in the launcher window (Unity versions only; the legacy exe opens in its own window)");
+                if (newEmbed != _settings.EmbedGameInLauncher)
+                {
+                    _settings.EmbedGameInLauncher = newEmbed;
+                    _settings.Save(_log);
+                }
+
+                rowY += rowHeight + 10;
                 var newDarkMode = DrawSwitch(new Rect(contentX, rowY, contentWidth, rowHeight), _settings.DarkMode, "Dark Mode", "Use pure OLED dark color theme");
                 if (newDarkMode != _settings.DarkMode)
                 {
@@ -5472,6 +5487,7 @@ namespace LatticeVeil.Launcher
                         _log.Warn($"Failed to kill game process: {ex.Message}");
                     }
                 }
+                EmbeddedGameHost.End(_log);
                 _isLaunching = false;
                 return;
             }
@@ -5540,6 +5556,29 @@ namespace LatticeVeil.Launcher
                     return;
                 }
 
+                // Embedded play: run the game window INSIDE the launcher window
+                // (one program — the launcher hosts the game as a child window
+                // instead of a separate top-level window). Only Unity player
+                // builds accept -parentHWND; the legacy MonoGame exe is skipped
+                // and keeps opening in its own window. The editor is excluded
+                // so test-launches never parent a player inside the editor.
+                IntPtr launcherHwnd = IntPtr.Zero;
+                try { launcherHwnd = LauncherWindowInitializer.MainWindowHandle; }
+                catch { /* no handle — launch as a separate window */ }
+                bool embedGame = !Application.isEditor
+                    && _settings.EmbedGameInLauncher
+                    && launcherHwnd != IntPtr.Zero
+                    && EmbeddedGameHost.IsUnityPlayerExe(exePath);
+                if (embedGame)
+                {
+                    args += $" -parentHWND {launcherHwnd.ToInt64()}";
+                    _log.Info("Embed mode: the game window will be hosted inside the launcher window.");
+                }
+                else if (_settings.EmbedGameInLauncher)
+                {
+                    _log.Info("Embed mode unavailable for this game exe; launching in its own window.");
+                }
+
                 // Verify the installed game exe against its release manifest hash
                 // (version.json beside the exe). A mismatched exe never launches in
                 // online mode — this is the local half of the anti-spoof chain; the
@@ -5579,6 +5618,8 @@ namespace LatticeVeil.Launcher
                 startInfo.EnvironmentVariables["LV_PROCESS_KIND"] = "game";
                 startInfo.EnvironmentVariables["LV_LAUNCH_MODE"] = isOffline ? "offline" : "online";
                 startInfo.EnvironmentVariables["LV_BUILD_CHANNEL"] = Paths.IsDevBuild ? "dev" : "release";
+                if (embedGame)
+                    startInfo.EnvironmentVariables["LV_GAME_EMBEDDED"] = "1";
 
                 if (_veilnetLoggedIn)
                 {
@@ -5599,6 +5640,12 @@ namespace LatticeVeil.Launcher
                 // via kill-on-close.
                 GameProcessJob.Attach(_gameProcess);
 
+                // Host the game window inside the launcher from birth — the
+                // host polls each frame until the player creates its window,
+                // then keeps it sized to the launcher client area.
+                if (embedGame)
+                    EmbeddedGameHost.Begin(launcherHwnd, _log);
+
                 _gameWindowRenamed = false;
                 _gameWindowRenameElapsed = 0f;
                 _gameWindowRenameNextAttempt = 0.5f;
@@ -5613,7 +5660,9 @@ namespace LatticeVeil.Launcher
                     // handle closes, which OnDestroy does only for launcher
                     // teardown paths that should kill the game; here we release
                     // the job instead so the game outlives the launcher.
-                    if (_settings.InstantQuitEnabled)
+                    if (embedGame && _settings.InstantQuitEnabled)
+                        _log.Info("InstantQuitEnabled ignored in embed mode: the game lives inside the launcher window.");
+                    else if (!embedGame && _settings.InstantQuitEnabled)
                     {
                         // Hold the quit while a previewed skin awaits a decision.
                         if (!ConfirmOrProceedQuit())
@@ -5635,7 +5684,7 @@ namespace LatticeVeil.Launcher
                     // while the game runs when KeepLauncherOpen is false. The
                     // process stays alive watching the game and restores the
                     // window automatically once the game exits.
-                    if (!_settings.KeepLauncherOpen)
+                    if (!embedGame && !_settings.KeepLauncherOpen)
                     {
                         _log.Info("KeepLauncherOpen is false; hiding launcher until the game closes.");
                         _parkedLauncherForGame = true;
@@ -5963,6 +6012,9 @@ namespace LatticeVeil.Launcher
             {
                 _profile.Save(_log);
             }
+
+            // Release the embed host before tearing the window down.
+            EmbeddedGameHost.End(_log);
 
             // Clean up game process — but NOT on the Instant Quit path, where
             // the user explicitly wants the game to outlive the launcher.

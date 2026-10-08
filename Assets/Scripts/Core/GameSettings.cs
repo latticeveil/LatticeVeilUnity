@@ -36,6 +36,7 @@ namespace LatticeVeil.Core
         // [Launcher]
         public bool KeepLauncherOpen { get; set; } = false;
         public bool InstantQuitEnabled { get; set; } = false; // close launcher process entirely when the game starts
+        public bool EmbedGameInLauncher { get; set; } = true; // run the game window inside the launcher window (Unity game versions)
         public bool AlwaysMinimizeLauncherToTray { get; set; } = false;
         public string LauncherCloseButtonAction { get; set; } = ""; // "", "Tray", or "Close"
         public bool DarkMode { get; set; } = true;
@@ -152,6 +153,7 @@ namespace LatticeVeil.Core
                 sb.AppendLine("# InstantQuitEnabled: If true, the launcher quits entirely the moment the game starts (no return to launcher).");
                 sb.AppendLine($"KeepLauncherOpen={(KeepLauncherOpen ? "true" : "false")}");
                 sb.AppendLine($"InstantQuitEnabled={(InstantQuitEnabled ? "true" : "false")}");
+                sb.AppendLine($"EmbedGameInLauncher={(EmbedGameInLauncher ? "true" : "false")}");
                 sb.AppendLine($"AlwaysMinimizeLauncherToTray={(AlwaysMinimizeLauncherToTray ? "true" : "false")}");
                 sb.AppendLine($"LauncherCloseButtonAction=\"{LauncherCloseButtonAction}\"");
                 sb.AppendLine($"DarkMode={(DarkMode ? "true" : "false")}");
@@ -229,6 +231,7 @@ namespace LatticeVeil.Core
                     case "launcher":
                         if (string.Equals(key, "KeepLauncherOpen", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var klo)) KeepLauncherOpen = klo;
                         else if (string.Equals(key, "InstantQuitEnabled", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var iq)) InstantQuitEnabled = iq;
+                        else if (string.Equals(key, "EmbedGameInLauncher", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var egl)) EmbedGameInLauncher = egl;
                         else if (string.Equals(key, "AlwaysMinimizeLauncherToTray", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var amt)) AlwaysMinimizeLauncherToTray = amt;
                         else if (string.Equals(key, "LauncherCloseButtonAction", StringComparison.OrdinalIgnoreCase)) LauncherCloseButtonAction = val;
                         else if (string.Equals(key, "DarkMode", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var dm)) DarkMode = dm;

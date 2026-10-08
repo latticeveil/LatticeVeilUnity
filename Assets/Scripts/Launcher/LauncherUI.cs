@@ -5707,6 +5707,27 @@ namespace LatticeVeil.Launcher
 
         private string GetGameExecutablePath()
         {
+            // 0. Prefer the separate Unity game version exe. The game is a
+            //    DIFFERENT exe from the launcher (the launcher downloads it
+            //    from GitHub releases and hosts it embedded; locally it lives
+            //    in builds/Game). When present it wins over relaunching the
+            //    launcher's own exe in the steps below.
+            try
+            {
+                var exeRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+                var gameCandidates = new[]
+                {
+                    Path.Combine(exeRoot, "Game", "LatticeVeilGame.exe"),          // player build: builds/Game/ next to the launcher exe
+                    Path.Combine(exeRoot, "builds", "Game", "LatticeVeilGame.exe")  // editor/dev: repo builds folder
+                };
+                foreach (var candidate in gameCandidates)
+                {
+                    if (File.Exists(candidate) && !IsEditorOrHostProcess(candidate))
+                        return Path.GetFullPath(candidate);
+                }
+            }
+            catch { }
+
             // 1. If running as a standalone built process, resolve its OWN running process executable directly.
             try
             {

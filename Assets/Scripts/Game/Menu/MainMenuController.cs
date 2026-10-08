@@ -74,6 +74,13 @@ namespace LatticeVeil.Game
                 if (_glowMaterial == null)
                 {
                     var shader = Shader.Find("LatticeVeil/UIAdditiveGlow");
+                    if (shader == null)
+                    {
+                        // Shader not present in this build — render buttons
+                        // unstyled rather than throwing on every button.
+                        Debug.LogWarning("MainMenuController: UIAdditiveGlow shader not found; hover glow disabled.");
+                        return null;
+                    }
                     _glowMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
                 }
                 return _glowMaterial;

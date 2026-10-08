@@ -202,7 +202,7 @@ namespace LatticeVeil.Core
             if (!Directory.Exists(dir))
                 return null;
 
-            foreach (var exeName in new[] { "LatticeVeilMonoGame.exe", "LatticeVeil.exe" })
+            foreach (var exeName in new[] { "LatticeVeilMonoGame.exe", "LatticeVeil.exe", "LatticeVeilGame.exe" })
             {
                 var candidate = Path.Combine(dir, exeName);
                 if (File.Exists(candidate))

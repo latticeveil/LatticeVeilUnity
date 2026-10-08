@@ -15,15 +15,14 @@ namespace LatticeVeil.Game
     ///    (VIDEO / AUDIO / CONTROLS / PACKS with *Selected variants), Apply.png
     ///    and Back.png texture buttons.
     ///  - ALL controls live INSIDE the panel frame: the page is masked
-    ///    (RectMask2D) and content is inset past the frame border, so sliders
-    ///    and dropdowns can never slide out of the GUI box.
+    ///    (RectMask2D) and rows grow DOWNWARD from the content top, so every
+    ///    row stays inside both the visible frame and the mask that hit-tests.
     ///  - Sliders are MonoGame-style: label above, dark track with white
-    ///    border, light fill, small square handle.
+    ///    border, light fill; click-or-drag anywhere on the track.
     ///  - Boolean settings are toggle switches; RESOLUTION is a traditional
     ///    click-to-open dropdown; GUI SCALE and QUALITY are cycle buttons.
-    ///  - Working copy: APPLY persists to options.lvc (format unchanged) and
-    ///    applies live behavior (vsync, window mode, resolution, FOV,
-    ///    brightness) through SettingsBehavior.
+    ///  - APPLY persists to options.lvc (format unchanged) and applies live
+    ///    behavior through SettingsBehavior.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class OptionsScreenController : MonoBehaviour
@@ -204,7 +203,8 @@ namespace LatticeVeil.Game
                 var tab = tabs[i];
                 _tabTextures[tab] = GameAssetLoader.LoadTexture(paths[i]);
                 _tabSelectedTextures[tab] = GameAssetLoader.LoadTexture(selectedPaths[i]);
-                var go = CreateTextureButton("Tab_" + labels[i], _tabTextures[tab], labels[i], () => SelectTab(tab));
+                var captured = tab;
+                var go = CreateTextureButton("Tab_" + labels[i], _tabTextures[tab], labels[i], () => SelectTab(captured));
                 go.transform.SetParent(_screenRoot, false);
                 _tabButtons[tab] = go;
             }
@@ -288,7 +288,9 @@ namespace LatticeVeil.Game
         private enum Col { Left, Right }
 
         // ------------------------------------------------------------------
-        // Widgets
+        // Widgets — rows are TOP-anchored and grow DOWNWARD (pivot 0,1), so
+        // they always stay inside the page's RectMask2D (which both draws and
+        // hit-tests) and inside the panel frame.
         // ------------------------------------------------------------------
 
         private sealed class Widget
@@ -302,33 +304,33 @@ namespace LatticeVeil.Game
         private readonly List<Widget> _videoWidgets = new List<Widget>();
         private readonly List<Widget> _audioWidgets = new List<Widget>();
 
-        private Widget Track(RectTransform page, Col col, int row, float height, List<Widget> list)
+        private Widget Track(RectTransform page, Col col, int row, float height)
         {
             var go = new GameObject("W_" + col + "_" + row, typeof(RectTransform));
             var rect = (RectTransform)go.transform;
             rect.SetParent(page, false);
             rect.anchorMin = new Vector2(0f, 1f);
             rect.anchorMax = new Vector2(0f, 1f);
-            rect.pivot = new Vector2(0f, 0f);
+            rect.pivot = new Vector2(0f, 1f);
             var widget = new Widget { Root = rect, Column = col, Row = row, Height = height };
-            list.Add(widget);
+            (page == _tabPages[Tab.Audio] ? _audioWidgets : _videoWidgets).Add(widget);
             return widget;
         }
 
         private void AddToggle(RectTransform page, string label, Func<bool> get, Action<bool> set, Col col, int row)
         {
-            var widget = Track(page, col, row, 38f, _videoWidgets);
+            var widget = Track(page, col, row, 40f);
             var rect = widget.Root;
 
-            // Switch track.
+            // Switch track — the raycast target (its Image receives clicks).
             var trackGo = new GameObject("Switch", typeof(RectTransform), typeof(Image));
             var track = (RectTransform)trackGo.transform;
             track.SetParent(rect, false);
-            track.anchorMin = new Vector2(0f, 0f);
-            track.anchorMax = new Vector2(0f, 0f);
+            track.anchorMin = new Vector2(0f, 1f);
+            track.anchorMax = new Vector2(0f, 1f);
             track.pivot = new Vector2(0f, 0.5f);
             track.sizeDelta = new Vector2(58, 26);
-            track.anchoredPosition = new Vector2(0, 6);
+            track.anchoredPosition = new Vector2(0, -13);
             var trackImg = trackGo.GetComponent<Image>();
             trackImg.color = get() ? Accent : ControlBg;
             var trackOutline = trackGo.AddComponent<Outline>();
@@ -346,12 +348,26 @@ namespace LatticeVeil.Game
             knob.anchoredPosition = get() ? new Vector2(15, 0) : new Vector2(-15, 0);
 
             var labelText = CreateLabel(rect, label, 19, TextColor);
-            Anchor((RectTransform)labelText.transform, new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(70, 13));
+            var labelRect = (RectTransform)labelText.transform;
+            labelRect.anchorMin = new Vector2(0f, 1f);
+            labelRect.anchorMax = new Vector2(0f, 1f);
+            labelRect.pivot = new Vector2(0f, 0.5f);
+            labelRect.anchoredPosition = new Vector2(70, -13);
 
-            var btn = rect.gameObject.AddComponent<Button>();
-            btn.targetGraphic = trackImg;
+            // Click target: a transparent Image over the whole row + the switch,
+            // so clicking the label or the switch both toggle.
+            var hitGo = new GameObject("Hit", typeof(RectTransform), typeof(Image), typeof(Button));
+            var hit = (RectTransform)hitGo.transform;
+            hit.SetParent(rect, false);
+            Stretch(hit);
+            var hitImg = hitGo.GetComponent<Image>();
+            hitImg.color = Color.clear;
+            var btn = hitGo.GetComponent<Button>();
+            btn.targetGraphic = hitImg;
             btn.transition = Selectable.Transition.ColorTint;
-            btn.colors = Block(HoverTint);
+            var colors = Block(HoverTint);
+            colors.highlightedColor = new Color(1f, 1f, 1f, 0.06f);
+            btn.colors = colors;
             btn.onClick.AddListener(() =>
             {
                 var next = !get();
@@ -362,40 +378,45 @@ namespace LatticeVeil.Game
             });
         }
 
-        private void AddSlider(RectTransform page, string label, Func<float> get, Action<float> set, Col col, int row, Func<string> valueLabel)
+        private void AddSlider(RectTransform page, string label, Func<float> get, Action<float> set,
+            Col col, int row, Func<string> valueLabel)
         {
-            var widget = Track(page, col, row, 46f, _videoWidgets);
-            var list = _tabPages[Tab.Audio] == page ? _audioWidgets : _videoWidgets;
-            if (!list.Contains(widget))
-                list.Add(widget);
-
+            var widget = Track(page, col, row, 50f);
             var rect = widget.Root;
 
             var labelText = CreateLabel(rect, label, 18, LabelColor);
-            Anchor((RectTransform)labelText.transform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0, 0));
+            var labelRect = (RectTransform)labelText.transform;
+            labelRect.anchorMin = new Vector2(0f, 1f);
+            labelRect.anchorMax = new Vector2(0f, 1f);
+            labelRect.pivot = new Vector2(0f, 1f);
+            labelRect.anchoredPosition = new Vector2(0, 0);
 
             var valueText = CreateLabel(rect, valueLabel(), 16, TextColor);
             var valueRect = (RectTransform)valueText.transform;
             valueRect.anchorMin = new Vector2(1f, 1f);
             valueRect.anchorMax = new Vector2(1f, 1f);
             valueRect.pivot = new Vector2(1f, 1f);
+            valueRect.anchoredPosition = new Vector2(0, 0);
 
-            // Track (MonoGame style: dark bar, white border, light fill).
+            // Track (MonoGame style: dark bar, white border, light fill). The
+            // track Image itself is the raycast/drag target — a Graphic is
+            // required for uGUI raycasts to ever reach the handler.
             var trackGo = new GameObject("Track", typeof(RectTransform), typeof(Image));
             var track = (RectTransform)trackGo.transform;
             track.SetParent(rect, false);
-            track.anchorMin = new Vector2(0f, 0f);
-            track.anchorMax = new Vector2(1f, 0f);
-            track.pivot = new Vector2(0f, 0f);
-            track.sizeDelta = new Vector2(0, 14);
+            track.anchorMin = new Vector2(0f, 1f);
+            track.anchorMax = new Vector2(1f, 1f);
+            track.pivot = new Vector2(0.5f, 1f);
+            track.sizeDelta = new Vector2(0, 16);
+            track.anchoredPosition = new Vector2(0, -26);
             var trackImg = trackGo.GetComponent<Image>();
             trackImg.color = ControlBg;
-            trackImg.raycastTarget = false;
+
             var outline = trackGo.AddComponent<Outline>();
             outline.effectColor = Color.white;
-            outline.effectDistance = Vector2.one; // 2px-ish white border like the MonoGame pixel frame
+            outline.effectDistance = Vector2.one;
 
-            // Fill.
+            // Fill (non-raycast).
             var fillGo = new GameObject("Fill", typeof(RectTransform), typeof(Image));
             var fill = (RectTransform)fillGo.transform;
             fill.SetParent(track, false);
@@ -403,75 +424,57 @@ namespace LatticeVeil.Game
             fill.anchorMax = new Vector2(0f, 0f);
             fill.pivot = new Vector2(0f, 0f);
             fill.sizeDelta = new Vector2(0, 14);
+            fill.anchorMin = new Vector2(0f, 0f);
+            fill.anchorMax = new Vector2(0f, 1f);
+            fill.pivot = new Vector2(0f, 0.5f);
+            fill.offsetMin = new Vector2(1, 1);
+            fill.offsetMax = new Vector2(0, -1);
             var fillImg = fillGo.GetComponent<Image>();
             fillImg.color = ControlFill;
             fillImg.raycastTarget = false;
 
-            // Invisible full-track drag target drives the value (smooth drag,
-            // click-to-jump like the MonoGame Slider).
-            var sliderGo = new GameObject("Drag", typeof(RectTransform), typeof(EventTrigger));
-            var dragRect = (RectTransform)sliderGo.transform;
-            dragRect.SetParent(track, false);
-            Stretch(dragRect);
-
             void UpdateFill()
             {
                 var v = Mathf.Clamp01(get());
-                fill.sizeDelta = new Vector2(track.rect.width * v, 14);
+                fill.anchorMax = new Vector2(v, 1f);
+                fill.offsetMin = new Vector2(1, 1);
+                fill.offsetMax = new Vector2(0, -1);
             }
 
-            UnityEventToolsAddDrag(sliderGo, track, fill, get, set, UpdateFill, valueLabel, label);
-
-            UpdateFill();
-            _sliderUpdaters.Add(UpdateFill);
-        }
-
-        private readonly List<Action> _sliderUpdaters = new List<Action>();
-
-        private void UnityEventToolsAddDrag(GameObject sliderGo, RectTransform track, RectTransform fill,
-            Func<float> get, Action<float> set, Action updateFill, Func<string> valueLabel, string label)
-        {
-            var handler = sliderGo.AddComponent<SliderDragHandler>();            handler.Track = track;
-            handler.Fill = fill;
+            var handler = trackGo.AddComponent<SliderDragHandler>();
+            handler.Track = track;
             handler.Get = get;
             handler.Set = set;
-            handler.OnChanged = updateFill;
-            handler.ValueLabel = () =>
-            {
-                // The value text lives on the row root; find via sibling.
-                var row = track.parent.parent;
-                var texts = row.GetComponentsInChildren<Text>();
-                foreach (var t in texts)
-                {
-                    if (t.text.EndsWith("%") || t.text.EndsWith("CHUNKS") || IsNumeric(t.text))
-                        t.text = valueLabel();
-                }
-            };
-        }
+            handler.OnChanged = UpdateFill;
+            handler.ValueText = valueText;
+            handler.ValueLabel = valueLabel;
+            handler.Label = label;
 
-        private static bool IsNumeric(string s)
-        {
-            int n;
-            return int.TryParse(s, out n);
+            UpdateFill();
         }
 
         private void AddDropdown(RectTransform page, string label, Func<int> get, Func<int, string> labelOf,
             int count, Action<int> set, Col col, int row)
         {
-            var widget = Track(page, col, row, 44f, _videoWidgets);
+            var widget = Track(page, col, row, 48f);
             var rect = widget.Root;
 
             var labelText = CreateLabel(rect, label, 18, LabelColor);
-            Anchor((RectTransform)labelText.transform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0, 0));
+            var labelRect = (RectTransform)labelText.transform;
+            labelRect.anchorMin = new Vector2(0f, 1f);
+            labelRect.anchorMax = new Vector2(0f, 1f);
+            labelRect.pivot = new Vector2(0f, 1f);
+            labelRect.anchoredPosition = new Vector2(0, 0);
 
             // Value box with arrow, click-to-open (traditional dropdown).
             var boxGo = new GameObject("Box", typeof(RectTransform), typeof(Image), typeof(Button));
             var box = (RectTransform)boxGo.transform;
             box.SetParent(rect, false);
-            box.anchorMin = new Vector2(0f, 0f);
-            box.anchorMax = new Vector2(1f, 0f);
-            box.pivot = new Vector2(0f, 0f);
-            box.sizeDelta = new Vector2(0, 32);
+            box.anchorMin = new Vector2(0f, 1f);
+            box.anchorMax = new Vector2(1f, 1f);
+            box.pivot = new Vector2(0.5f, 1f);
+            box.sizeDelta = new Vector2(0, 30);
+            box.anchoredPosition = new Vector2(0, -18);
             var boxImg = boxGo.GetComponent<Image>();
             boxImg.color = ControlBg;
             var boxOutline = boxGo.AddComponent<Outline>();
@@ -505,14 +508,13 @@ namespace LatticeVeil.Game
             CloseDropdownList();
 
             // Blocker: click anywhere else closes the list.
-            _dropdownBlocker = new GameObject("DropdownBlocker", typeof(RectTransform), typeof(Image));
+            _dropdownBlocker = new GameObject("DropdownBlocker", typeof(RectTransform), typeof(Image), typeof(Button));
             var blockerRect = (RectTransform)_dropdownBlocker.transform;
             blockerRect.SetParent(_screenRoot, false);
             Stretch(blockerRect);
-            var blockerImg = _dropdownBlocker.AddComponent<Image>();
+            var blockerImg = _dropdownBlocker.GetComponent<Image>();
             blockerImg.color = new Color(0, 0, 0, 0.3f);
-            blockerImg.raycastTarget = true;
-            _dropdownBlocker.AddComponent<Button>().onClick.AddListener(CloseDropdownList);
+            _dropdownBlocker.GetComponent<Button>().onClick.AddListener(CloseDropdownList);
 
             _openDropdownList = new GameObject("DropdownList", typeof(RectTransform), typeof(RectMask2D));
             var list = (RectTransform)_openDropdownList.transform;
@@ -524,7 +526,7 @@ namespace LatticeVeil.Game
             // Position under the box (world-space -> local-space of screenRoot).
             var corners = new Vector3[4];
             box.GetWorldCorners(corners);
-            var screenPos = RectTransformUtility.WorldToScreenPoint(null, corners[0]);
+            var screenPos = RectTransformUtility.WorldToScreenPoint(null, corners[3]);
             var local = _screenRoot.InverseTransformPoint(new Vector3(screenPos.x, screenPos.y, 0f));
             list.anchoredPosition = new Vector2(local.x, local.y);
             list.sizeDelta = new Vector2(box.rect.width, Mathf.Min(count * 34 + 8, 220));
@@ -588,19 +590,24 @@ namespace LatticeVeil.Game
         private void AddCycler(RectTransform page, string label, Func<int> get, int count,
             Func<int, string> labelOf, Action<int> set, Col col, int row)
         {
-            var widget = Track(page, col, row, 44f, _videoWidgets);
+            var widget = Track(page, col, row, 48f);
             var rect = widget.Root;
 
             var labelText = CreateLabel(rect, label, 18, LabelColor);
-            Anchor((RectTransform)labelText.transform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0, 0));
+            var labelRect = (RectTransform)labelText.transform;
+            labelRect.anchorMin = new Vector2(0f, 1f);
+            labelRect.anchorMax = new Vector2(0f, 1f);
+            labelRect.pivot = new Vector2(0f, 1f);
+            labelRect.anchoredPosition = new Vector2(0, 0);
 
             var boxGo = new GameObject("Box", typeof(RectTransform), typeof(Image));
             var box = (RectTransform)boxGo.transform;
             box.SetParent(rect, false);
-            box.anchorMin = new Vector2(0f, 0f);
-            box.anchorMax = new Vector2(1f, 0f);
-            box.pivot = new Vector2(0f, 0f);
-            box.sizeDelta = new Vector2(0, 32);
+            box.anchorMin = new Vector2(0f, 1f);
+            box.anchorMax = new Vector2(1f, 1f);
+            box.pivot = new Vector2(0.5f, 1f);
+            box.sizeDelta = new Vector2(0, 30);
+            box.anchoredPosition = new Vector2(0, -18);
             var boxImg = boxGo.GetComponent<Image>();
             boxImg.color = ControlBg;
             var boxOutline = boxGo.AddComponent<Outline>();
@@ -635,12 +642,12 @@ namespace LatticeVeil.Game
                 Debug.Log($"Option changed: {label} = {valueText.text}");
             });
 
-            // Positions are set in LayoutRows via named children.
+            // Positions are set in LayoutRows via CyclerRefs.
             box.gameObject.AddComponent<CyclerRefs>().Init(prev.GetComponent<RectTransform>(), next.GetComponent<RectTransform>(), valueRect);
         }
 
         // ------------------------------------------------------------------
-        // Layout — everything inside the panel frame
+        // Layout — everything inside the panel frame; rows grow downward.
         // ------------------------------------------------------------------
 
         public void Layout()
@@ -723,18 +730,15 @@ namespace LatticeVeil.Game
             float columnW = (contentW - columnGap) / 2f;
             float rowGap = Mathf.Max(12f, 16f * layoutScale);
 
-            LayoutPage(_tabPages[Tab.Video], _videoWidgets, insetX, contentTop, contentBottom, columnW, columnGap, rowGap);
-            LayoutPage(_tabPages[Tab.Audio], _audioWidgets, insetX, contentTop, contentBottom, columnW, columnGap, rowGap);
+            LayoutPage(_videoWidgets, insetX, contentTop, contentBottom, columnW, columnGap, rowGap);
+            LayoutPage(_audioWidgets, insetX, contentTop, contentBottom, columnW, columnGap, rowGap);
             LayoutStaticPage(_tabPages[Tab.Controls], insetX, contentTop);
             LayoutStaticPage(_tabPages[Tab.Packs], insetX, contentTop);
         }
 
-        private void LayoutPage(RectTransform page, List<Widget> widgets, float insetX, float contentTop,
+        private void LayoutPage(List<Widget> widgets, float insetX, float contentTop,
             float contentBottom, float columnW, float columnGap, float rowGap)
         {
-            if (page == null)
-                return;
-
             float panelH = _panelRoot.rect.height;
             foreach (var widget in widgets)
             {
@@ -743,41 +747,20 @@ namespace LatticeVeil.Game
 
                 // Overflow guard: never lay a row past the content bottom.
                 float maxRows = Mathf.Max(1f, Mathf.Floor((panelH - contentTop - contentBottom + rowGap) / (widget.Height + rowGap)));
-                if (widget.Row >= maxRows)
-                    widget.Root.gameObject.SetActive(false);
-                else
-                    widget.Root.gameObject.SetActive(true);
+                widget.Root.gameObject.SetActive(widget.Row < maxRows);
 
                 widget.Root.sizeDelta = new Vector2(columnW, widget.Height);
                 widget.Root.anchoredPosition = new Vector2(colX, -rowY);
-            }
 
-            // Size slider tracks / dropdown boxes to the column width and
-            // position cycler buttons.
-            foreach (var widget in widgets)
-            {
-                var rect = widget.Root;
-                var cycler = rect.GetComponent<CyclerRefs>();
+                var cycler = widget.Root.GetComponentInChildren<CyclerRefs>(true);
                 if (cycler != null)
                 {
                     cycler.Prev.sizeDelta = new Vector2(34, 26);
-                    cycler.Prev.anchoredPosition = new Vector2(4, 3);
+                    cycler.Prev.anchoredPosition = new Vector2(4, -15);
                     cycler.Next.sizeDelta = new Vector2(34, 26);
-                    cycler.Next.anchoredPosition = new Vector2(columnW - 38, 3);
+                    cycler.Next.anchoredPosition = new Vector2(columnW - 38, -15);
                     cycler.Value.sizeDelta = new Vector2(columnW - 90, 26);
-                    cycler.Value.anchoredPosition = new Vector2(columnW / 2f, 16);
-                }
-                else
-                {
-                    foreach (Transform child in rect)
-                    {
-                        if (child.name == "Box")
-                        {
-                            var boxRect = (RectTransform)child;
-                            boxRect.offsetMin = new Vector2(0, 0);
-                            boxRect.offsetMax = new Vector2(0, 32);
-                        }
-                    }
+                    cycler.Value.anchoredPosition = new Vector2(columnW / 2f, -15);
                 }
             }
         }
@@ -1055,16 +1038,18 @@ namespace LatticeVeil.Game
 
         /// <summary>
         /// MonoGame-style slider drag: clicking/dragging the track sets the
-        /// value from the pointer position (Slider.Update semantics).
+        /// value from the pointer position (Slider.Update semantics). Lives on
+        /// the track Image so the raycast always reaches it.
         /// </summary>
         private sealed class SliderDragHandler : MonoBehaviour, IPointerDownHandler, IDragHandler
         {
             public RectTransform Track;
-            public RectTransform Fill;
+            public Text ValueText;
             public Func<float> Get;
             public Action<float> Set;
             public Action OnChanged;
-            public Action ValueLabel;
+            public Func<string> ValueLabel;
+            public string Label;
 
             public void OnPointerDown(PointerEventData eventData) { Drag(eventData); }
             public void OnDrag(PointerEventData eventData) { Drag(eventData); }
@@ -1079,7 +1064,9 @@ namespace LatticeVeil.Game
                 var v = Mathf.Clamp01((local.x + Track.rect.width / 2f) / Mathf.Max(1f, Track.rect.width));
                 Set(v);
                 OnChanged?.Invoke();
-                ValueLabel?.Invoke();
+                if (ValueText != null && ValueLabel != null)
+                    ValueText.text = ValueLabel();
+                Debug.Log($"Option changed: {Label} = {Mathf.RoundToInt(Mathf.Clamp01(Get()) * 100f) / 100f:0.00}");
             }
         }
     }

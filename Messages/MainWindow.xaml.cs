@@ -15,6 +15,22 @@ namespace LatticeVeil.Messages
 {
     public partial class MainWindow : Window
     {
+        // Currently displayed friend profile (right-side pane).
+        private string _profileFriendId;
+
+        // INotifySurface for the profile pane bindings (WPF needs public
+        // properties; a minimal INPC impl keeps banner/avatar reactive).
+        public event System.ComponentModel.PropertyChangedEventHandler PropertyChanged;
+        private void Raise(string name) => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+
+        string _profileBanner, _profilePicture, _profileInitial;
+        public string ProfileBanner { get => _profileBanner; set { _profileBanner = value; Raise(nameof(ProfileBanner)); Raise(nameof(ProfileBannerVisible)); } }
+        public string ProfilePicture { get => _profilePicture; set { _profilePicture = value; Raise(nameof(ProfilePicture)); Raise(nameof(ProfilePictureVisible)); } }
+        public string ProfileInitial { get => _profileInitial; set { _profileInitial = value; Raise(nameof(ProfileInitial)); } }
+        public Visibility ProfileBannerVisible => string.IsNullOrEmpty(_profileBanner) ? Visibility.Collapsed : Visibility.Visible;
+        public Visibility ProfilePictureVisible => string.IsNullOrEmpty(_profilePicture) ? Visibility.Collapsed : Visibility.Visible;
+        public Visibility ProfileInitialVisible => string.IsNullOrEmpty(_profilePicture) ? Visibility.Visible : Visibility.Collapsed;
+
         public static string ActiveConversation;
         public static bool IsHidden => !_isOpen || Application.Current == null || !Application.Current.Windows.OfType<MainWindow>().Any(w => w.IsVisible);
         private static bool _isOpen;
@@ -32,6 +48,7 @@ namespace LatticeVeil.Messages
         public MainWindow()
         {
             InitializeComponent();
+            DataContext = this;
             _isOpen = true;
             ConvList.ItemsSource = _convs;
             MsgList.ItemsSource = _msgs;
@@ -396,6 +413,31 @@ namespace LatticeVeil.Messages
                 .Where(c => !string.IsNullOrEmpty(c.LastAt))
                 .OrderByDescending(c => c.LastAt ?? "")
                 .ToList();
+            // An ACTIVE draft thread row (friend with no messages yet, chosen
+            // from the profile pane) survives refreshes until first send;
+            // once messages exist the real conversation row takes over.
+            ConvVm draftRow = null;
+            if (!string.IsNullOrEmpty(_draftFriendIdActive) && _current == null)
+            {
+                var draftConv = svc.Conversations.FirstOrDefault(c => c.OtherId == _draftFriendIdActive && !string.IsNullOrEmpty(c.LastAt));
+                if (draftConv == null && !snapshot.Any(c => c.OtherId == _draftFriendIdActive))
+                {
+                    App.Service.Profiles.TryGetValue(_draftFriendIdActive, out var dp);
+                    var dn = string.IsNullOrEmpty(dp.username)
+                        ? (_draftFriendIdActive.Length > 8 ? _draftFriendIdActive.Substring(0, 8) : _draftFriendIdActive)
+                        : dp.username;
+                    draftRow = new ConvVm
+                    {
+                        ConversationId = null,
+                        OtherId = _draftFriendIdActive,
+                        Title = dn,
+                        Preview = "New chat — say hi!",
+                        Initial = string.IsNullOrEmpty(dn) ? "?" : dn.Substring(0, 1).ToUpperInvariant(),
+                        Picture = dp.picture,
+                        AvatarBrush = GetAvatarBrush(dp.picture),
+                    };
+                }
+            }
             _convs.Clear();
             foreach (var c in snapshot)
             {
@@ -424,6 +466,7 @@ namespace LatticeVeil.Messages
                     Unread = c.Unread,
                 });
             }
+            if (draftRow != null) _convs.Insert(0, draftRow);
             ConvEmpty.Visibility = _convs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
 
@@ -431,8 +474,26 @@ namespace LatticeVeil.Messages
         {
             if (ConvList.SelectedItem is ConvVm vm)
             {
+                if (vm.ConversationId == null)
+                {
+                    // Draft thread row clicked: restore draft composition.
+                    _current = null;
+                    _draftFriendIdActive = vm.OtherId;
+                    _draftBackingConvId = null;
+                    ActiveConversation = null;
+                    ChatTitle.Text = vm.Title;
+                    _msgs.Clear();
+                    ClearedText.Visibility = Visibility.Collapsed;
+                    DelChatBtn.Visibility = Visibility.Collapsed;
+                    MsgInput.IsEnabled = true;
+                    SendBtn.IsEnabled = true;
+                    _lastRenderedSig = "draft:0";
+                    return;
+                }
+                _draftFriendIdActive = null;
                 _current = vm.ConversationId;
                 ActiveConversation = _current;
+                HideProfile();
                 ChatTitle.Text = vm.Title;
                 // Re-enable the composer — a previously open CLEAR chat may
                 // have left it disabled.
@@ -453,12 +514,15 @@ namespace LatticeVeil.Messages
 
         // ---------------- tabs / friends (mirrors the website panel) ----------------
         public ObservableCollection<ConvVm> Friends => _friends;
+        // DataContext binding surface for the two list panes.
+        public System.Collections.ObjectModel.ObservableCollection<ConvVm> Conversations => _convs;
 
         private void TabChats_Click(object sender, RoutedEventArgs e) => ShowTab(false);
         private void TabFriends_Click(object sender, RoutedEventArgs e) => ShowTab(true);
 
         private void ShowTab(bool friends)
         {
+            HideProfile();
             _onFriendsTab = friends;
             ChatsPane.Visibility = friends ? Visibility.Collapsed : Visibility.Visible;
             FriendsPane.Visibility = friends ? Visibility.Visible : Visibility.Collapsed;
@@ -513,41 +577,117 @@ namespace LatticeVeil.Messages
             FriendsEmpty.Visibility = _friends.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        private async void FriendList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        // Clicking a friend card: show their profile on the right.
+        private void FriendList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_onFriendsTab && FriendList.SelectedItem is ConvVm vm)
             {
-                var convoId = vm.ConversationId;
                 FriendList.SelectedItem = null;
-                // "Start a chat": ALWAYS land on the Chats side with the
-                // composer ready, whether the friend has history or not.
-                ChatTitle.Text = vm.Title;
-                _current = null;
-                _msgs.Clear();
-                _lastRenderedSig = null;
-                ClearedText.Visibility = Visibility.Collapsed;
-                DelChatBtn.Visibility = convoId != null ? Visibility.Visible : Visibility.Collapsed;
-
-                try
-                {
-                    // Because Chats only lists friends with history, a brand
-                    // new chat is created right here (ensure is friendship-
-                    // gated server-side; no-op when it already exists).
-                    var targetId = convoId ?? await App.Service.EnsureConversationAsync(vm.OtherId);
-                    await App.Service.BootstrapAsync();
-                    ShowTab(false);
-                    var conv = _convs.FirstOrDefault(c => c.ConversationId == targetId);
-                    if (conv != null) ConvList.SelectedItem = conv;
-                    else { ActiveConversation = targetId; await App.Service.FetchMessagesAsync(targetId); ReloadMessages(targetId); }
-                }
-                catch (Exception ex)
-                {
-                    ShowTab(false);
-                    ErrText.Text = "Could not open chat (" + ex.Message + ")";
-                    ErrText.Visibility = Visibility.Visible;
-                }
+                ShowProfile(vm.OtherId, vm.Title, vm.Picture, vm.Banner, vm.About);
             }
         }
+
+        // ------------- friend profile pane (right side, like the site) -------------
+        private void ShowProfile(string friendId, string name, string picture, string banner, string about)
+        {
+            _profileFriendId = friendId;
+            ProfileBanner = banner;
+            ProfilePicture = picture;
+            ProfileInitial = string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1).ToUpperInvariant();
+            ProfName.Text = name;
+            ProfAbout.Text = string.IsNullOrEmpty(about) ? "No about yet." : about;
+            ProfAbout.Visibility = Visibility.Visible;
+            // Message button reads "Open chat" when a thread already exists.
+            var existing = App.Service.Conversations.FirstOrDefault(c => c.OtherId == friendId);
+            ProfMessageBtn.Content = existing != null ? "Open chat" : "Message";
+            ProfilePane.Visibility = Visibility.Visible;
+        }
+
+        private void HideProfile()
+        {
+            ProfilePane.Visibility = Visibility.Collapsed;
+            _profileFriendId = null;
+        }
+
+        // Message/Open chat from the profile pane: opens a THREAD in the
+        // Chats section. For a friend with no messages yet this creates a
+        // draft thread row in Chats — the server conversation is only created
+        // when the first message is actually sent (matches the website).
+        private async void ProfMessage_Click(object sender, RoutedEventArgs e)
+        {
+            var friendId = _profileFriendId;
+            if (string.IsNullOrEmpty(friendId)) return;
+            HideProfile();
+            await OpenThreadWithFriendAsync(friendId);
+        }
+
+        /// <summary>
+        /// Opens the thread with a friend on the Chats tab. If the friend has
+        /// no conversation with messages yet, shows a draft thread (their row
+        /// in the Chats list, empty message area, composer ready). The real
+        /// conversation materializes on the first send.
+        /// </summary>
+        private async System.Threading.Tasks.Task OpenThreadWithFriendAsync(string friendId)
+        {
+            App.Service.Profiles.TryGetValue(friendId, out var prof);
+            var name = string.IsNullOrEmpty(prof.username)
+                ? (friendId.Length > 8 ? friendId.Substring(0, 8) : friendId)
+                : prof.username;
+            var existing = App.Service.Conversations.FirstOrDefault(c => c.OtherId == friendId && !string.IsNullOrEmpty(c.LastAt));
+
+            ShowTab(false); // swap to the Chats side
+            DelConfirmPanel.Visibility = Visibility.Collapsed;
+
+            if (existing != null)
+            {
+                var vm = _convs.FirstOrDefault(c => c.ConversationId == existing.ConversationId);
+                if (vm != null) { ConvList.SelectedItem = vm; return; }
+                // Conv exists server-side but was filtered (only cleared?
+                // Chats keeps cleared threads, so fall through to open it).
+                _current = existing.ConversationId;
+                ActiveConversation = _current;
+                ChatTitle.Text = name;
+                MsgInput.IsEnabled = true; SendBtn.IsEnabled = true;
+                DelChatBtn.Visibility = Visibility.Visible;
+                await App.Service.FetchMessagesAsync(_current);
+                ReloadMessages(_current);
+                return;
+            }
+
+            // ---- DRAFT THREAD: no messages yet with this friend ----
+            _current = null;
+            _draftBackingConvId = null;
+            _draftFriendIdActive = friendId;
+            ActiveConversation = null;
+            ChatTitle.Text = name;
+            _msgs.Clear();
+            ClearedText.Visibility = Visibility.Collapsed;
+            DelChatBtn.Visibility = Visibility.Collapsed;
+            MsgInput.IsEnabled = true;
+            SendBtn.IsEnabled = true;
+            _lastRenderedSig = "draft:0";
+
+            // Materialize a visible draft row in the Chats list.
+            if (!_convs.Any(c => c.ConversationId == null && c.OtherId == friendId))
+            {
+                _convs.Insert(0, new ConvVm
+                {
+                    ConversationId = null,
+                    OtherId = friendId,
+                    Title = name,
+                    Preview = "New chat — say hi!",
+                    Initial = string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1).ToUpperInvariant(),
+                    Picture = prof.picture,
+                    AvatarBrush = GetAvatarBrush(prof.picture),
+                    Unread = 0,
+                });
+            }
+        }
+
+        // Draft thread state: the friend we're composing to + the server conv
+        // id once the first message created it mid-thread.
+        private string _draftFriendIdActive;
+        private string _draftBackingConvId;
 
         // ---------------- messages ----------------
         public sealed class MsgVm
@@ -619,10 +759,36 @@ namespace LatticeVeil.Messages
         private async System.Threading.Tasks.Task SendAsync()
         {
             var text = (MsgInput.Text ?? "").Trim();
-            if (text.Length == 0 || _current == null) return;
+            // Draft thread: _current is null but a friend is being composed to.
+            if (text.Length == 0 || (_current == null && string.IsNullOrEmpty(_draftFriendIdActive))) return;
             MsgInput.Text = "";
             try
             {
+                if (_current == null)
+                {
+                    // First message of a draft thread creates the conversation.
+                    var convId = await App.Service.EnsureConversationAsync(_draftFriendIdActive);
+                    await App.Service.BootstrapAsync();
+                    _draftBackingConvId = convId;
+                    _current = convId;
+                    ActiveConversation = convId;
+                    DelChatBtn.Visibility = Visibility.Visible;
+
+                    await App.Service.SendAsync(convId, text);
+
+                    // The draft row becomes the REAL row: the thread STAYS in
+                    // Chats now that it has messages. RefreshConvList filters
+                    // by LastAt, and the fresh bootstrap provides it.
+                    RefreshConvList();
+                    var real = _convs.FirstOrDefault(c => c.ConversationId == convId);
+                    if (real != null) ConvList.SelectedItem = real;
+                    _draftFriendIdActive = null;
+                    _lastRenderedSig = null;
+                    ReloadMessages(convId);
+                    ErrText.Visibility = Visibility.Collapsed;
+                    return;
+                }
+
                 await App.Service.SendAsync(_current, text);
                 ReloadMessages(_current);
                 RefreshConvList();

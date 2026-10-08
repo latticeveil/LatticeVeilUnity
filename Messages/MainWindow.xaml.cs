@@ -31,6 +31,13 @@ namespace LatticeVeil.Messages
         public Visibility ProfilePictureVisible => string.IsNullOrEmpty(_profilePicture) ? Visibility.Collapsed : Visibility.Visible;
         public Visibility ProfileInitialVisible => string.IsNullOrEmpty(_profilePicture) ? Visibility.Visible : Visibility.Collapsed;
 
+        // SAME rendering path as the friends/conversation lists: the frozen
+        // ImageBrush cache. Raw ImageSource="{Binding url}" did not resolve
+        // here, so the pane binds ready-made brushes instead.
+        Brush _profileBannerBrush, _profileAvatarBrush;
+        public Brush ProfileBannerBrush { get => _profileBannerBrush; set { _profileBannerBrush = value; Raise(nameof(ProfileBannerBrush)); } }
+        public Brush ProfileAvatarBrush { get => _profileAvatarBrush; set { _profileAvatarBrush = value; Raise(nameof(ProfileAvatarBrush)); } }
+
         public static string ActiveConversation;
         public static bool IsHidden => !_isOpen || Application.Current == null || !Application.Current.Windows.OfType<MainWindow>().Any(w => w.IsVisible);
         private static bool _isOpen;
@@ -593,6 +600,8 @@ namespace LatticeVeil.Messages
             _profileFriendId = friendId;
             ProfileBanner = banner;
             ProfilePicture = picture;
+            ProfileBannerBrush = string.IsNullOrEmpty(banner) ? null : GetAvatarBrush(banner);
+            ProfileAvatarBrush = string.IsNullOrEmpty(picture) ? null : GetAvatarBrush(picture);
             ProfileInitial = string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1).ToUpperInvariant();
             ProfName.Text = name;
             ProfAbout.Text = string.IsNullOrEmpty(about) ? "No about yet." : about;

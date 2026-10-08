@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "com.unity.ugui": "2.0.0",
     "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main",
     "com.unity.inputsystem": "1.20.0",
     "com.unity.multiplayer.center": "1.0.1",

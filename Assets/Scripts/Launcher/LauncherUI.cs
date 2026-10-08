@@ -3115,6 +3115,16 @@ namespace LatticeVeil.Launcher
 
         private void DrawVersionManagerRow(Rect rowRect, GameVersionInfo version)
         {
+            // TEMP dev entry: the local builds/Game/LatticeVeilGame.exe shows as
+            // a normal-looking row so it can be selected and PLAYed without a
+            // GitHub release. Removed once V1.0.0 ships; real versions fetch
+            // from GitHub as usual.
+            if (version.Tag == DevLocalTag)
+            {
+                DrawDevLocalRow(rowRect);
+                return;
+            }
+
             var isSelected = _versionManagerSelected != null && string.Equals(version.Tag, _versionManagerSelected.Tag, StringComparison.OrdinalIgnoreCase);
             GUI.Box(rowRect, "", isSelected ? _dropdownActiveItemStyle : _panelBoxStyle);
 
@@ -3193,6 +3203,92 @@ namespace LatticeVeil.Launcher
             }
 
             GUI.enabled = wasEnabled;
+        }
+
+        /// <summary>Pseudo-tag for the temp local dev build row in the version list.</summary>
+        private const string DevLocalTag = "[DEV] LOCAL BUILD";
+
+        /// <summary>Path of the local dev game build, or null when not present.</summary>
+        internal static string ResolveDevLocalGameExe()
+        {
+            try
+            {
+                var exeRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+                var candidates = new[]
+                {
+                    Path.Combine(exeRoot, "builds", "Game", "LatticeVeilGame.exe"),
+                    Path.Combine(exeRoot, "Game", "LatticeVeilGame.exe")
+                };
+                foreach (var candidate in candidates)
+                {
+                    if (File.Exists(candidate))
+                        return Path.GetFullPath(candidate);
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private bool IsDevLocalSelected =>
+            _selectedVersion != null && _selectedVersion.Tag == DevLocalTag;
+
+        /// <summary>
+        /// TEMP dev row: renders like a version row but shows a PLAY button
+        /// that launches builds/Game/LatticeVeilGame.exe directly — no
+        /// download, no install, no GitHub. Will be removed at first release.
+        /// </summary>
+        private void DrawDevLocalRow(Rect rowRect)
+        {
+            GUI.Box(rowRect, "", _dropdownActiveItemStyle);
+
+            EnsureVersionRowStyles();
+
+            var titleRect = new Rect(rowRect.x + 12, rowRect.y + 5, rowRect.width - 130, 20);
+            GUI.Label(titleRect, "LatticeVeil Unity (local dev build)", _rowTitleStyle);
+            GUI.Label(new Rect(rowRect.x + 12, rowRect.y + 27, rowRect.width - 130, 16), DevLocalTag + "   [dev]", _rowMetaStyle);
+
+            var devExe = ResolveDevLocalGameExe();
+            var statusText = devExe != null
+                ? $"LOCAL  •  V{Core.GameVersion.Current}"
+                : "NOT BUILT  •  run LatticeVeil/Build Game in Unity";
+            GUI.Label(new Rect(rowRect.x + 12, rowRect.y + 45, rowRect.width - 130, 16), statusText, _rowMetaStyle);
+
+            var wasEnabled = GUI.enabled;
+            if (_isDownloadingVersion) GUI.enabled = false;
+
+            var rowButtonRect = new Rect(rowRect.x + rowRect.width - 112, rowRect.y + 20, 100, 28);
+            GUI.enabled = wasEnabled && devExe != null;
+            if (GUI.Button(rowButtonRect, "PLAY", _buttonStyle) && devExe != null)
+            {
+                LaunchDevLocalGame(devExe);
+            }
+            GUI.enabled = wasEnabled;
+
+            if (Event.current.type == EventType.MouseDown && rowRect.Contains(Event.current.mousePosition))
+            {
+                _versionManagerSelected = null; // dev row is not a real version
+            }
+        }
+
+        /// <summary>
+        /// Launches the local dev game exe directly through the normal launch
+        /// path (env handoff, embed host, keep-open handling). The selection is
+        /// cleared first so DoLaunchGame falls through to GetGameExecutablePath,
+        /// which prefers builds/Game/LatticeVeilGame.exe (the dev build).
+        /// </summary>
+        private void LaunchDevLocalGame(string devExe)
+        {
+            _log.Info($"Dev launch: starting local game build {devExe}");
+            var restoreVersion = _selectedVersion;
+            _selectedVersion = null;
+            try
+            {
+                LaunchGame();
+            }
+            finally
+            {
+                _selectedVersion = restoreVersion;
+            }
         }
 
         private void RefreshSkinModalPreview()

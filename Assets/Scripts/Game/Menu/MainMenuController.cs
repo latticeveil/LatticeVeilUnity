@@ -58,6 +58,7 @@ namespace LatticeVeil.Game
 
         private void Awake()
         {
+            GameLog.Initialize();
             EnforceWindowedDefault();
             StartCoroutine(SetWindowTitleWhenReady());
             BuildUi();
@@ -161,8 +162,19 @@ namespace LatticeVeil.Game
             if (Math.Abs(Screen.width - _lastWindowW) > 0.5f || Math.Abs(Screen.height - _lastWindowH) > 0.5f)
                 ApplyLayout();
 
-            if (Input.GetKeyDown(KeyCode.Escape))
+            // Options owns Escape while open (it closes the screen, not the game).
+            if (Input.GetKeyDown(KeyCode.Escape) && !_optionsOpen)
                 RequestQuit();
+        }
+
+        private bool _optionsOpen;
+
+        private void OnOptions()
+        {
+            if (_optionsOpen)
+                return;
+            _optionsOpen = true;
+            OptionsScreenController.Open(_canvas, () => _optionsOpen = false);
         }
 
         private static Material GlowMaterial
@@ -494,11 +506,6 @@ namespace LatticeVeil.Game
         private void OnMultiplayer()
         {
             Debug.Log("Main menu: Multiplayer (screen not implemented yet).");
-        }
-
-        private void OnOptions()
-        {
-            Debug.Log("Main menu: Options (screen not implemented yet).");
         }
 
         private void OnProfile()

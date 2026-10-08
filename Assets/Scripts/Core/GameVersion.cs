@@ -3,13 +3,13 @@ using UnityEngine;
 namespace LatticeVeil.Core
 {
     /// <summary>
-    /// Display version of the Unity game. Used for the window title
-    /// ("LatticeVeil - V#") and later for update checks. Bump when shipping
-    /// a new game build.
+    /// Display version of the Unity game (MAJOR.MINOR.PATCH). Used for the
+    /// window title ("LatticeVeil - V#") and later for update checks and the
+    /// GitHub release flow. Bump when shipping a new game build.
     /// </summary>
     public static class GameVersion
     {
-        public const string Current = "0.1";
+        public const string Current = "1.0.0";
 
         /// <summary>Window title for the game, including the version.</summary>
         public static string WindowTitle =>

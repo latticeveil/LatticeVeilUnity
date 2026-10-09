@@ -101,26 +101,58 @@ namespace LatticeVeil.Game
             rect.SetParent(page, false);
             Stretch(rect);
 
-            // Scrollable inner viewport (RectMask2D clips; the ScrollRect reacts
-            // to the mouse wheel). Cut off ABOVE the PLAYERS row: the visible
-            // band covers rows down to just before PLAYERS; the rest scrolls.
+            // Scrollable inner viewport (RectMask2D clips). Top is shaved so
+            // the first row clears the frame art; bottom cut is above PLAYERS.
             var viewportGo = new GameObject("AudioViewport", typeof(RectTransform), typeof(RectMask2D));
             var viewport = (RectTransform)viewportGo.transform;
             viewport.SetParent(rect, false);
             viewport.anchorMin = new Vector2(0f, 0f);
             viewport.anchorMax = new Vector2(1f, 1f);
             viewport.pivot = new Vector2(0.5f, 0.5f);
-            // Panel is 540 tall (center origin). Content band: y 210 → -46 in
-            // panel units; PLAYERS label sits at -233 rows-local (~-317
-            // unscaled… kept inside content) — the mask ends before it.
             viewport.offsetMin = new Vector2(0f, 56f);
-            viewport.offsetMax = new Vector2(0f, -24f);
+            viewport.offsetMax = new Vector2(0f, -34f); // shave the top more
 
             var scrollGo = viewportGo.AddComponent<ScrollRect>();
             scrollGo.horizontal = false;
             scrollGo.vertical = true;
             scrollGo.movementType = ScrollRect.MovementType.Clamped;
-            scrollGo.scrollSensitivity = 24f;
+            scrollGo.scrollSensitivity = 28f;
+
+            // Drag anywhere on the page scrolls (uGUI only drags from the
+            // content's raycast targets — Sliders/Toggles eat the drag).
+            viewportGo.AddComponent<ScrollAnywhereDrag>().Scroll = scrollGo;
+
+            // Visible scrollbar on the right edge.
+            var scrollbarGo = new GameObject("Scrollbar", typeof(RectTransform), typeof(Image), typeof(Scrollbar));
+            var scrollbarRect = (RectTransform)scrollbarGo.transform;
+            scrollbarRect.SetParent(rect, false);
+            scrollbarRect.anchorMin = new Vector2(1f, 0f);
+            scrollbarRect.anchorMax = new Vector2(1f, 1f);
+            scrollbarRect.pivot = new Vector2(1f, 0.5f);
+            scrollbarRect.sizeDelta = new Vector2(14f, 0f);
+            scrollbarRect.anchoredPosition = new Vector2(-8f, 0f);
+            scrollbarGo.GetComponent<Image>().color = new Color(1f, 1f, 1f, 0.14f);
+            var scrollbar = scrollbarGo.GetComponent<Scrollbar>();
+            scrollbar.direction = Scrollbar.Direction.BottomToTop;
+
+            var slidingAreaGo = new GameObject("Sliding Area", typeof(RectTransform));
+            var slidingArea = (RectTransform)slidingAreaGo.transform;
+            slidingArea.SetParent(scrollbarRect, false);
+            Stretch(slidingArea);
+            slidingArea.offsetMin = new Vector2(3f, 4f);
+            slidingArea.offsetMax = new Vector2(-3f, -4f);
+
+            var handleGo = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+            var handleRect = (RectTransform)handleGo.transform;
+            handleRect.SetParent(slidingArea, false);
+            Stretch(handleRect);
+            handleGo.GetComponent<Image>().color = new Color(0.85f, 0.9f, 0.95f, 0.75f);
+
+            scrollbar.handleRect = handleRect;
+            scrollbar.targetGraphic = handleGo.GetComponent<Image>();
+            scrollGo.verticalScrollbar = scrollbar;
+            scrollGo.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
+            scrollGo.verticalScrollbarSpacing = 4f;
 
             var contentGo = new GameObject("AudioContent", typeof(RectTransform));
             var content = (RectTransform)contentGo.transform;
@@ -130,8 +162,6 @@ namespace LatticeVeil.Game
             content.pivot = new Vector2(0.5f, 1f);
             content.anchoredPosition = Vector2.zero;
 
-            var rows = CreateRows(content);
-
             // Rows-local pitch is 66 (label sits 41 above its control), scaled
             // by ContentScale inside the content — so the unscaled content
             // needs ~500 units; anything past the panel scrolls.
@@ -139,6 +169,21 @@ namespace LatticeVeil.Game
             content.sizeDelta = new Vector2(0f, contentH);
             scrollGo.content = content;
             scrollGo.viewport = viewport;
+
+            // Invisible raycast catcher behind the rows: lets the user start a
+            // drag on any empty pixel of the page ("scroll wherever I am").
+            var catcherGo = new GameObject("ScrollCatcher", typeof(RectTransform), typeof(Image));
+            var catcher = (RectTransform)catcherGo.transform;
+            catcher.SetParent(content, false);
+            catcher.SetAsFirstSibling();
+            catcher.anchorMin = new Vector2(0f, 0f);
+            catcher.anchorMax = new Vector2(1f, 0f);
+            catcher.pivot = new Vector2(0.5f, 0f);
+            catcher.sizeDelta = new Vector2(0f, contentH);
+            catcherGo.GetComponent<Image>().color = Color.clear;
+            catcherGo.GetComponent<Image>().raycastTarget = true;
+
+            var rows = CreateRows(content);
 
             // ---- LEFT column: devices + channel mix ----
             var label = CreateText(rows, "OUTPUT DEVICE", 15, Accent);
@@ -469,16 +514,34 @@ namespace LatticeVeil.Game
 
             private void Awake()
             {
-                _fill = transform.Find("Fill") as RectTransform;
+                CacheFill();
+            }
+
+            private void CacheFill()
+            {
+                if (_fill != null)
+                    return;
+                // Fill lives under Background (built by CreateMeter). This
+                // component is created in the GameObject constructor BEFORE
+                // the children exist, so Awake caches null — hence lazy cache.
+                var bg = transform.Find("Background");
+                _fill = (bg != null ? bg.Find("Fill") : transform.Find("Fill")) as RectTransform;
                 if (_fill != null) _fillImage = _fill.GetComponent<Image>();
             }
 
             public void SetLevel(float level)
             {
                 level = Mathf.Clamp01(level);
+                CacheFill();
                 if (_fill != null)
                 {
-                    _fill.anchorMax = new Vector2(level, 1f);
+                    // Left-anchored fill: stretch height, set width by level.
+                    _fill.anchorMin = new Vector2(0f, 0f);
+                    _fill.anchorMax = new Vector2(0f, 1f);
+                    _fill.pivot = new Vector2(0f, 0.5f);
+                    float w = ((RectTransform)_fill.parent).rect.width - 4f;
+                    _fill.sizeDelta = new Vector2(Mathf.Max(0f, level * w), 0f);
+                    _fill.anchoredPosition = new Vector2(2f, 0f);
                     if (_fillImage != null)
                         _fillImage.color = LevelColor(level);
                 }
@@ -517,11 +580,11 @@ namespace LatticeVeil.Game
             var fillGo = new GameObject("Fill", typeof(RectTransform), typeof(Image));
             var fill = (RectTransform)fillGo.transform;
             fill.SetParent(bg, false);
-            fill.anchorMin = Vector2.zero;
+            fill.anchorMin = new Vector2(0f, 0f);
             fill.anchorMax = new Vector2(0f, 1f);
             fill.pivot = new Vector2(0f, 0.5f);
-            fill.offsetMin = new Vector2(2f, 2f);
-            fill.offsetMax = new Vector2(-2f, -2f);
+            fill.anchoredPosition = new Vector2(2f, 0f);
+            fill.sizeDelta = new Vector2(0f, -4f);
             fillGo.GetComponent<Image>().color = new Color(0.24f, 0.86f, 0.47f);
 
             var percentText = CreateText(rect, "0%", 15, TextColor);
@@ -537,6 +600,23 @@ namespace LatticeVeil.Game
             bar.PercentText = percentText;
             bar.SetLevel(0f);
             return bar;
+        }
+
+        /// <summary>
+        /// Drags anywhere inside the viewport scroll the content (uGUI's
+        /// ScrollRect only drags from its own target; Sliders/Toggles/Dropdowns
+        /// would otherwise eat the gesture).
+        /// </summary>
+        public sealed class ScrollAnywhereDrag : MonoBehaviour, UnityEngine.EventSystems.IBeginDragHandler,
+            UnityEngine.EventSystems.IDragHandler, UnityEngine.EventSystems.IEndDragHandler,
+            UnityEngine.EventSystems.IScrollHandler
+        {
+            public ScrollRect Scroll;
+
+            public void OnBeginDrag(UnityEngine.EventSystems.PointerEventData e) => Scroll?.OnBeginDrag(e);
+            public void OnDrag(UnityEngine.EventSystems.PointerEventData e) => Scroll?.OnDrag(e);
+            public void OnEndDrag(UnityEngine.EventSystems.PointerEventData e) => Scroll?.OnEndDrag(e);
+            public void OnScroll(UnityEngine.EventSystems.PointerEventData e) => Scroll?.OnScroll(e);
         }
 
         /// <summary>Keeps a slider's right-side value label in sync.</summary>

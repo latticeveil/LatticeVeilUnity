@@ -21,12 +21,14 @@ namespace LatticeVeil.Game
     /// </summary>
     public static class MicMonitorHost
     {
-        private const int SampleRate = 22050;
-        private const int ClipSeconds = 1;
+        private const int SampleRate = 24000;
+        // Shorter loop = less sidetone delay. 0.35 s keeps the AudioSource
+        // fed while staying near real time (1 s loops feel clearly delayed).
+        private const float ClipSeconds = 0.35f;
 
         private static AudioClip _clip;
         private static string _clipDevice;
-        private static float[] _buffer = new float[SampleRate * ClipSeconds];
+        private static float[] _buffer = new float[(int)(SampleRate * ClipSeconds)];
         private static float _smoothedLevel;
         private static AudioSource _sidetone;
         private static bool _monitorEnabled;
@@ -106,7 +108,13 @@ namespace LatticeVeil.Game
                 // Registry access failed: default-only.
             }
 
-            return result.OrderBy(d => d.name, StringComparer.OrdinalIgnoreCase).ToList();
+            // Same friendly name can appear on multiple endpoints (e.g. HDMI
+            // audio on several outputs of one GPU). Show each name once.
+            return result
+                .GroupBy(d => d.name, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .OrderBy(d => d.name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private static string ReadRegString(IntPtr key, string valueName)
@@ -199,22 +207,24 @@ namespace LatticeVeil.Game
             if (pos <= 0)
                 return;
 
-            int len = Mathf.Min(pos, _buffer.Length);
+            // Read a fixed recent window (~50 ms) ending at the write head —
+            // reads the freshest audio regardless of clip length.
+            int window = Mathf.Min((int)(SampleRate * 0.05f), _buffer.Length);
             if (_clip.GetData(_buffer, 0))
             {
-                // Window the most recent len samples ending at pos.
                 float peak = 0f;
-                int start = Mathf.Max(0, pos - len);
-                int count = pos - start;
-                for (int i = 0; i < count; i++)
+                for (int i = 0; i < window; i++)
                 {
-                    float s = Mathf.Abs(_buffer[(start + i) % _buffer.Length]) * _micVolume;
+                    int idx = (pos - window + i + _buffer.Length * 2) % _buffer.Length;
+                    float s = Mathf.Abs(_buffer[idx]) * _micVolume;
                     if (s > peak) peak = s;
                 }
 
-                // Map 0..1 raw sample to a usable meter range and smooth.
+                // Attack instantly (bar jumps up), release smoothly (falls).
                 float level = Mathf.Clamp01(peak * 3.5f);
-                _smoothedLevel = Mathf.Max(level, Mathf.Lerp(_smoothedLevel, level, Time.unscaledDeltaTime * 12f));
+                _smoothedLevel = level >= _smoothedLevel
+                    ? level
+                    : Mathf.Lerp(_smoothedLevel, level, Time.unscaledDeltaTime * 14f);
             }
         }
 
@@ -248,7 +258,10 @@ namespace LatticeVeil.Game
 
             StopCapture();
 
-            _clip = Microphone.Start(unityDevice.Length == 0 ? null : unityDevice, true, ClipSeconds, SampleRate);
+            // Microphone.Start takes whole seconds (0 throws). Use 1 s of ring
+            // buffer, but keep sidetone near-real-time by seeking the play
+            // head to just behind the write cursor (see UpdateSidetoneRouting).
+            _clip = Microphone.Start(unityDevice.Length == 0 ? null : unityDevice, true, Mathf.Max(1, (int)ClipSeconds), SampleRate);
             _clipDevice = unityDevice;
         }
 
@@ -287,12 +300,22 @@ namespace LatticeVeil.Game
                 {
                     _sidetone.clip = _clip;
                     _sidetone.volume = Mathf.Clamp01(_micVolume);
+                    // Loop points nearest the write head: play from a position
+                    // just behind the mic write cursor so sidetone trails only
+                    // the DSP buffer, not the whole clip length.
                     _sidetone.Play();
+                    int pos = Microphone.GetPosition(_clipDevice.Length == 0 ? null : _clipDevice);
+                    if (pos > 0)
+                        _sidetone.timeSamples = Mathf.Max(0, pos - 256);
                 }
                 else if (!_sidetone.isPlaying)
                 {
                     _sidetone.Play();
                 }
+                // Keep tracking the write head so the loop stays near-real-time.
+                int cur = Microphone.GetPosition(_clipDevice.Length == 0 ? null : _clipDevice);
+                if (cur > 0 && Mathf.Abs(_sidetone.timeSamples - cur) > _buffer.Length / 2)
+                    _sidetone.timeSamples = Mathf.Max(0, cur - 256);
             }
             else if (_sidetone.isPlaying)
             {

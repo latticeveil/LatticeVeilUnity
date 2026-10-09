@@ -309,7 +309,7 @@ namespace LatticeVeil.Game
             }
             totalTabsW += tabGap * (tabOrder.Length - 1);
             float tabX = -totalTabsW / 2f;
-            float tabY = panelH / 2f + Mathf.Max(8f, 12f * layoutScale) - tabHeight / 2f;
+            float tabY = panelH / 2f + Mathf.Max(18f, 30f * layoutScale) - tabHeight / 2f;
             foreach (var tab in tabOrder)
             {
                 var rect = (RectTransform)_tabButtons[tab].transform;

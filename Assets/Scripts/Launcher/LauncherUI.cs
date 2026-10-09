@@ -3465,7 +3465,7 @@ namespace LatticeVeil.Launcher
                 if (newKeepOpen != _settings.KeepLauncherOpen)
                 {
                     _settings.KeepLauncherOpen = newKeepOpen;
-                    _settings.Save(_log);
+                    _settings.SaveLauncherScoped(_log);
                 }
 
                 rowY += rowHeight + 10;
@@ -3473,7 +3473,7 @@ namespace LatticeVeil.Launcher
                 if (newInstantQuit != _settings.InstantQuitEnabled)
                 {
                     _settings.InstantQuitEnabled = newInstantQuit;
-                    _settings.Save(_log);
+                    _settings.SaveLauncherScoped(_log);
                 }
 
                 rowY += rowHeight + 10;
@@ -3481,7 +3481,7 @@ namespace LatticeVeil.Launcher
                 if (newEmbed != _settings.EmbedGameInLauncher)
                 {
                     _settings.EmbedGameInLauncher = newEmbed;
-                    _settings.Save(_log);
+                    _settings.SaveLauncherScoped(_log);
                 }
 
                 rowY += rowHeight + 10;
@@ -3489,7 +3489,7 @@ namespace LatticeVeil.Launcher
                 if (newDarkMode != _settings.DarkMode)
                 {
                     _settings.DarkMode = newDarkMode;
-                    _settings.Save(_log);
+                    _settings.SaveLauncherScoped(_log);
                 }
 
                 rowY += rowHeight + 10;
@@ -3497,7 +3497,7 @@ namespace LatticeVeil.Launcher
                 if (newAutoUpdates != _settings.AutoUpdateChecksEnabled)
                 {
                     _settings.AutoUpdateChecksEnabled = newAutoUpdates;
-                    _settings.Save(_log);
+                    _settings.SaveLauncherScoped(_log);
                 }
 
                 rowY += rowHeight + 10;
@@ -3505,7 +3505,7 @@ namespace LatticeVeil.Launcher
                 if (newAutoInstall != _settings.AutoInstallUpdatesEnabled)
                 {
                     _settings.AutoInstallUpdatesEnabled = newAutoInstall;
-                    _settings.Save(_log);
+                    _settings.SaveLauncherScoped(_log);
                 }
 
                 rowY += rowHeight + 10;
@@ -3513,7 +3513,7 @@ namespace LatticeVeil.Launcher
                 if (newAutoAssets != _settings.AutoTextureDownloadsEnabled)
                 {
                     _settings.AutoTextureDownloadsEnabled = newAutoAssets;
-                    _settings.Save(_log);
+                    _settings.SaveLauncherScoped(_log);
                 }
 
                 rowY += rowHeight + 16;
@@ -3522,7 +3522,7 @@ namespace LatticeVeil.Launcher
                 {
                     _settings.AlwaysMinimizeLauncherToTray = false;
                     _settings.LauncherCloseButtonAction = "";
-                    _settings.Save(_log);
+                    _settings.SaveLauncherScoped(_log);
                     _log.Info("Tray settings cleared.");
                 }
 
@@ -5769,7 +5769,7 @@ namespace LatticeVeil.Launcher
                         }
                         _log.Info("InstantQuitEnabled is on; quitting launcher process (game keeps running).");
                         GameProcessJob.ReleaseForInstantQuit();
-                        _settings.Save(_log);
+                        _settings.SaveLauncherScoped(_log);
                         _profile?.Save(_log);
                         _instantQuitInProgress = true;
                         Application.Quit();
@@ -6122,7 +6122,7 @@ namespace LatticeVeil.Launcher
             // Save settings on exit
             if (_settings != null)
             {
-                _settings.Save(_log);
+                _settings.SaveLauncherScoped(_log);
             }
 
             if (_profile != null)

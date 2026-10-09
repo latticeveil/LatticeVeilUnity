@@ -182,6 +182,43 @@ namespace LatticeVeil.Core
             }
         }
 
+        /// <summary>
+        /// Saves launcher-owned settings WITHOUT clobbering game-owned ones.
+        /// The launcher keeps an in-memory copy from startup; meanwhile the game
+        /// can write new Graphics/Audio values (fullscreen, resolution, ...) to
+        /// the same options.lvc. A plain Save() here would resurrect the stale
+        /// Graphics values on launcher exit. This re-reads the file, copies only
+        /// the [Launcher] section fields over it, and writes that back.
+        /// </summary>
+        public void SaveLauncherScoped(Logger log)
+        {
+            try
+            {
+                var fresh = new GameSettings();
+                if (File.Exists(Paths.SettingsJsonPath))
+                    fresh.LoadFromLvcFile(Paths.SettingsJsonPath);
+
+                // Launcher-owned fields only ([Launcher] section).
+                fresh.KeepLauncherOpen = KeepLauncherOpen;
+                fresh.InstantQuitEnabled = InstantQuitEnabled;
+                fresh.EmbedGameInLauncher = EmbedGameInLauncher;
+                fresh.AlwaysMinimizeLauncherToTray = AlwaysMinimizeLauncherToTray;
+                fresh.LauncherCloseButtonAction = LauncherCloseButtonAction;
+                fresh.DarkMode = DarkMode;
+                fresh.RendererBackend = RendererBackend;
+                fresh.LauncherRenderDistance = LauncherRenderDistance;
+                fresh.AutoUpdateChecksEnabled = AutoUpdateChecksEnabled;
+                fresh.AutoInstallUpdatesEnabled = AutoInstallUpdatesEnabled;
+                fresh.AutoTextureDownloadsEnabled = AutoTextureDownloadsEnabled;
+
+                fresh.Save(log);
+            }
+            catch (Exception ex)
+            {
+                log?.Warn($"Failed to save launcher settings: {ex.Message}");
+            }
+        }
+
         public void LoadFromLvcFile(string path)
         {
             if (!File.Exists(path)) return;

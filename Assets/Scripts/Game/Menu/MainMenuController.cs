@@ -93,9 +93,24 @@ namespace LatticeVeil.Game
         /// assigning Screen.fullScreenMode alone does NOT recreate the window —
         /// only Screen.SetResolution with the mode reliably applies it.
         /// </summary>
+        /// <summary>
+        /// The player can boot with a WS_POPUP (borderless) window even when
+        /// the serialized fullscreenMode is Windowed, and assigning
+        /// Screen.fullScreenMode alone does NOT recreate the window — only
+        /// Screen.SetResolution with the mode reliably applies it.
+        ///
+        /// Boot with the SAVED mode instead of a hardcoded windowed default:
+        /// forcing windowed first made fullscreen not stick across relaunches
+        /// (and let EnsureWindowFrame staple a title bar onto the borderless
+        /// window). SettingsBehavior.Apply (after BuildUi) is still the single
+        /// applier for everything else.
+        /// </summary>
         private static void EnforceWindowedDefault()
         {
-            Screen.SetResolution(DefaultWindowWidth, DefaultWindowHeight, FullScreenMode.Windowed);
+            var settings = GameSettings.LoadOrCreate(null);
+            SettingsBehavior.SetFullscreenDesired(settings.Fullscreen);
+            var mode = settings.Fullscreen ? FullScreenMode.FullScreenWindow : FullScreenMode.Windowed;
+            Screen.SetResolution(settings.ResolutionWidth, settings.ResolutionHeight, mode);
         }
 
         /// <summary>
@@ -144,6 +159,12 @@ namespace LatticeVeil.Game
         /// </summary>
         private static void EnsureWindowFrame(IntPtr hwnd)
         {
+            // Borderless fullscreen is an explicit user option; the game
+            // must not staple a caption/thickframe onto it (that is what made
+            // fullscreen not persist across relaunches).
+            if (SettingsBehavior.FullscreenDesired)
+                return;
+
             const int GWL_STYLE = -16;
             const long WS_CAPTION = 0x00C00000;
             const long WS_THICKFRAME = 0x00040000;

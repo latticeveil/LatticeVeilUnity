@@ -26,11 +26,30 @@ namespace LatticeVeil.Game
         private static int _targetH;
         private static FullScreenMode _targetMode = FullScreenMode.Windowed;
 
+        /// <summary>
+        /// True while the user's saved option says borderless fullscreen.
+        /// Window-style fixes (caption/thickframe) must NOT touch the window
+        /// in that state, or they punch a title bar into the fullscreen view
+        /// and the mode "doesn't stick" after a relaunch.
+        /// </summary>
+        public static bool FullscreenDesired { get; private set; }
+
+        /// <summary>
+        /// Set as early as possible (boot) so window-style fixes know the
+        /// saved mode even before the full Apply runs.
+        /// </summary>
+        public static void SetFullscreenDesired(bool fullscreen)
+        {
+            FullscreenDesired = fullscreen;
+        }
+
         /// <summary>Idempotent. Call at menu start and after options APPLY.</summary>
         public static void Apply(GameSettings settings)
         {
             if (settings == null)
                 return;
+
+            FullscreenDesired = settings.Fullscreen;
 
             // VSync + brightness + audio.
             QualitySettings.vSyncCount = settings.VSync ? 1 : 0;
@@ -246,6 +265,9 @@ namespace LatticeVeil.Game
         /// </summary>
         public static void LockWindowResize()
         {
+            if (FullscreenDesired)
+                return; // borderless fullscreen owns the window style; never lock it
+
             var hwnd = GetGameHwnd();
             if (hwnd == System.IntPtr.Zero)
                 return;

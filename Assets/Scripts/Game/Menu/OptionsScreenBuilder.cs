@@ -20,17 +20,34 @@ namespace LatticeVeil.Game
         public const float PanelHeight = 540f;
 
         // Content metrics (panel-local units, y measured from panel center).
+        // Rows live inside a container scaled by ContentScale so everything
+        // fits INSIDE the framed panel art (the frame has a thick border).
+        public const float ContentScale = 0.84f;
         private const float RowHeight = 34f;
         private const float SliderHeight = 26f;
         private const float LabelOffset = 41f; // label center above control center
-        private const float ColumnXLeft = -220f;
-        private const float ColumnXRight = 220f;
-        private const float ColumnWidth = 430f;
+        private const float ColumnXLeft = -210f;
+        private const float ColumnXRight = 210f;
+        private const float ColumnWidth = 410f;
 
         private static readonly Color TextColor = Color.white;
         private static readonly Color LabelColor = new Color(0.86f, 0.89f, 0.92f, 1f);
         private static readonly Color Accent = new Color(0.55f, 0.8f, 1f, 1f);
         private static readonly Color ControlBg = new Color(0.08f, 0.08f, 0.09f, 1f);
+
+        /// <summary>
+        /// Creates the row container that holds the settings widgets, scaled
+        /// down so the rows stay inside the framed panel's inner area.
+        /// </summary>
+        private static RectTransform CreateRows(RectTransform panel)
+        {
+            var rowsGo = new GameObject("Rows", typeof(RectTransform));
+            var rows = (RectTransform)rowsGo.transform;
+            rows.SetParent(panel, false);
+            Stretch(rows);
+            rows.localScale = Vector3.one * ContentScale;
+            return rows;
+        }
 
         /// <summary>Builds the Video page under the panel.</summary>
         public static GameObject BuildPage(RectTransform panel, OptionsScreenController controller)
@@ -39,23 +56,24 @@ namespace LatticeVeil.Game
             var rect = (RectTransform)root.transform;
             rect.SetParent(panel, false);
             Stretch(rect);
+            var rows = CreateRows(rect);
 
             // ---- Left column ----
-            var fsToggle = CreateToggle(rect, "FULLSCREEN", new Vector2(ColumnXLeft, 168f), ColumnWidth);
-            var vsToggle = CreateToggle(rect, "VSYNC", new Vector2(ColumnXLeft, 120f), ColumnWidth);
-            var resDropdown = CreateDropdown(rect, "RESOLUTION", new Vector2(ColumnXLeft, 40f), ColumnWidth,
+            var fsToggle = CreateToggle(rows, "FULLSCREEN", new Vector2(ColumnXLeft, 168f), ColumnWidth);
+            var vsToggle = CreateToggle(rows, "VSYNC", new Vector2(ColumnXLeft, 120f), ColumnWidth);
+            var resDropdown = CreateDropdown(rows, "RESOLUTION", new Vector2(ColumnXLeft, 40f), ColumnWidth,
                 new[] { "1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160" });
 
             // ---- Right column ----
-            var guiDropdown = CreateDropdown(rect, "GUI SCALE", new Vector2(ColumnXRight, 127f), ColumnWidth,
+            var guiDropdown = CreateDropdown(rows, "GUI SCALE", new Vector2(ColumnXRight, 127f), ColumnWidth,
                 new[] { "STANDARD", "LARGE", "LARGER" });
-            var qualityDropdown = CreateDropdown(rect, "QUALITY", new Vector2(ColumnXRight, 51f), ColumnWidth,
+            var qualityDropdown = CreateDropdown(rows, "QUALITY", new Vector2(ColumnXRight, 51f), ColumnWidth,
                 new[] { "LOW", "MEDIUM", "HIGH", "ULTRA" });
-            var brightness = CreateSlider(rect, "BRIGHTNESS", new Vector2(ColumnXRight, -25f), ColumnWidth,
+            var brightness = CreateSlider(rows, "BRIGHTNESS", new Vector2(ColumnXRight, -25f), ColumnWidth,
                 v => Mathf.RoundToInt(v * 100f) + "%");
-            var fov = CreateSlider(rect, "FOV", new Vector2(ColumnXRight, -101f), ColumnWidth,
+            var fov = CreateSlider(rows, "FOV", new Vector2(ColumnXRight, -101f), ColumnWidth,
                 v => Mathf.RoundToInt(Mathf.Lerp(60f, 110f, v)).ToString());
-            var renderDistance = CreateSlider(rect, "RENDER DISTANCE", new Vector2(ColumnXRight, -177f), ColumnWidth,
+            var renderDistance = CreateSlider(rows, "RENDER DISTANCE", new Vector2(ColumnXRight, -177f), ColumnWidth,
                 v => Mathf.RoundToInt(Mathf.Lerp(4f, 16f, v)) + " CHUNKS");
 
             controller.BindStandardWidgets(fsToggle, vsToggle, resDropdown, guiDropdown,
@@ -72,10 +90,11 @@ namespace LatticeVeil.Game
             var rect = (RectTransform)root.transform;
             rect.SetParent(page, false);
             Stretch(rect);
+            var rows = CreateRows(rect);
 
-            master = CreateSlider(rect, "MASTER", new Vector2(ColumnXLeft, 127f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            music = CreateSlider(rect, "MUSIC", new Vector2(ColumnXLeft, 51f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            sfx = CreateSlider(rect, "SFX", new Vector2(ColumnXLeft, -25f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            master = CreateSlider(rows, "MASTER", new Vector2(ColumnXLeft, 127f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            music = CreateSlider(rows, "MUSIC", new Vector2(ColumnXLeft, 51f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            sfx = CreateSlider(rows, "SFX", new Vector2(ColumnXLeft, -25f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
 
             return rect;
         }

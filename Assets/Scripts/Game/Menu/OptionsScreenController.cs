@@ -207,14 +207,15 @@ namespace LatticeVeil.Game
 
         private void BuildNotePage(RectTransform page, string title, string text)
         {
-            var t = CreateLabel(page, title, 22, Color.white);
-            Anchor((RectTransform)t.transform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0, -8));
-            var body = CreateLabel(page, text, 18, new Color(0.86f, 0.89f, 0.92f, 1f));
+            // Inside the frame's inner area (panel-local units, y from center).
+            var t = CreateLabel(page, title, 20, Color.white);
+            Anchor((RectTransform)t.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(-300f, 150f));
+            var body = CreateLabel(page, text, 17, new Color(0.86f, 0.89f, 0.92f, 1f));
             var bodyRect = (RectTransform)body.transform;
-            bodyRect.anchorMin = new Vector2(0f, 1f);
-            bodyRect.anchorMax = new Vector2(1f, 1f);
-            bodyRect.pivot = new Vector2(0f, 1f);
-            bodyRect.anchoredPosition = new Vector2(0, -40);
+            bodyRect.anchorMin = new Vector2(0.5f, 0.5f);
+            bodyRect.anchorMax = new Vector2(0.5f, 0.5f);
+            bodyRect.pivot = new Vector2(0f, 0.5f);
+            bodyRect.anchoredPosition = new Vector2(-300f, 118f);
         }
 
         private void BuildFooter()

@@ -124,6 +124,19 @@ namespace LatticeVeil.Game
             var hwnd = GetGameHwnd();
             if (hwnd != System.IntPtr.Zero && _targetMode == FullScreenMode.Windowed)
             {
+                // LEAVING FULLSCREEN: the SetWindowPos path only resizes the OS
+                // window — the Unity renderer would stay in its fullscreen swap
+                // chain and the option felt "stuck". Drop out of the mode first,
+                // then restyle + resize the now-windowed window below.
+                if (Screen.fullScreenMode != FullScreenMode.Windowed)
+                {
+                    Screen.SetResolution(_targetW, _targetH, FullScreenMode.Windowed);
+                    for (int i = 0; i < 50 && Screen.fullScreen; i++)
+                        yield return new WaitForSecondsRealtime(0.1f);
+                    Debug.Log("SettingsBehavior: left fullscreen mode (SetResolution Windowed).");
+                    yield return null;
+                }
+
                 // Wait for the window frame to actually exist: at boot the
                 // player may still be borderless, and resizing a borderless
                 // window gets overridden by MainMenuController.EnsureWindowFrame

@@ -68,6 +68,12 @@ namespace LatticeVeil.Game
 
         private GameSettings _settings;
 
+        // Unsaved-changes guard: snapshot taken when the screen opens; BACK/
+        // Escape compare against it and ask before throwing edits away.
+        private (bool fs, bool vs, int w, int h, float gui, string quality,
+            float brightness, int fov, int chunks, float master, float music, float sfx) _snapshot;
+        private GameObject _confirmPanel;
+
         private Action _onClosed;
         private bool _closed;
 
@@ -98,14 +104,113 @@ namespace LatticeVeil.Game
             BuildFooter();
             SelectTab(Tab.Video);
             Layout();
+            TakeSnapshot();
 
             Debug.Log("Options screen opened.");
+        }
+
+        // ------------------------------------------------------------------
+        // Unsaved-changes guard
+        // ------------------------------------------------------------------
+
+        private void TakeSnapshot()
+        {
+            // Read from the WIDGETS (not raw settings) so the snapshot matches
+            // exactly what HasUnsavedChanges compares against — a saved value
+            // that isn't offered in a dropdown (e.g. an odd old resolution)
+            // must not read as an unsaved change before the user touches it.
+            _snapshot = (_fsToggle.isOn, _vsToggle.isOn,
+                Resolutions[Mathf.Clamp(_resDropdown.value, 0, Resolutions.Length - 1)].w,
+                Resolutions[Mathf.Clamp(_resDropdown.value, 0, Resolutions.Length - 1)].h,
+                GuiScales[Mathf.Clamp(_guiDropdown.value, 0, GuiScales.Length - 1)].value,
+                Qualities[Mathf.Clamp(_qualityDropdown.value, 0, Qualities.Length - 1)],
+                Mathf.Lerp(0.5f, 1.5f, Mathf.Clamp01(_brightness.value)),
+                Mathf.RoundToInt(Mathf.Lerp(60f, 110f, Mathf.Clamp01(_fov.value))),
+                Mathf.RoundToInt(Mathf.Lerp(4f, 16f, Mathf.Clamp01(_renderDistance.value))),
+                Mathf.Clamp01(_master.value), Mathf.Clamp01(_music.value), Mathf.Clamp01(_sfx.value));
+        }
+
+        private bool HasUnsavedChanges()
+        {
+            return _fsToggle.isOn != _snapshot.fs
+                || _vsToggle.isOn != _snapshot.vs
+                || Resolutions[Mathf.Clamp(_resDropdown.value, 0, Resolutions.Length - 1)] != (_snapshot.w, _snapshot.h)
+                || !Mathf.Approximately(GuiScales[Mathf.Clamp(_guiDropdown.value, 0, GuiScales.Length - 1)].value, _snapshot.gui)
+                || Qualities[Mathf.Clamp(_qualityDropdown.value, 0, Qualities.Length - 1)] != _snapshot.quality
+                || !Mathf.Approximately(Mathf.Lerp(0.5f, 1.5f, Mathf.Clamp01(_brightness.value)), _snapshot.brightness)
+                || Mathf.RoundToInt(Mathf.Lerp(60f, 110f, Mathf.Clamp01(_fov.value))) != _snapshot.fov
+                || Mathf.RoundToInt(Mathf.Lerp(4f, 16f, Mathf.Clamp01(_renderDistance.value))) != _snapshot.chunks
+                || !Mathf.Approximately(Mathf.Clamp01(_master.value), _snapshot.master)
+                || !Mathf.Approximately(Mathf.Clamp01(_music.value), _snapshot.music)
+                || !Mathf.Approximately(Mathf.Clamp01(_sfx.value), _snapshot.sfx);
+        }
+
+        /// <summary>BACK/Escape: block when edits exist and ask what to do.</summary>
+        private void RequestClose()
+        {
+            if (_confirmPanel != null)
+            {
+                Close(); // already asking — a second Esc confirms discard
+                return;
+            }
+            if (!HasUnsavedChanges())
+            {
+                Close();
+                return;
+            }
+            ShowUnsavedConfirm();
+        }
+
+        private void ShowUnsavedConfirm()
+        {
+            _confirmPanel = new GameObject("UnsavedConfirm", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            _confirmPanel.transform.SetParent(_screenRoot.transform, false);
+            Stretch((RectTransform)_confirmPanel.transform);
+            _confirmPanel.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.6f); // swallow clicks behind
+
+            var box = new GameObject("Box", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            box.transform.SetParent(_confirmPanel.transform, false);
+            var boxRect = (RectTransform)box.transform;
+            boxRect.anchorMin = boxRect.anchorMax = boxRect.pivot = new Vector2(0.5f, 0.5f);
+            boxRect.sizeDelta = new Vector2(560f, 220f);
+            box.GetComponent<Image>().color = new Color(0.12f, 0.12f, 0.14f, 0.98f);
+
+            var msg = CreateLabel(boxRect, "You have unsaved changes.", 22, Color.white);
+            var msgRect = (RectTransform)msg.transform;
+            msgRect.anchorMin = new Vector2(0f, 1f);
+            msgRect.anchorMax = new Vector2(1f, 1f);
+            msgRect.pivot = new Vector2(0.5f, 1f);
+            msgRect.anchoredPosition = new Vector2(0f, -50f);
+            msg.alignment = TextAnchor.MiddleCenter;
+
+            var sub = CreateLabel(boxRect, "Discard your edits, or save them with APPLY?", 16, new Color(0.86f, 0.89f, 0.92f, 1f));
+            var subRect = (RectTransform)sub.transform;
+            subRect.anchorMin = new Vector2(0f, 1f);
+            subRect.anchorMax = new Vector2(1f, 1f);
+            subRect.pivot = new Vector2(0.5f, 1f);
+            subRect.anchoredPosition = new Vector2(0f, -90f);
+            sub.alignment = TextAnchor.MiddleCenter;
+
+            var discard = CreateTextureButton("Btn_Discard", null, "DISCARD", () => Close());
+            discard.transform.SetParent(boxRect, false);
+            var save = CreateTextureButton("Btn_SaveAndClose", null, "SAVE", () => { Destroy(_confirmPanel); _confirmPanel = null; Apply(); });
+            save.transform.SetParent(boxRect, false);
+
+            float btnY = -150f;
+            var dRect = (RectTransform)discard.transform;
+            dRect.anchorMin = dRect.anchorMax = dRect.pivot = new Vector2(0.5f, 0.5f);
+            dRect.sizeDelta = new Vector2(200f, 48f);
+            dRect.anchoredPosition = new Vector2(-120f, btnY);
+            var sRect = (RectTransform)save.transform;
+            sRect.anchorMin = sRect.anchorMax = sRect.pivot = new Vector2(0.5f, 0.5f);
+            sRect.sizeDelta = new Vector2(200f, 48f);
+            sRect.anchoredPosition = new Vector2(120f, btnY);
         }
 
         private void Update()
         {
             if (Input.GetKeyDown(KeyCode.Escape))
-                Close();
+                RequestClose();
 
             var rect = _canvas.GetComponent<RectTransform>().rect;
             if (Math.Abs(rect.width - _lastW) > 0.5f || Math.Abs(rect.height - _lastH) > 0.5f)
@@ -222,7 +327,7 @@ namespace LatticeVeil.Game
 
         private void BuildFooter()
         {
-            var back = CreateTextureButton("Btn_Back", _backTexture, "BACK", Close);
+            var back = CreateTextureButton("Btn_Back", _backTexture, "BACK", RequestClose);
             back.transform.SetParent(_screenRoot, false);
 
             var apply = CreateTextureButton("Btn_APPLY", _applyTexture, "APPLY", Apply);

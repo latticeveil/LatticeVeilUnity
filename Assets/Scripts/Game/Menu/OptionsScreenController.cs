@@ -26,11 +26,10 @@ namespace LatticeVeil.Game
             (1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)
         };
         // GUI scale applies to the WHOLE UI (buttons + layout together) via the
-        // shared CanvasScaler, so corner-pinned buttons scale in place. LARGE is
-        // the largest option and scales only a little so text stays readable.
+        // shared CanvasScaler, so corner-pinned buttons scale in place.
         private static readonly (float value, string label)[] GuiScales =
         {
-            (1.0f, "STANDARD"), (1.25f, "LARGE")
+            (0.9f, "SMALL"), (1.0f, "STANDARD"), (1.25f, "LARGER")
         };
         private static readonly string[] Qualities = { "LOW", "MEDIUM", "HIGH", "ULTRA" };
 
@@ -346,7 +345,7 @@ namespace LatticeVeil.Game
                 apply.anchorMin = new Vector2(0.5f, 0f);
                 apply.anchorMax = new Vector2(0.5f, 0f);
                 apply.pivot = new Vector2(0.5f, 0f);
-                apply.anchoredPosition = new Vector2(0, Mathf.Max(4f, 6f * layoutScale)); // a bit lower
+                apply.anchoredPosition = new Vector2(0, 2f); // tight to the frame's bottom edge
             }
         }
 
@@ -488,7 +487,7 @@ namespace LatticeVeil.Game
                 _settings.ResolutionHeight = Resolutions[resIdx].h;
             }
 
-            _settings.GuiScale = GuiScales[Mathf.Clamp(_guiDropdown.value, 0, GuiScales.Length - 1)].value;
+            _settings.GuiScale = Mathf.Clamp(GuiScales[Mathf.Clamp(_guiDropdown.value, 0, GuiScales.Length - 1)].value, 0.9f, 1.25f);
             _settings.QualityPreset = Qualities[Mathf.Clamp(_qualityDropdown.value, 0, Qualities.Length - 1)];
             _settings.Brightness = Mathf.Lerp(0.5f, 1.5f, Mathf.Clamp01(_brightness.value));
             _settings.FieldOfView = Mathf.RoundToInt(Mathf.Lerp(60f, 110f, Mathf.Clamp01(_fov.value)));

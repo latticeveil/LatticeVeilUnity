@@ -390,12 +390,16 @@ namespace LatticeVeil.Game
             rect.SetParent(parent, false);
             var text = go.AddComponent<Text>();
             text.font = OptionsFont;
-            text.fontSize = size;
+            // Crisper glyphs: larger source size scaled down renders cleaner
+            // than a small size scaled up (no blur when the canvas scales).
+            text.fontSize = Mathf.Max(size, 14);
             text.color = color;
             text.alignment = TextAnchor.MiddleCenter;
             text.text = content;
             text.raycastTarget = false;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
+            text.verticalOverflow = VerticalWrapMode.Overflow;
+            text.supportRichText = false;
             return text;
         }
 

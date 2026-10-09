@@ -77,10 +77,6 @@ namespace LatticeVeil.Game
             if (width <= 0 || height <= 0)
                 return;
 
-            if (Screen.width == width && Screen.height == height &&
-                Screen.fullScreenMode.Equals(mode))
-                return;
-
             _targetW = width;
             _targetH = height;
             _targetMode = mode;
@@ -109,6 +105,19 @@ namespace LatticeVeil.Game
             var hwnd = GetGameHwnd();
             if (hwnd != System.IntPtr.Zero && _targetMode == FullScreenMode.Windowed)
             {
+                // Wait for the window frame to actually exist: at boot the
+                // player may still be borderless, and resizing a borderless
+                // window gets overridden by MainMenuController.EnsureWindowFrame
+                // right after (which reapplies its own frame).
+                for (int i = 0; i < 60; i++)
+                {
+                    const long WS_CAPTION = 0x00C00000;
+                    var style = GetWindowLongW(hwnd, -16 /*GWL_STYLE*/);
+                    if ((style & WS_CAPTION) != 0)
+                        break;
+                    yield return new WaitForSecondsRealtime(0.1f);
+                }
+
                 UnlockWindowResize();
                 yield return null; // let the style change settle
 
@@ -133,7 +142,8 @@ namespace LatticeVeil.Game
                 yield break;
             }
 
-            // Fallback (fullscreen/embedded): the old deferred + retry path.
+            // Windowed path skipped (embedded or fullscreen): defer + retry
+            // with Screen.SetResolution, which rebuilds the back buffer.
             while (_retriesLeft-- > 0)
             {
                 Screen.SetResolution(_targetW, _targetH, _targetMode);
@@ -179,11 +189,11 @@ namespace LatticeVeil.Game
         /// adjusting each menu canvas' reference resolution. Because every
         /// element is anchored inside the canvas (corners to corners, center to
         /// center), scaling shrinks/grows everything in place — a corner button
-        /// stays in its corner, just smaller. STANDARD=1.0, LARGE=1.25 (max).
+        /// stays in its corner, just smaller. SMALL=0.9, STANDARD=1.0, LARGER=1.25 (max).
         /// </summary>
         public static void ApplyGuiScale(float guiScale)
         {
-            var scale = Mathf.Clamp(guiScale, 0.75f, 1.25f);
+            var scale = Mathf.Clamp(guiScale, 0.9f, 1.25f);
             foreach (var scaler in Object.FindObjectsOfType<CanvasScaler>())
             {
                 if (scaler.uiScaleMode != CanvasScaler.ScaleMode.ScaleWithScreenSize)

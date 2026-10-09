@@ -53,20 +53,20 @@ namespace LatticeVeil.Game
             var height = Mathf.Max(1f, uiHeight);
             var centerX = width / 2f;
 
-            var footerMarginX = Mathf.Clamp(width / 48f, 14f, 28f);
-            var footerMarginY = Mathf.Clamp(height / 40f, 14f, 24f);
-            var footerButtonSize = Mathf.Clamp(Mathf.Min(width, height) / 10f, 72f, 108f);
+            var footerMarginX = Mathf.Clamp(width / 64f, 16f, 26f);
+            var footerMarginY = Mathf.Clamp(width / 64f, 16f, 26f);
+            var footerButtonSize = Mathf.Clamp(Mathf.Min(width, height) / 7.5f, 96f, 152f);
 
             var topMargin = Mathf.Clamp(height / 10f, 56f, 112f);
             var gapToFooter = Mathf.Clamp(height / 24f, 24f, 42f);
             var spacing = Mathf.Clamp(height / 70f, 10f, 18f);
             const int buttonsCount = 4;
             var bottomReserved = footerButtonSize + footerMarginY + gapToFooter;
-            var availableHeight = Mathf.Max(280f, height - topMargin - bottomReserved);
-            var buttonHeight = Mathf.Clamp((availableHeight - spacing * (buttonsCount - 1)) / buttonsCount, 78f, 120f);
-            var preferredButtonWidth = Mathf.Round(buttonHeight * 3.0f);
-            var maxButtonWidth = Mathf.Max(240f, Mathf.Min(460f, width - 140f));
-            var minButtonWidth = Mathf.Min(300f, maxButtonWidth);
+            var availableHeight = Mathf.Max(300f, height - topMargin - bottomReserved);
+            var buttonHeight = Mathf.Clamp((availableHeight - spacing * (buttonsCount - 1)) / buttonsCount, 96f, 150f);
+            var preferredButtonWidth = Mathf.Round(buttonHeight * 3.2f);
+            var maxButtonWidth = Mathf.Max(320f, Mathf.Min(560f, width - 140f));
+            var minButtonWidth = Mathf.Min(320f, maxButtonWidth);
             var buttonWidth = Mathf.Clamp(preferredButtonWidth, minButtonWidth, maxButtonWidth);
             var totalHeight = buttonHeight * buttonsCount + spacing * (buttonsCount - 1);
             var startY = Mathf.Max(topMargin, (height - bottomReserved - totalHeight) / 2f);

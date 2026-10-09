@@ -178,13 +178,22 @@ namespace LatticeVeil.Game
 
         private void Update()
         {
-            if (Math.Abs(Screen.width - _lastWindowW) > 0.5f || Math.Abs(Screen.height - _lastWindowH) > 0.5f)
+            // Re-layout when the OS window changes OR the canvas rect changes
+            // (GUI scale edits the CanvasScaler reference, which resizes the
+            // canvas without touching Screen.width/height).
+            var canvasRect = _canvas != null ? _canvas.GetComponent<RectTransform>().rect : new Rect();
+            bool windowChanged = Math.Abs(Screen.width - _lastWindowW) > 0.5f || Math.Abs(Screen.height - _lastWindowH) > 0.5f;
+            bool canvasChanged = Math.Abs(canvasRect.width - _lastCanvasW) > 0.5f || Math.Abs(canvasRect.height - _lastCanvasH) > 0.5f;
+            if (windowChanged || canvasChanged)
                 ApplyLayout();
 
             // Options owns Escape while open (it closes the screen, not the game).
             if (Input.GetKeyDown(KeyCode.Escape) && !_optionsOpen)
                 RequestQuit();
         }
+
+        private float _lastCanvasW;
+        private float _lastCanvasH;
 
         private bool _optionsOpen;
 
@@ -447,7 +456,13 @@ namespace LatticeVeil.Game
             go.GetComponent<Image>().color = Color.white;
         }
 
-        /// <summary>Recomputes the virtual viewport and positions every button (MonoGame OnResize).</summary>
+        /// <summary>
+        /// Lays out every button in CANVAS units. The CanvasScaler already
+        /// maps the window to reference units, so the old virtual-viewport
+        /// double-scale (MenuRoot sized to window/referenceScale on top of
+        /// the scaler) pushed the footer icons off-screen and the button
+        /// column past the top edge.
+        /// </summary>
         private void ApplyLayout()
         {
             if (_canvas == null || _menuRoot == null)
@@ -456,14 +471,17 @@ namespace LatticeVeil.Game
             _lastWindowW = Screen.width;
             _lastWindowH = Screen.height;
 
-            var virtualSize = MainMenuLayout.ViewportSize(_lastWindowW, _lastWindowH);
-            var scale = MainMenuLayout.ReferenceScale(_lastWindowW, _lastWindowH);
+            // MenuRoot fills the canvas exactly; no extra local scale.
+            _menuRoot.anchorMin = Vector2.zero;
+            _menuRoot.anchorMax = Vector2.one;
+            _menuRoot.offsetMin = Vector2.zero;
+            _menuRoot.offsetMax = Vector2.zero;
+            _menuRoot.localScale = Vector3.one;
 
-            _menuRoot.sizeDelta = virtualSize;
-            _menuRoot.anchoredPosition = Vector2.zero;
-            _menuRoot.localScale = new Vector3(scale, scale, 1f);
-
-            var rects = MainMenuLayout.Create(virtualSize.x, virtualSize.y);
+            var canvasRect = _canvas.GetComponent<RectTransform>().rect;
+            _lastCanvasW = canvasRect.width;
+            _lastCanvasH = canvasRect.height;
+            var rects = MainMenuLayout.Create(canvasRect.width, canvasRect.height);
             var map = new Dictionary<string, Rect>
             {
                 { "SINGLEPLAYER", rects.Singleplayer },
@@ -481,9 +499,9 @@ namespace LatticeVeil.Game
                     continue;
 
                 btn.LayoutRect = r;
-                // Convert MonoGame top-left rect to centered anchored position.
+                // Convert MonoGame top-left rect to centered anchored position (canvas y-up).
                 var center = new Vector2(r.x + r.width / 2f, r.y + r.height / 2f);
-                var uiCenter = new Vector2(center.x, virtualSize.y - center.y); // Unity y-up
+                var uiCenter = new Vector2(center.x, canvasRect.height - center.y); // Unity y-up
                 btn.RestPosition = uiCenter;
                 btn.Transform.anchoredPosition = uiCenter;
                 btn.Transform.sizeDelta = new Vector2(r.width, r.height);

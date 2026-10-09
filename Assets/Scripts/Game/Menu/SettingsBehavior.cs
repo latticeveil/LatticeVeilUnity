@@ -167,10 +167,26 @@ namespace LatticeVeil.Game
                 if (y < 0) y = 0;
 
                 SetWindowPosW(hwnd, System.IntPtr.Zero, x, y, outerW, outerH, SWP_NOZORDER);
+
+                // Wait until the renderer actually reports the new client size
+                // (Screen.width/height lag a few frames behind SetWindowPos).
+                // Treating a lagging read as failure produced the spurious
+                // "resolution change did not stick" warning.
+                for (int i = 0; i < 50; i++)
+                {
+                    if (GetClientRectSize(hwnd, out var cw, out var ch)
+                        && Mathf.Abs(cw - _targetW) <= 8 && Mathf.Abs(ch - _targetH) <= 8)
+                        break;
+                    yield return new WaitForSecondsRealtime(0.1f);
+                }
                 yield return null;
 
                 LockWindowResize();
-                Debug.Log($"SettingsBehavior: resolution now {_targetW}x{_targetH} (SetWindowPos path).");
+                if (GetClientRectSize(hwnd, out var w, out var h)
+                    && Mathf.Abs(w - _targetW) <= 8 && Mathf.Abs(h - _targetH) <= 8)
+                    Debug.Log($"SettingsBehavior: resolution now {w}x{h} (SetWindowPos path).");
+                else
+                    Debug.LogWarning($"SettingsBehavior: resolution change to {_targetW}x{_targetH} did not stick.");
                 yield break;
             }
 
@@ -210,6 +226,23 @@ namespace LatticeVeil.Game
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern bool GetWindowRect(System.IntPtr hWnd, out RECT lpRect);
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct NaRECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool GetClientRect(System.IntPtr hWnd, out NaRECT lpRect);
+
+        /// <summary>Actual client size of the game window in pixels.</summary>
+        private static bool GetClientRectSize(System.IntPtr hwnd, out int w, out int h)
+        {
+            w = 0; h = 0;
+            if (hwnd == System.IntPtr.Zero || !GetClientRect(hwnd, out var r))
+                return false;
+            w = r.Right - r.Left;
+            h = r.Bottom - r.Top;
+            return w > 0 && h > 0;
+        }
 
 
         // ------------------------------------------------------------------

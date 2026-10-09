@@ -75,6 +75,8 @@ namespace LatticeVeil.Game
         private Slider _micVolume;
         private Toggle _micEnabled;
         private Toggle _micMonitor;
+        private OptionsScreenBuilder.MicMeterBar _micMeter;
+        private Text _micMeterPercent;
         private List<string> _inputDeviceIds = new List<string>();
         private List<string> _outputDeviceIds = new List<string>();
 
@@ -235,16 +237,6 @@ namespace LatticeVeil.Game
             sRect.anchoredPosition = new Vector2(120f, btnY);
         }
 
-        private void Update()
-        {
-            if (Input.GetKeyDown(KeyCode.Escape))
-                RequestClose();
-
-            var rect = _canvas.GetComponent<RectTransform>().rect;
-            if (Math.Abs(rect.width - _lastW) > 0.5f || Math.Abs(rect.height - _lastH) > 0.5f)
-                Layout();
-        }
-
         private float _lastW;
         private float _lastH;
 
@@ -330,7 +322,9 @@ namespace LatticeVeil.Game
                 out _master, out _music, out _sfx,
                 out _game, out _animals, out _monsters, out _environment, out _players,
                 out _inputDevice, out _outputDevice,
-                out _micVolume, out _micEnabled, out _micMonitor);
+                out _micVolume, out _micEnabled, out _micMonitor,
+                out _micMeter, out _micMeterPercent,
+                _screenRoot);
 
             PopulateAudioValues();
 
@@ -422,6 +416,21 @@ namespace LatticeVeil.Game
             return string.IsNullOrWhiteSpace(id) ? "SYSTEM DEFAULT" : name;
         }
 
+        private void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.Escape))
+                RequestClose();
+
+            var rect = _canvas.GetComponent<RectTransform>().rect;
+            if (Math.Abs(rect.width - _lastW) > 0.5f || Math.Abs(rect.height - _lastH) > 0.5f)
+                Layout();
+
+            // Always-on mic meter while the Options screen exists.
+            MicMonitorHost.Poll();
+            if (_micMeter != null)
+                _micMeter.SetLevel(MicMonitorHost.Level);
+        }
+
         private void PopulateAudioValues()
         {
             _master.SetValueWithoutNotify(Mathf.Clamp01(_settings.MasterVolume));
@@ -436,24 +445,23 @@ namespace LatticeVeil.Game
             _micEnabled.SetIsOnWithoutNotify(_settings.MicEnabled);
             _micMonitor.SetIsOnWithoutNotify(_settings.MicMonitor);
 
-            // Enumerate audio devices (Unity: Microphone for input; output
-            // devices are not enumerable in the player, so offer SYSTEM DEFAULT
-            // plus a manual "default" entry — the engine uses the OS default).
+            // Real device enumeration: mics via Microphone.devices, output
+            // (render) devices via the WASAPI MMDevice registry in
+            // MicMonitorHost. Each dropdown starts with SYSTEM DEFAULT.
             _inputDeviceIds.Clear();
             _outputDeviceIds.Clear();
-            var inputOptions = new List<string> { "SYSTEM DEFAULT" };
-            var outputOptions = new List<string> { "SYSTEM DEFAULT" };
-            _inputDeviceIds.Add("");
-            _outputDeviceIds.Add("");
-            try
+            var inputOptions = new List<string>();
+            var outputOptions = new List<string>();
+            foreach (var (id, name) in MicMonitorHost.EnumerateInputDevices())
             {
-                foreach (var name in Microphone.devices)
-                {
-                    inputOptions.Add(name);
-                    _inputDeviceIds.Add(name);
-                }
+                _inputDeviceIds.Add(id);
+                inputOptions.Add(name.ToUpperInvariant());
             }
-            catch { /* no mic subsystem — keep SYSTEM DEFAULT only */ }
+            foreach (var (id, name) in MicMonitorHost.EnumerateOutputDevices())
+            {
+                _outputDeviceIds.Add(id);
+                outputOptions.Add(name.ToUpperInvariant());
+            }
 
             _inputDevice.ClearOptions();
             _inputDevice.AddOptions(inputOptions);
@@ -464,6 +472,33 @@ namespace LatticeVeil.Game
 
             foreach (var s in new[] { _master, _music, _sfx, _game, _animals, _monsters, _environment, _players, _micVolume })
                 s.GetComponent<OptionsScreenBuilder.SliderValueText>().Refresh();
+
+            // Always-on live preview: capture starts regardless of the ENABLE
+            // toggle so the meter is viewable immediately; sidetone only when
+            // both ENABLE and MONITOR are on.
+            MicMonitorHost.Configure(_settings.AudioInputDeviceId,
+                micEnabled: true,
+                _settings.MicVolume,
+                _settings.MicMonitor && _settings.MicEnabled);
+
+            // Live re-configure when any mic widget changes.
+            _inputDevice.onValueChanged.AddListener(_ => ReconfigureMic());
+            _micVolume.onValueChanged.AddListener(_ => ReconfigureMic());
+            _micEnabled.onValueChanged.AddListener(_ => ReconfigureMic());
+            _micMonitor.onValueChanged.AddListener(_ => ReconfigureMic());
+        }
+
+        private void ReconfigureMic()
+        {
+            var deviceId = _inputDevice.value > 0 && _inputDevice.value < _inputDeviceIds.Count
+                ? _inputDeviceIds[_inputDevice.value]
+                : "";
+            // Meter stays live even when ENABLE is off (view-only preview);
+            // sidetone requires both ENABLE and MONITOR.
+            MicMonitorHost.Configure(deviceId,
+                micEnabled: true,
+                _micVolume.value,
+                _micMonitor.isOn && _micEnabled.isOn);
         }
 
         // ------------------------------------------------------------------
@@ -714,6 +749,7 @@ namespace LatticeVeil.Game
             // through the deferred SettingsBehavior path, which is safe to
             // trigger from the click handler (it never resizes inside it).
             SettingsBehavior.Apply(_settings);
+            ReconfigureMic(); // apply saved mic config to the live monitor
             TakeSnapshot(); // applied values are now the baseline
             ShowAppliedToast();
         }
@@ -775,6 +811,7 @@ namespace LatticeVeil.Game
             _closed = true;
 
             Debug.Log("Options screen closed.");
+            MicMonitorHost.Shutdown(); // stop capture + sidetone when leaving options
             if (_screenRoot != null)
                 Destroy(_screenRoot.gameObject);
             Destroy(gameObject);

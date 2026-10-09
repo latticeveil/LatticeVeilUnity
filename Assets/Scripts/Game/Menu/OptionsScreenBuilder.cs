@@ -92,7 +92,9 @@ namespace LatticeVeil.Game
             out Slider master, out Slider music, out Slider sfx,
             out Slider game, out Slider animals, out Slider monsters, out Slider environment, out Slider players,
             out Dropdown inputDevice, out Dropdown outputDevice,
-            out Slider micVolume, out Toggle micEnabled, out Toggle micMonitor)
+            out Slider micVolume, out Toggle micEnabled, out Toggle micMonitor,
+            out MicMeterBar meterFill, out Text meterPercent,
+            RectTransform screenRoot)
         {
             var root = new GameObject("StandardPageAudio", typeof(RectTransform));
             var rect = (RectTransform)root.transform;
@@ -100,11 +102,19 @@ namespace LatticeVeil.Game
             Stretch(rect);
 
             // Scrollable inner viewport (RectMask2D clips; the ScrollRect reacts
-            // to the mouse wheel) with a taller content area when needed.
+            // to the mouse wheel). Cut off ABOVE the PLAYERS row: the visible
+            // band covers rows down to just before PLAYERS; the rest scrolls.
             var viewportGo = new GameObject("AudioViewport", typeof(RectTransform), typeof(RectMask2D));
             var viewport = (RectTransform)viewportGo.transform;
             viewport.SetParent(rect, false);
-            Stretch(viewport);
+            viewport.anchorMin = new Vector2(0f, 0f);
+            viewport.anchorMax = new Vector2(1f, 1f);
+            viewport.pivot = new Vector2(0.5f, 0.5f);
+            // Panel is 540 tall (center origin). Content band: y 210 → -46 in
+            // panel units; PLAYERS label sits at -233 rows-local (~-317
+            // unscaled… kept inside content) — the mask ends before it.
+            viewport.offsetMin = new Vector2(0f, 56f);
+            viewport.offsetMax = new Vector2(0f, -24f);
 
             var scrollGo = viewportGo.AddComponent<ScrollRect>();
             scrollGo.horizontal = false;
@@ -134,37 +144,42 @@ namespace LatticeVeil.Game
             var label = CreateText(rows, "OUTPUT DEVICE", 15, Accent);
             SetRect((RectTransform)label.transform, new Vector2(ColumnXLeft, 246f), new Vector2(ColumnWidth, 20f));
             label.alignment = TextAnchor.LowerLeft;
-            outputDevice = CreateDropdown(rows, "", new Vector2(ColumnXLeft, 218f), ColumnWidth, new[] { "SYSTEM DEFAULT" });
+            outputDevice = CreateDropdown(rows, "", new Vector2(ColumnXLeft, 214f), ColumnWidth, new[] { "SYSTEM DEFAULT" }, screenRoot);
 
-            var mixHeader = CreateText(rows, "CHANNEL MIX", 15, Accent);
-            SetRect((RectTransform)mixHeader.transform, new Vector2(ColumnXLeft, 184f), new Vector2(ColumnWidth, 20f));
-            mixHeader.alignment = TextAnchor.LowerLeft;
-
-            master = CreateSlider(rows, "MASTER", new Vector2(ColumnXLeft, 122f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            music = CreateSlider(rows, "MUSIC", new Vector2(ColumnXLeft, 56f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            game = CreateSlider(rows, "GAME", new Vector2(ColumnXLeft, -10f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            animals = CreateSlider(rows, "ANIMALS", new Vector2(ColumnXLeft, -76f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            monsters = CreateSlider(rows, "MONSTERS", new Vector2(ColumnXLeft, -142f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            environment = CreateSlider(rows, "ENVIRONMENT", new Vector2(ColumnXLeft, -208f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            players = CreateSlider(rows, "PLAYERS", new Vector2(ColumnXLeft, -274f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            master = CreateSlider(rows, "MASTER", new Vector2(ColumnXLeft, 148f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            music = CreateSlider(rows, "MUSIC", new Vector2(ColumnXLeft, 84f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            game = CreateSlider(rows, "GAME", new Vector2(ColumnXLeft, 20f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            animals = CreateSlider(rows, "ANIMALS", new Vector2(ColumnXLeft, -44f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            monsters = CreateSlider(rows, "MONSTERS", new Vector2(ColumnXLeft, -108f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            environment = CreateSlider(rows, "ENVIRONMENT", new Vector2(ColumnXLeft, -172f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            players = CreateSlider(rows, "PLAYERS", new Vector2(ColumnXLeft, -236f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
 
             // ---- RIGHT column: MIC section ----
             var micHeader = CreateText(rows, "MICROPHONE", 15, Accent);
             SetRect((RectTransform)micHeader.transform, new Vector2(ColumnXRight, 246f), new Vector2(ColumnWidth, 20f));
             micHeader.alignment = TextAnchor.LowerLeft;
 
-            micEnabled = CreateToggle(rows, "ENABLE MICROPHONE", new Vector2(ColumnXRight, 224f), ColumnWidth);
-            inputDevice = CreateDropdown(rows, "INPUT DEVICE", new Vector2(ColumnXRight, 148f), ColumnWidth, new[] { "SYSTEM DEFAULT" });
-            micVolume = CreateSlider(rows, "MIC VOLUME", new Vector2(ColumnXRight, 72f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            micMonitor = CreateToggle(rows, "MONITOR (HEAR YOURSELF)", new Vector2(ColumnXRight, 0f), ColumnWidth);
+            // (ENABLE MICROPHONE + INPUT DEVICE + MIC VOLUME + MONITOR laid out
+            // below; see the right-column block further down.)
+
+            micEnabled = CreateToggle(rows, "ENABLE MICROPHONE", new Vector2(ColumnXRight, 222f), ColumnWidth);
+            inputDevice = CreateDropdown(rows, "INPUT DEVICE", new Vector2(ColumnXRight, 150f), ColumnWidth, new[] { "SYSTEM DEFAULT" }, screenRoot);
+            micVolume = CreateSlider(rows, "MIC VOLUME", new Vector2(ColumnXRight, 78f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            micMonitor = CreateToggle(rows, "MONITOR (HEAR YOURSELF)", new Vector2(ColumnXRight, 34f), ColumnWidth);
 
             var sfxHeader = CreateText(rows, "INTERFACE SOUNDS", 15, Accent);
-            SetRect((RectTransform)sfxHeader.transform, new Vector2(ColumnXRight, -44f), new Vector2(ColumnWidth, 20f));
+            SetRect((RectTransform)sfxHeader.transform, new Vector2(ColumnXRight, -4f), new Vector2(ColumnWidth, 20f));
             sfxHeader.alignment = TextAnchor.LowerLeft;
-            sfx = CreateSlider(rows, "UI / SFX", new Vector2(ColumnXRight, -108f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            sfx = CreateSlider(rows, "", new Vector2(ColumnXRight, -68f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
 
-            var hint = CreateText(rows, "Scroll for more \u2022 APPLY saves to options.lvc", 13, LabelColor);
-            SetRect((RectTransform)hint.transform, new Vector2(0f, -262f), new Vector2(820f, 20f));
+            // MIC LEVEL meter — always on while the screen is open. The capture
+            // starts regardless of the ENABLE toggle so the bar is viewable as
+            // a live preview (MonoGame DrawMicMeter visual, gradient fill).
+            var meterHeader = CreateText(rows, "MIC LEVEL", 15, Accent);
+            SetRect((RectTransform)meterHeader.transform, new Vector2(ColumnXRight, -104f), new Vector2(ColumnWidth, 20f));
+            meterHeader.alignment = TextAnchor.LowerLeft;
+            meterFill = CreateMeter(rows, new Vector2(ColumnXRight, -168f), ColumnWidth);
+            meterPercent = meterFill.GetComponent<MicMeterBar>().PercentText;
 
             controller.BindAudioWidgets(master, music, sfx, game, animals, monsters, environment, players,
                 inputDevice, outputDevice, micVolume, micEnabled, micMonitor);
@@ -223,12 +238,14 @@ namespace LatticeVeil.Game
             return toggle;
         }
 
-        public static Dropdown CreateDropdown(RectTransform parent, string label, Vector2 center, float width, string[] options)
+        public static Dropdown CreateDropdown(RectTransform parent, string label, Vector2 center, float width, string[] options,
+            RectTransform portalRoot = null)
         {
-            return CreateDropdownImpl(parent, label, center, width, options);
+            return CreateDropdownImpl(parent, label, center, width, options, portalRoot);
         }
 
-        private static Dropdown CreateDropdownImpl(RectTransform parent, string label, Vector2 center, float width, string[] options)
+        private static Dropdown CreateDropdownImpl(RectTransform parent, string label, Vector2 center, float width, string[] options,
+            RectTransform portalRoot = null)
         {
             // Label row above the control.
             var labelText = CreateText(parent, label, 17, LabelColor);
@@ -265,8 +282,10 @@ namespace LatticeVeil.Game
             arrow.anchoredPosition = new Vector2(-14f, 0f);
             arrowText.alignment = TextAnchor.MiddleCenter;
 
-            // Template (open list): standard dropdown structure, positioned
-            // below the control per the uGUI docs (anchor bottom, pivot top).
+            // Template (open list) — STANDARD uGUI structure: anchored to the
+            // dropdown's bottom, pivot top. uGUI's Show() clones it into its own
+            // popup canvas overlaying everything, sizes it, blocks clicks, and
+            // closes on selection. Max 12 visible rows, scrolls beyond that.
             var templateGo = new GameObject("Template", typeof(RectTransform), typeof(Image), typeof(ScrollRect));
             var template = (RectTransform)templateGo.transform;
             template.SetParent(rect, false);
@@ -274,7 +293,11 @@ namespace LatticeVeil.Game
             template.anchorMax = new Vector2(1f, 0f);
             template.pivot = new Vector2(0.5f, 1f);
             template.anchoredPosition = new Vector2(0f, 2f);
-            template.sizeDelta = new Vector2(0f, options.Length * 34f + 8f);
+            // Fixed 12-row height: sized at build time the option list is still
+            // the 1-row placeholder, so an options-derived height would stay 1
+            // row forever (uGUI's extraSpace shrink keeps it). 12 rows max;
+            // longer lists scroll inside the template's ScrollRect.
+            template.sizeDelta = new Vector2(0f, 12 * 34f + 8f);
             templateGo.GetComponent<Image>().color = new Color(0.06f, 0.06f, 0.07f, 0.98f);
             templateGo.SetActive(false);
 
@@ -342,6 +365,13 @@ namespace LatticeVeil.Game
             dropdown.ClearOptions();
             dropdown.AddOptions(new List<string>(options));
             dropdown.RefreshShownValue();
+
+            // uGUI's Dropdown initializes its alpha-tween runner in Start().
+            // These dropdowns are created at runtime, and Show() in the same
+            // frame would NRE. Force the lifecycle now: disable + re-enable
+            // runs OnEnable/Start immediately.
+            go.SetActive(false);
+            go.SetActive(true);
             return dropdown;
         }
 
@@ -424,6 +454,89 @@ namespace LatticeVeil.Game
             updater.Slider = slider;
             updater.Format = format;
             return slider;
+        }
+
+        /// <summary>
+        /// Horizontal mic level bar (MonoGame DrawMicMeter visual): dark track,
+        /// white border, green/amber/red fill driven by SetLevel(0..1), plus a
+        /// right-side percent label.
+        /// </summary>
+        public sealed class MicMeterBar : MonoBehaviour
+        {
+            public Text PercentText;
+            private RectTransform _fill;
+            private Image _fillImage;
+
+            private void Awake()
+            {
+                _fill = transform.Find("Fill") as RectTransform;
+                if (_fill != null) _fillImage = _fill.GetComponent<Image>();
+            }
+
+            public void SetLevel(float level)
+            {
+                level = Mathf.Clamp01(level);
+                if (_fill != null)
+                {
+                    _fill.anchorMax = new Vector2(level, 1f);
+                    if (_fillImage != null)
+                        _fillImage.color = LevelColor(level);
+                }
+                if (PercentText != null)
+                    PercentText.text = Mathf.RoundToInt(level * 100f) + "%";
+            }
+
+            /// <summary>Green → blue-cyan → amber → red gradient by level.</summary>
+            private static Color LevelColor(float level)
+            {
+                if (level < 0.45f)
+                    return Color.Lerp(new Color(0.20f, 0.85f, 0.45f), new Color(0.25f, 0.70f, 0.95f), level / 0.45f);
+                if (level < 0.70f)
+                    return Color.Lerp(new Color(0.25f, 0.70f, 0.95f), new Color(0.90f, 0.78f, 0.25f), (level - 0.45f) / 0.25f);
+                return Color.Lerp(new Color(0.90f, 0.78f, 0.25f), new Color(0.88f, 0.25f, 0.22f), (level - 0.70f) / 0.30f);
+            }
+        }
+
+        private static MicMeterBar CreateMeter(RectTransform parent, Vector2 center, float width)
+        {
+            var go = new GameObject("MicMeter", typeof(RectTransform), typeof(MicMeterBar));
+            var rect = (RectTransform)go.transform;
+            rect.SetParent(parent, false);
+            SetRect(rect, center, new Vector2(width, SliderHeight));
+
+            var bgGo = new GameObject("Background", typeof(RectTransform), typeof(Image));
+            var bg = (RectTransform)bgGo.transform;
+            bg.SetParent(rect, false);
+            Stretch(bg);
+            var bgImg = bgGo.GetComponent<Image>();
+            bgImg.color = new Color(0.07f, 0.07f, 0.07f, 1f);
+            var outline = bgGo.AddComponent<Outline>();
+            outline.effectColor = Color.white;
+            outline.effectDistance = new Vector2(1.5f, -1.5f);
+
+            var fillGo = new GameObject("Fill", typeof(RectTransform), typeof(Image));
+            var fill = (RectTransform)fillGo.transform;
+            fill.SetParent(bg, false);
+            fill.anchorMin = Vector2.zero;
+            fill.anchorMax = new Vector2(0f, 1f);
+            fill.pivot = new Vector2(0f, 0.5f);
+            fill.offsetMin = new Vector2(2f, 2f);
+            fill.offsetMax = new Vector2(-2f, -2f);
+            fillGo.GetComponent<Image>().color = new Color(0.24f, 0.86f, 0.47f);
+
+            var percentText = CreateText(rect, "0%", 15, TextColor);
+            var pctRect = (RectTransform)percentText.transform;
+            pctRect.anchorMin = new Vector2(1f, 0.5f);
+            pctRect.anchorMax = new Vector2(1f, 0.5f);
+            pctRect.pivot = new Vector2(0f, 0.5f);
+            pctRect.sizeDelta = new Vector2(60f, 20f);
+            pctRect.anchoredPosition = new Vector2(10f, 0f);
+            percentText.alignment = TextAnchor.MiddleLeft;
+
+            var bar = go.GetComponent<MicMeterBar>();
+            bar.PercentText = percentText;
+            bar.SetLevel(0f);
+            return bar;
         }
 
         /// <summary>Keeps a slider's right-side value label in sync.</summary>

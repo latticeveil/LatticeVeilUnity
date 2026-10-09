@@ -191,43 +191,18 @@ namespace LatticeVeil.Game
 
             // Video + Audio: standard uGUI widgets from the builder.
             _videoRoot = (RectTransform)OptionsScreenBuilder.BuildPage(_tabPages[Tab.Video], this).transform;
-            _audioRoot = BuildAudioPage(_tabPages[Tab.Audio]);
-
-            BuildNotePage(_tabPages[Tab.Controls], "CONTROLS", "Keybind remapping arrives with the controls update.\nCurrent binds live in options.lvc.");
-            BuildNotePage(_tabPages[Tab.Packs], "PACKS & ADDONS", "Packs & mods management arrives with the packs update.\nDrop content packs into Documents/LatticeVeil/Packs.");
-        }
-
-        private RectTransform BuildAudioPage(RectTransform page)
-        {
-            var root = new GameObject("StandardPageAudio", typeof(RectTransform));
-            var rect = (RectTransform)root.transform;
-            rect.SetParent(page, false);
-            Stretch(rect);
-
-            var column = new GameObject("Column0", typeof(RectTransform), typeof(VerticalLayoutGroup));
-            var colRect = (RectTransform)column.transform;
-            colRect.SetParent(rect, false);
-            colRect.anchorMin = new Vector2(0.06f, 0.08f);
-            colRect.anchorMax = new Vector2(0.47f, 0.92f);
-            colRect.offsetMin = Vector2.zero;
-            colRect.offsetMax = Vector2.zero;
-            var group = column.GetComponent<VerticalLayoutGroup>();
-            group.spacing = 18f;
-            group.childForceExpandHeight = false;
-            group.childForceExpandWidth = true;
-            group.childControlHeight = true;
-            group.childControlWidth = true;
-            group.padding = new RectOffset(0, 0, 8, 0);
-
-            _master = OptionsScreenBuilder.CreateSlider(colRect, "MASTER");
-            _music = OptionsScreenBuilder.CreateSlider(colRect, "MUSIC");
-            _sfx = OptionsScreenBuilder.CreateSlider(colRect, "SFX");
+            _audioRoot = OptionsScreenBuilder.BuildAudioPage(_tabPages[Tab.Audio], this,
+                out _master, out _music, out _sfx);
 
             _master.SetValueWithoutNotify(Mathf.Clamp01(_settings.MasterVolume));
             _music.SetValueWithoutNotify(Mathf.Clamp01(_settings.MusicVolume));
             _sfx.SetValueWithoutNotify(Mathf.Clamp01(_settings.SfxVolume));
+            _master.GetComponent<OptionsScreenBuilder.SliderValueText>().Refresh();
+            _music.GetComponent<OptionsScreenBuilder.SliderValueText>().Refresh();
+            _sfx.GetComponent<OptionsScreenBuilder.SliderValueText>().Refresh();
 
-            return rect;
+            BuildNotePage(_tabPages[Tab.Controls], "CONTROLS", "Keybind remapping arrives with the controls update.\nCurrent binds live in options.lvc.");
+            BuildNotePage(_tabPages[Tab.Packs], "PACKS & ADDONS", "Packs & mods management arrives with the packs update.\nDrop content packs into Documents/LatticeVeil/Packs.");
         }
 
         private void BuildNotePage(RectTransform page, string title, string text)
@@ -309,13 +284,15 @@ namespace LatticeVeil.Game
             _lastW = w;
             _lastH = h;
 
-            // Smaller GUI box than the window (was 1248x680).
-            float panelW = Mathf.Min(OptionsScreenBuilder.PanelWidth * 0.9f, w - 60f);
-            float panelH = Mathf.Min(OptionsScreenBuilder.PanelHeight * 0.95f, h - 120f);
+            // Smaller GUI box than the window, 16:9 to match the frame art.
+            float panelW = Mathf.Min(OptionsScreenBuilder.PanelWidth, w - 70f);
+            float maxH = h - 170f; // leave room for tabs above + BACK below
+            panelW = Mathf.Min(panelW, maxH * OptionsScreenBuilder.PanelWidth / OptionsScreenBuilder.PanelHeight);
+            float panelH = panelW * OptionsScreenBuilder.PanelHeight / OptionsScreenBuilder.PanelWidth;
             _panelRoot.sizeDelta = new Vector2(panelW, panelH);
             _panelRoot.anchoredPosition = new Vector2(0f, -12f); // a little lower
 
-            var layoutScale = Mathf.Clamp(Mathf.Min(panelW / 1000f, panelH / 560f), 0.7f, 1f);
+            var layoutScale = Mathf.Clamp(Mathf.Min(panelW / OptionsScreenBuilder.PanelWidth, panelH / OptionsScreenBuilder.PanelHeight), 0.7f, 1f);
 
             // Tabs above the panel.
             float tabHeight = Mathf.Max(40f, Mathf.Min(64f, panelW * 0.09f) * layoutScale);

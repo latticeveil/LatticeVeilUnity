@@ -46,7 +46,10 @@ namespace LatticeVeil.Game
             QualitySettings.shadowDistance = settings.RenderDistanceChunks * 16f;
 
             // Resolution: defer + retry (never inside the click handler).
-            RequestResolution(settings.ResolutionWidth, settings.ResolutionHeight, FullScreenMode.Windowed);
+            // FULLSCREEN now actually applies: borderless fullscreen window
+            // when enabled, normal windowed otherwise.
+            RequestResolution(settings.ResolutionWidth, settings.ResolutionHeight,
+                settings.Fullscreen ? FullScreenMode.FullScreenWindow : FullScreenMode.Windowed);
 
             // GUI scale drives the shared menu canvas immediately.
             ApplyGuiScale(settings.GuiScale);
@@ -96,13 +99,41 @@ namespace LatticeVeil.Game
             // Let the current frame (and its UI click) fully finish first.
             yield return new WaitForEndOfFrame();
 
-            // The no-resize window style (WS_THICKFRAME removed) makes
-            // Screen.SetResolution silently fail — the player presents into a
-            // stale swap chain, which the user sees as a WHITE screen. Unlock
-            // the window, let Unity resize, then re-lock.
-            UnlockWindowResize();
-            yield return null;
+            // WHITE-SCREEN FIX: Screen.SetResolution recreates the swap chain
+            // while our custom window style (WS_THICKFRAME removed) is active,
+            // and the player presents into a stale swap chain -> white frame
+            // until the next resize. Instead we resize the OS window directly
+            // with SetWindowPos. In windowed mode Unity's renderer follows the
+            // window client size every frame, so there is no swap-chain
+            // recreation and nothing can go white.
+            var hwnd = GetGameHwnd();
+            if (hwnd != System.IntPtr.Zero && _targetMode == FullScreenMode.Windowed)
+            {
+                UnlockWindowResize();
+                yield return null; // let the style change settle
 
+                // Convert the wanted CLIENT size to the outer window size the
+                // locked style needs (caption bar, borders), then resize AND
+                // re-center on the current monitor.
+                var rect = new RECT { Left = 0, Top = 0, Right = _targetW, Bottom = _targetH };
+                AdjustWindowRect(ref rect, LockedStyle, false);
+                int outerW = rect.Right - rect.Left;
+                int outerH = rect.Bottom - rect.Top;
+
+                GetWindowRect(hwnd, out var cur);
+                int x = cur.Left + ((cur.Right - cur.Left) - outerW) / 2;
+                int y = cur.Top + ((cur.Bottom - cur.Top) - outerH) / 2;
+                if (y < 0) y = 0;
+
+                SetWindowPosW(hwnd, System.IntPtr.Zero, x, y, outerW, outerH, SWP_NOZORDER);
+                yield return null;
+
+                LockWindowResize();
+                Debug.Log($"SettingsBehavior: resolution now {_targetW}x{_targetH} (SetWindowPos path).");
+                yield break;
+            }
+
+            // Fallback (fullscreen/embedded): the old deferred + retry path.
             while (_retriesLeft-- > 0)
             {
                 Screen.SetResolution(_targetW, _targetH, _targetMode);
@@ -118,6 +149,26 @@ namespace LatticeVeil.Game
             LockWindowResize();
             Debug.LogWarning($"SettingsBehavior: resolution change to {_targetW}x{_targetH} did not stick.");
         }
+
+        private const uint SWP_NOZORDER = 0x0004;
+
+        private const long LockedStyle = 0x00C00000 /*WS_CAPTION*/ | 0x00080000 /*WS_SYSMENU*/ | 0x00020000 /*WS_MINIMIZEBOX*/;
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool AdjustWindowRect(ref RECT lpRect, long dwStyle, bool bMenu);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool GetWindowRect(System.IntPtr hWnd, out RECT lpRect);
+
 
         // ------------------------------------------------------------------
         // Live appliers

@@ -1,25 +1,38 @@
-using LatticeVeil.Core;
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace LatticeVeil.Game
 {
     /// <summary>
-    /// Options screen built from STANDARD Unity uGUI components:
-    /// Toggle, Slider, Dropdown (no custom widget code). A vertical layout
-    /// group inside the framed panel keeps everything in place at any
-    /// resolution; the GUI CanvasScaler handles scaling.
+    /// Options page content built ONLY from standard Unity uGUI components
+    /// (Toggle / Slider / Dropdown) — no custom widget code.
+    ///
+    /// Layout is explicit: each row gets a fixed center position in
+    /// panel-local units so the content always fits inside the framed
+    /// Settings_GUI panel at any window size (the CanvasScaler scales it).
     /// </summary>
     public static class OptionsScreenBuilder
     {
-        public const float PanelWidth = 1080f;
-        public const float PanelHeight = 600f;
+        // GUI box: a little smaller than the window (16:9 to match the frame art).
+        public const float PanelWidth = 960f;
+        public const float PanelHeight = 540f;
+
+        // Content metrics (panel-local units, y measured from panel center).
+        private const float RowHeight = 34f;
+        private const float SliderHeight = 26f;
+        private const float LabelOffset = 41f; // label center above control center
+        private const float ColumnXLeft = -220f;
+        private const float ColumnXRight = 220f;
+        private const float ColumnWidth = 430f;
 
         private static readonly Color TextColor = Color.white;
         private static readonly Color LabelColor = new Color(0.86f, 0.89f, 0.92f, 1f);
         private static readonly Color Accent = new Color(0.55f, 0.8f, 1f, 1f);
+        private static readonly Color ControlBg = new Color(0.08f, 0.08f, 0.09f, 1f);
 
-        /// <summary>Builds the standard-component page content under the panel.</summary>
+        /// <summary>Builds the Video page under the panel.</summary>
         public static GameObject BuildPage(RectTransform panel, OptionsScreenController controller)
         {
             var root = new GameObject("StandardPage", typeof(RectTransform));
@@ -27,24 +40,23 @@ namespace LatticeVeil.Game
             rect.SetParent(panel, false);
             Stretch(rect);
 
-            // Two columns of rows, driven by a vertical layout group each.
-            var left = CreateColumn(rect, 0);
-            var right = CreateColumn(rect, 1);
-
-            // ---- Left column (standard components) ----
-            var fsToggle = CreateToggle(left, "FULLSCREEN");
-            var vsToggle = CreateToggle(left, "VSYNC");
-            var resDropdown = CreateDropdown(left, "RESOLUTION",
+            // ---- Left column ----
+            var fsToggle = CreateToggle(rect, "FULLSCREEN", new Vector2(ColumnXLeft, 168f), ColumnWidth);
+            var vsToggle = CreateToggle(rect, "VSYNC", new Vector2(ColumnXLeft, 120f), ColumnWidth);
+            var resDropdown = CreateDropdown(rect, "RESOLUTION", new Vector2(ColumnXLeft, 40f), ColumnWidth,
                 new[] { "1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160" });
 
             // ---- Right column ----
-            var guiDropdown = CreateDropdown(right, "GUI SCALE",
+            var guiDropdown = CreateDropdown(rect, "GUI SCALE", new Vector2(ColumnXRight, 127f), ColumnWidth,
                 new[] { "STANDARD", "LARGE", "LARGER" });
-            var qualityDropdown = CreateDropdown(right, "QUALITY",
+            var qualityDropdown = CreateDropdown(rect, "QUALITY", new Vector2(ColumnXRight, 51f), ColumnWidth,
                 new[] { "LOW", "MEDIUM", "HIGH", "ULTRA" });
-            var brightness = CreateSlider(right, "BRIGHTNESS");
-            var fov = CreateSlider(right, "FOV");
-            var renderDistance = CreateSlider(right, "RENDER DISTANCE");
+            var brightness = CreateSlider(rect, "BRIGHTNESS", new Vector2(ColumnXRight, -25f), ColumnWidth,
+                v => Mathf.RoundToInt(v * 100f) + "%");
+            var fov = CreateSlider(rect, "FOV", new Vector2(ColumnXRight, -101f), ColumnWidth,
+                v => Mathf.RoundToInt(Mathf.Lerp(60f, 110f, v)).ToString());
+            var renderDistance = CreateSlider(rect, "RENDER DISTANCE", new Vector2(ColumnXRight, -177f), ColumnWidth,
+                v => Mathf.RoundToInt(Mathf.Lerp(4f, 16f, v)) + " CHUNKS");
 
             controller.BindStandardWidgets(fsToggle, vsToggle, resDropdown, guiDropdown,
                 qualityDropdown, brightness, fov, renderDistance);
@@ -52,24 +64,19 @@ namespace LatticeVeil.Game
             return root;
         }
 
-        private static RectTransform CreateColumn(RectTransform parent, int column)
+        /// <summary>Builds the Audio page under the panel.</summary>
+        public static RectTransform BuildAudioPage(RectTransform page, OptionsScreenController controller,
+            out Slider master, out Slider music, out Slider sfx)
         {
-            var go = new GameObject("Column" + column, typeof(RectTransform), typeof(VerticalLayoutGroup));
-            var rect = (RectTransform)go.transform;
-            rect.SetParent(parent, false);
-            rect.anchorMin = new Vector2(column == 0 ? 0.06f : 0.53f, 0.08f);
-            rect.anchorMax = new Vector2(column == 0 ? 0.47f : 0.94f, 0.92f);
-            rect.offsetMin = Vector2.zero;
-            rect.offsetMax = Vector2.zero;
+            var root = new GameObject("StandardPageAudio", typeof(RectTransform));
+            var rect = (RectTransform)root.transform;
+            rect.SetParent(page, false);
+            Stretch(rect);
 
-            var group = go.GetComponent<VerticalLayoutGroup>();
-            group.childAlignment = TextAnchor.UpperLeft;
-            group.spacing = 18f;
-            group.childForceExpandHeight = false;
-            group.childForceExpandWidth = true;
-            group.childControlHeight = true;
-            group.childControlWidth = true;
-            group.padding = new RectOffset(0, 0, 8, 0);
+            master = CreateSlider(rect, "MASTER", new Vector2(ColumnXLeft, 127f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            music = CreateSlider(rect, "MUSIC", new Vector2(ColumnXLeft, 51f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            sfx = CreateSlider(rect, "SFX", new Vector2(ColumnXLeft, -25f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+
             return rect;
         }
 
@@ -77,52 +84,47 @@ namespace LatticeVeil.Game
         // Standard uGUI factories
         // ------------------------------------------------------------------
 
-        public static Toggle CreateToggle(RectTransform column, string label)
+        public static Toggle CreateToggle(RectTransform parent, string label, Vector2 center, float width)
         {
             var go = new GameObject("Toggle_" + label, typeof(RectTransform), typeof(Toggle));
             var rect = (RectTransform)go.transform;
-            rect.SetParent(column, false);
-            var layout = go.AddComponent<LayoutElement>();
-            layout.minHeight = 34f;
-            layout.preferredHeight = 34f;
+            rect.SetParent(parent, false);
+            SetRect(rect, center, new Vector2(width, RowHeight));
 
             var toggle = go.GetComponent<Toggle>();
+            toggle.transition = Selectable.Transition.None;
 
-            // Background box (standard Toggle structure).
+            // Standard checkbox square on the left.
             var bgGo = new GameObject("Background", typeof(RectTransform), typeof(Image));
             var bg = (RectTransform)bgGo.transform;
             bg.SetParent(rect, false);
             bg.anchorMin = new Vector2(0f, 0.5f);
             bg.anchorMax = new Vector2(0f, 0.5f);
             bg.pivot = new Vector2(0f, 0.5f);
-            bg.sizeDelta = new Vector2(56, 28);
-            bg.anchoredPosition = Vector2.zero;
-            bgGo.GetComponent<Image>().color = new Color(0.08f, 0.08f, 0.08f);
+            bg.sizeDelta = new Vector2(RowHeight, RowHeight);
+            bg.anchoredPosition = new Vector2(2f, 0f);
+            bgGo.GetComponent<Image>().color = ControlBg;
             var bgOutline = bgGo.AddComponent<Outline>();
             bgOutline.effectColor = Color.white;
+            bgOutline.effectDistance = new Vector2(1.5f, -1.5f);
 
             var checkGo = new GameObject("Checkmark", typeof(RectTransform), typeof(Image));
             var check = (RectTransform)checkGo.transform;
             check.SetParent(bg, false);
             Stretch(check);
+            check.offsetMin = new Vector2(5f, 5f);
+            check.offsetMax = new Vector2(-5f, -5f);
             var checkImg = checkGo.GetComponent<Image>();
             checkImg.color = Accent;
 
-            var labelGo = new GameObject("Label", typeof(RectTransform));
-            var labelRect = (RectTransform)labelGo.transform;
-            labelRect.SetParent(rect, false);
-            labelRect.anchorMin = new Vector2(0f, 0.5f);
-            labelRect.anchorMax = new Vector2(0f, 0.5f);
-            labelRect.pivot = new Vector2(0f, 0.5f);
-            labelRect.sizeDelta = new Vector2(360, 30);
-            labelRect.anchoredPosition = new Vector2(70, 0);
-            var text = labelGo.AddComponent<Text>();
-            text.font = OptionsFont;
-            text.fontSize = 19;
-            text.color = TextColor;
+            var text = CreateText(rect, label, 18, TextColor);
+            var textRect = (RectTransform)text.transform;
+            textRect.anchorMin = new Vector2(0f, 0.5f);
+            textRect.anchorMax = new Vector2(0f, 0.5f);
+            textRect.pivot = new Vector2(0f, 0.5f);
+            textRect.sizeDelta = new Vector2(Mathf.Max(80f, width - RowHeight - 16f), RowHeight);
+            textRect.anchoredPosition = new Vector2(RowHeight + 14f, 0f);
             text.alignment = TextAnchor.MiddleLeft;
-            text.text = label;
-            text.raycastTarget = false;
 
             toggle.targetGraphic = bgGo.GetComponent<Image>();
             toggle.graphic = checkImg;
@@ -130,64 +132,58 @@ namespace LatticeVeil.Game
             return toggle;
         }
 
-        public static Dropdown CreateDropdown(RectTransform column, string label, string[] options)
+        public static Dropdown CreateDropdown(RectTransform parent, string label, Vector2 center, float width, string[] options)
         {
-            // Label row first (standard label-above-control pattern).
-            CreateRowLabel(column, label);
+            return CreateDropdownImpl(parent, label, center, width, options);
+        }
+
+        private static Dropdown CreateDropdownImpl(RectTransform parent, string label, Vector2 center, float width, string[] options)
+        {
+            // Label row above the control.
+            var labelText = CreateText(parent, label, 17, LabelColor);
+            SetRect((RectTransform)labelText.transform, center + new Vector2(0f, LabelOffset), new Vector2(width, 22f));
+            labelText.alignment = TextAnchor.LowerLeft;
 
             var go = new GameObject("Dropdown_" + label, typeof(RectTransform), typeof(Image), typeof(Dropdown));
             var rect = (RectTransform)go.transform;
-            rect.SetParent(column, false);
-            var layout = go.AddComponent<LayoutElement>();
-            layout.minHeight = 36f;
-            layout.preferredHeight = 36f;
+            rect.SetParent(parent, false);
+            SetRect(rect, center, new Vector2(width, RowHeight));
 
             var bgImg = go.GetComponent<Image>();
-            bgImg.color = new Color(0.08f, 0.08f, 0.08f);
+            bgImg.color = ControlBg;
             var outline = go.AddComponent<Outline>();
             outline.effectColor = Color.white;
+            outline.effectDistance = new Vector2(1.5f, -1.5f);
 
-            // Caption label (selected value).
-            var captionGo = new GameObject("Caption", typeof(RectTransform));
-            var caption = (RectTransform)captionGo.transform;
-            caption.SetParent(rect, false);
+            // Caption (selected value).
+            var captionText = CreateText(rect, options.Length > 0 ? options[0] : "", 17, TextColor);
+            var caption = (RectTransform)captionText.transform;
             caption.anchorMin = new Vector2(0f, 0.5f);
             caption.anchorMax = new Vector2(1f, 0.5f);
-            caption.offsetMin = new Vector2(12, -16);
-            caption.offsetMax = new Vector2(-36, 16);
-            var captionText = captionGo.AddComponent<Text>();
-            captionText.font = OptionsFont;
-            captionText.fontSize = 18;
-            captionText.color = TextColor;
+            caption.offsetMin = new Vector2(12f, -16f);
+            caption.offsetMax = new Vector2(-38f, 16f);
             captionText.alignment = TextAnchor.MiddleLeft;
-            captionText.text = options.Length > 0 ? options[0] : "";
 
             // Arrow.
-            var arrowGo = new GameObject("Arrow", typeof(RectTransform));
-            var arrow = (RectTransform)arrowGo.transform;
-            arrow.SetParent(rect, false);
+            var arrowText = CreateText(rect, "\u25BC", 13, LabelColor);
+            var arrow = (RectTransform)arrowText.transform;
             arrow.anchorMin = new Vector2(1f, 0.5f);
             arrow.anchorMax = new Vector2(1f, 0.5f);
-            arrow.pivot = new Vector2(1f, 0.5f);
-            arrow.sizeDelta = new Vector2(28, 28);
-            arrow.anchoredPosition = new Vector2(-8, 0);
-            var arrowText = arrowGo.AddComponent<Text>();
-            arrowText.font = OptionsFont;
-            arrowText.fontSize = 14;
-            arrowText.color = LabelColor;
+            arrow.pivot = new Vector2(0.5f, 0.5f);
+            arrow.sizeDelta = new Vector2(28f, RowHeight);
+            arrow.anchoredPosition = new Vector2(-14f, 0f);
             arrowText.alignment = TextAnchor.MiddleCenter;
-            arrowText.text = "\u25BC";
-            arrowText.raycastTarget = false;
 
-            // Template (the open list). Standard Dropdown structure.
+            // Template (open list): standard dropdown structure, positioned
+            // below the control per the uGUI docs (anchor bottom, pivot top).
             var templateGo = new GameObject("Template", typeof(RectTransform), typeof(Image), typeof(ScrollRect));
             var template = (RectTransform)templateGo.transform;
             template.SetParent(rect, false);
             template.anchorMin = new Vector2(0f, 0f);
             template.anchorMax = new Vector2(1f, 0f);
             template.pivot = new Vector2(0.5f, 1f);
-            template.anchoredPosition = new Vector2(0, 2);
-            template.sizeDelta = new Vector2(0, 160);
+            template.anchoredPosition = new Vector2(0f, 2f);
+            template.sizeDelta = new Vector2(0f, options.Length * 34f + 8f);
             templateGo.GetComponent<Image>().color = new Color(0.06f, 0.06f, 0.07f, 0.98f);
             templateGo.SetActive(false);
 
@@ -195,6 +191,8 @@ namespace LatticeVeil.Game
             var viewport = (RectTransform)viewportGo.transform;
             viewport.SetParent(template, false);
             Stretch(viewport);
+            viewport.offsetMin = new Vector2(0f, 2f);
+            viewport.offsetMax = new Vector2(0f, -2f);
             viewportGo.GetComponent<Image>().color = Color.clear;
 
             var contentGo = new GameObject("Content", typeof(RectTransform));
@@ -204,60 +202,79 @@ namespace LatticeVeil.Game
             content.anchorMax = new Vector2(1f, 1f);
             content.pivot = new Vector2(0.5f, 1f);
             content.anchoredPosition = Vector2.zero;
-            content.sizeDelta = new Vector2(0, 120);
-            var contentGroup = contentGo.AddComponent<VerticalLayoutGroup>();
-            contentGroup.childForceExpandHeight = false;
-            contentGroup.childForceExpandWidth = true;
-            contentGroup.childControlHeight = false;
-            contentGroup.childControlWidth = true;
-            contentGroup.spacing = 2f;
+            content.sizeDelta = new Vector2(0f, options.Length * 34f);
 
             // Item prototype (Toggle) — the Dropdown clones this per option.
             var itemGo = new GameObject("Item", typeof(RectTransform), typeof(Toggle));
             var item = (RectTransform)itemGo.transform;
             item.SetParent(content, false);
-            var itemLayout = itemGo.AddComponent<LayoutElement>();
-            itemLayout.minHeight = 32f;
-            itemLayout.preferredHeight = 32f;
+            SetRect(item, new Vector2(0f, -17f), new Vector2(0f, 34f));
+            item.anchorMin = new Vector2(0f, 1f);
+            item.anchorMax = new Vector2(1f, 1f);
+
             var itemBgGo = new GameObject("Item Background", typeof(RectTransform), typeof(Image));
             var itemBg = (RectTransform)itemBgGo.transform;
             itemBg.SetParent(item, false);
             Stretch(itemBg);
-            itemBgGo.GetComponent<Image>().color = Color.clear;
-            var itemLabelGo = new GameObject("Item Label", typeof(RectTransform));
-            var itemLabel = (RectTransform)itemLabelGo.transform;
-            itemLabel.SetParent(item, false);
-            Stretch(itemLabel);
-            itemLabel.offsetMin = new Vector2(12, 0);
-            itemLabel.offsetMax = new Vector2(-8, 0);
-            var itemText = itemLabelGo.AddComponent<Text>();
-            itemText.font = OptionsFont;
-            itemText.fontSize = 17;
-            itemText.color = TextColor;
+            itemBgGo.GetComponent<Image>().color = new Color(0.16f, 0.18f, 0.22f, 1f); // highlighted state
+
+            var itemCheckGo = new GameObject("Item Checkmark", typeof(RectTransform), typeof(Image));
+            var itemCheck = (RectTransform)itemCheckGo.transform;
+            itemCheck.SetParent(item, false);
+            itemCheck.anchorMin = new Vector2(0f, 0.5f);
+            itemCheck.anchorMax = new Vector2(0f, 0.5f);
+            itemCheck.pivot = new Vector2(0f, 0.5f);
+            itemCheck.sizeDelta = new Vector2(18f, 18f);
+            itemCheck.anchoredPosition = new Vector2(6f, 0f);
+            itemCheckGo.GetComponent<Image>().color = Accent;
+
+            var itemText = CreateText(item, "", 17, TextColor);
+            var itemLabel = (RectTransform)itemText.transform;
+            itemLabel.anchorMin = Vector2.zero;
+            itemLabel.anchorMax = Vector2.one;
+            itemLabel.offsetMin = new Vector2(32f, 0f);
+            itemLabel.offsetMax = new Vector2(-8f, 0f);
             itemText.alignment = TextAnchor.MiddleLeft;
+
+            var scrollRect = templateGo.GetComponent<ScrollRect>();
+            scrollRect.viewport = viewport;
+            scrollRect.content = content;
+            scrollRect.scrollSensitivity = 12f;
 
             var dropdown = go.GetComponent<Dropdown>();
             dropdown.targetGraphic = bgImg;
+            dropdown.transition = Selectable.Transition.None;
             dropdown.captionText = captionText;
             dropdown.itemText = itemText;
             dropdown.template = template;
             dropdown.value = 0;
             dropdown.ClearOptions();
-            dropdown.AddOptions(new System.Collections.Generic.List<string>(options));
+            dropdown.AddOptions(new List<string>(options));
             dropdown.RefreshShownValue();
             return dropdown;
         }
 
-        public static Slider CreateSlider(RectTransform column, string label)
+        public static Slider CreateSlider(RectTransform parent, string label, Vector2 center, float width, Func<float, string> format)
         {
-            CreateRowLabel(column, label);
+            // Label row above the control.
+            var labelText = CreateText(parent, label, 17, LabelColor);
+            SetRect((RectTransform)labelText.transform, center + new Vector2(0f, LabelOffset), new Vector2(width, 22f));
+            labelText.alignment = TextAnchor.LowerLeft;
+
+            // Value text on the right end of the label row.
+            var valueText = CreateText(parent, "", 16, TextColor);
+            var valueRect = (RectTransform)valueText.transform;
+            valueRect.anchorMin = new Vector2(1f, 0.5f);
+            valueRect.anchorMax = new Vector2(1f, 0.5f);
+            valueRect.pivot = new Vector2(1f, 0.5f);
+            valueRect.sizeDelta = new Vector2(140f, 22f);
+            valueRect.anchoredPosition = center + new Vector2(0f, LabelOffset);
+            valueText.alignment = TextAnchor.LowerRight;
 
             var go = new GameObject("Slider_" + label, typeof(RectTransform), typeof(Slider));
             var rect = (RectTransform)go.transform;
-            rect.SetParent(column, false);
-            var layout = go.AddComponent<LayoutElement>();
-            layout.minHeight = 20f;
-            layout.preferredHeight = 20f;
+            rect.SetParent(parent, false);
+            SetRect(rect, center, new Vector2(width, SliderHeight));
 
             // Background track.
             var bgGo = new GameObject("Background", typeof(RectTransform), typeof(Image));
@@ -265,9 +282,10 @@ namespace LatticeVeil.Game
             bg.SetParent(rect, false);
             Stretch(bg);
             var bgImg = bgGo.GetComponent<Image>();
-            bgImg.color = new Color(0.08f, 0.08f, 0.08f);
+            bgImg.color = ControlBg;
             var outline = bgGo.AddComponent<Outline>();
             outline.effectColor = Color.white;
+            outline.effectDistance = new Vector2(1.5f, -1.5f);
 
             // Fill area.
             var fillAreaGo = new GameObject("Fill Area", typeof(RectTransform));
@@ -275,13 +293,13 @@ namespace LatticeVeil.Game
             fillArea.SetParent(rect, false);
             fillArea.anchorMin = new Vector2(0f, 0.25f);
             fillArea.anchorMax = new Vector2(1f, 0.75f);
-            fillArea.offsetMin = new Vector2(4, 0);
-            fillArea.offsetMax = new Vector2(-4, 0);
+            fillArea.offsetMin = new Vector2(4f, 0f);
+            fillArea.offsetMax = new Vector2(-4f, 0f);
             var fillGo = new GameObject("Fill", typeof(RectTransform), typeof(Image));
             var fill = (RectTransform)fillGo.transform;
             fill.SetParent(fillArea, false);
             Stretch(fill);
-            fillGo.GetComponent<Image>().color = new Color(0.78f, 0.78f, 0.78f);
+            fillGo.GetComponent<Image>().color = new Color(0.78f, 0.78f, 0.78f, 1f);
 
             // Handle area.
             var handleAreaGo = new GameObject("Handle Slide Area", typeof(RectTransform));
@@ -289,14 +307,16 @@ namespace LatticeVeil.Game
             handleArea.SetParent(rect, false);
             handleArea.anchorMin = new Vector2(0f, 0f);
             handleArea.anchorMax = new Vector2(1f, 1f);
-            handleArea.offsetMin = new Vector2(10, 0);
-            handleArea.offsetMax = new Vector2(-10, 0);
+            handleArea.offsetMin = new Vector2(10f, 0f);
+            handleArea.offsetMax = new Vector2(-10f, 0f);
             var handleGo = new GameObject("Handle", typeof(RectTransform), typeof(Image));
             var handle = (RectTransform)handleGo.transform;
             handle.SetParent(handleArea, false);
-            handle.sizeDelta = new Vector2(14, 0);
+            handle.anchorMin = new Vector2(0.5f, 0f);
+            handle.anchorMax = new Vector2(0.5f, 1f);
+            handle.sizeDelta = new Vector2(12f, 0f);
             var handleImg = handleGo.GetComponent<Image>();
-            handleImg.color = new Color(0.78f, 0.78f, 0.78f);
+            handleImg.color = new Color(0.9f, 0.93f, 0.96f, 1f);
 
             var slider = go.GetComponent<Slider>();
             slider.targetGraphic = handleImg;
@@ -306,24 +326,67 @@ namespace LatticeVeil.Game
             slider.minValue = 0f;
             slider.maxValue = 1f;
             slider.value = 0.5f;
+
+            // Live value label (refreshed on drag AND on programmatic init).
+            var updater = go.AddComponent<SliderValueText>();
+            updater.Text = valueText;
+            updater.Slider = slider;
+            updater.Format = format;
             return slider;
         }
 
-        private static void CreateRowLabel(RectTransform column, string label)
+        /// <summary>Keeps a slider's right-side value label in sync.</summary>
+        public sealed class SliderValueText : MonoBehaviour
         {
-            var go = new GameObject("RowLabel_" + label, typeof(RectTransform));
+            public Text Text;
+            public Slider Slider;
+            public Func<float, string> Format;
+
+            private void Awake()
+            {
+                if (Slider != null)
+                    Slider.onValueChanged.AddListener(_ => Refresh());
+            }
+
+            private void Start()
+            {
+                Refresh();
+            }
+
+            public void Refresh()
+            {
+                if (Text != null && Format != null)
+                    Text.text = Format(Mathf.Clamp01(Slider.value));
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Helpers
+        // ------------------------------------------------------------------
+
+        public static Text CreateText(RectTransform parent, string content, int size, Color color)
+        {
+            var go = new GameObject("Text", typeof(RectTransform));
             var rect = (RectTransform)go.transform;
-            rect.SetParent(column, false);
-            var layout = go.AddComponent<LayoutElement>();
-            layout.minHeight = 24f;
-            layout.preferredHeight = 24f;
+            rect.SetParent(parent, false);
             var text = go.AddComponent<Text>();
             text.font = OptionsFont;
-            text.fontSize = 18;
-            text.color = LabelColor;
-            text.alignment = TextAnchor.LowerLeft;
-            text.text = label;
+            text.fontSize = size;
+            text.color = color;
+            text.alignment = TextAnchor.MiddleCenter;
+            text.text = content;
             text.raycastTarget = false;
+            text.horizontalOverflow = HorizontalWrapMode.Overflow;
+            return text;
+        }
+
+        private static void SetRect(RectTransform rect, Vector2 center, Vector2 size)
+        {
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = center;
+            rect.sizeDelta = size;
         }
 
         private static void Stretch(RectTransform rect)

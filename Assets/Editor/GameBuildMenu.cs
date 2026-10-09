@@ -8,7 +8,9 @@ namespace LatticeVeil.EditorTools
     /// <summary>
     /// Editor menu for building and running the standalone Unity game by
     /// itself (no launcher involved). Builds ONLY the MainMenu scene to
-    /// builds/Game/LatticeVeilGame.exe — never the project's build-scene
+    /// builds/Game/LatticeVeilGame.exe (THE GAME; the LAUNCHER is built to
+    /// builds/Launcher/LatticeVeil.exe — see builds/README.txt) — never the
+    /// project's build-scene
     /// list, so Unity's own Ctrl+B stays untouched.
     /// </summary>
     public static class GameBuildMenu

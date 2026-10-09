@@ -61,17 +61,31 @@ namespace LatticeVeil.Game
         private Slider _fov;
         private Slider _renderDistance;
 
-        // Standard components (Audio).
+        // Standard components (Audio) — side-by-side: mix left, mic right.
         private Slider _master;
         private Slider _music;
         private Slider _sfx;
+        private Slider _game;
+        private Slider _animals;
+        private Slider _monsters;
+        private Slider _environment;
+        private Slider _players;
+        private Dropdown _inputDevice;
+        private Dropdown _outputDevice;
+        private Slider _micVolume;
+        private Toggle _micEnabled;
+        private Toggle _micMonitor;
+        private List<string> _inputDeviceIds = new List<string>();
+        private List<string> _outputDeviceIds = new List<string>();
 
         private GameSettings _settings;
 
         // Unsaved-changes guard: snapshot taken when the screen opens; BACK/
         // Escape compare against it and ask before throwing edits away.
         private (bool fs, bool vs, int w, int h, float gui, string quality,
-            float brightness, int fov, int chunks, float master, float music, float sfx) _snapshot;
+            float brightness, int fov, int chunks,
+            float master, float music, float sfx, float game, float animals, float monsters, float environment, float players,
+            int inDev, int outDev, float micVol, bool micOn, bool micMon) _snapshot;
         private GameObject _confirmPanel;
 
         private Action _onClosed;
@@ -127,7 +141,11 @@ namespace LatticeVeil.Game
                 Mathf.Lerp(0.5f, 1.5f, Mathf.Clamp01(_brightness.value)),
                 Mathf.RoundToInt(Mathf.Lerp(60f, 110f, Mathf.Clamp01(_fov.value))),
                 Mathf.RoundToInt(Mathf.Lerp(4f, 16f, Mathf.Clamp01(_renderDistance.value))),
-                Mathf.Clamp01(_master.value), Mathf.Clamp01(_music.value), Mathf.Clamp01(_sfx.value));
+                Mathf.Clamp01(_master.value), Mathf.Clamp01(_music.value), Mathf.Clamp01(_sfx.value),
+                Mathf.Clamp01(_game.value), Mathf.Clamp01(_animals.value), Mathf.Clamp01(_monsters.value),
+                Mathf.Clamp01(_environment.value), Mathf.Clamp01(_players.value),
+                _inputDevice.value, _outputDevice.value,
+                Mathf.Clamp01(_micVolume.value), _micEnabled.isOn, _micMonitor.isOn);
         }
 
         private bool HasUnsavedChanges()
@@ -142,7 +160,17 @@ namespace LatticeVeil.Game
                 || Mathf.RoundToInt(Mathf.Lerp(4f, 16f, Mathf.Clamp01(_renderDistance.value))) != _snapshot.chunks
                 || !Mathf.Approximately(Mathf.Clamp01(_master.value), _snapshot.master)
                 || !Mathf.Approximately(Mathf.Clamp01(_music.value), _snapshot.music)
-                || !Mathf.Approximately(Mathf.Clamp01(_sfx.value), _snapshot.sfx);
+                || !Mathf.Approximately(Mathf.Clamp01(_sfx.value), _snapshot.sfx)
+                || !Mathf.Approximately(Mathf.Clamp01(_game.value), _snapshot.game)
+                || !Mathf.Approximately(Mathf.Clamp01(_animals.value), _snapshot.animals)
+                || !Mathf.Approximately(Mathf.Clamp01(_monsters.value), _snapshot.monsters)
+                || !Mathf.Approximately(Mathf.Clamp01(_environment.value), _snapshot.environment)
+                || !Mathf.Approximately(Mathf.Clamp01(_players.value), _snapshot.players)
+                || _inputDevice.value != _snapshot.inDev
+                || _outputDevice.value != _snapshot.outDev
+                || !Mathf.Approximately(Mathf.Clamp01(_micVolume.value), _snapshot.micVol)
+                || _micEnabled.isOn != _snapshot.micOn
+                || _micMonitor.isOn != _snapshot.micMon;
         }
 
         /// <summary>BACK/Escape: block when edits exist and ask what to do.</summary>
@@ -299,14 +327,12 @@ namespace LatticeVeil.Game
             // Video + Audio: standard uGUI widgets from the builder.
             _videoRoot = (RectTransform)OptionsScreenBuilder.BuildPage(_tabPages[Tab.Video], this).transform;
             _audioRoot = OptionsScreenBuilder.BuildAudioPage(_tabPages[Tab.Audio], this,
-                out _master, out _music, out _sfx);
+                out _master, out _music, out _sfx,
+                out _game, out _animals, out _monsters, out _environment, out _players,
+                out _inputDevice, out _outputDevice,
+                out _micVolume, out _micEnabled, out _micMonitor);
 
-            _master.SetValueWithoutNotify(Mathf.Clamp01(_settings.MasterVolume));
-            _music.SetValueWithoutNotify(Mathf.Clamp01(_settings.MusicVolume));
-            _sfx.SetValueWithoutNotify(Mathf.Clamp01(_settings.SfxVolume));
-            _master.GetComponent<OptionsScreenBuilder.SliderValueText>().Refresh();
-            _music.GetComponent<OptionsScreenBuilder.SliderValueText>().Refresh();
-            _sfx.GetComponent<OptionsScreenBuilder.SliderValueText>().Refresh();
+            PopulateAudioValues();
 
             BuildNotePage(_tabPages[Tab.Controls], "CONTROLS", "Keybind remapping arrives with the controls update.\nCurrent binds live in options.lvc.");
             BuildNotePage(_tabPages[Tab.Packs], "PACKS & ADDONS", "Packs & mods management arrives with the packs update.\nDrop content packs into Documents/LatticeVeil/Packs.");
@@ -373,6 +399,71 @@ namespace LatticeVeil.Game
             _brightness.SetValueWithoutNotify(Mathf.Clamp01(Mathf.InverseLerp(0.5f, 1.5f, _settings.Brightness)));
             _fov.SetValueWithoutNotify(Mathf.InverseLerp(60f, 110f, _settings.FieldOfView));
             _renderDistance.SetValueWithoutNotify(Mathf.InverseLerp(4f, 16f, _settings.RenderDistanceChunks));
+        }
+
+        // ------------------------------------------------------------------
+        // Audio widgets (bound by the builder)
+        // ------------------------------------------------------------------
+
+        public void BindAudioWidgets(Slider master, Slider music, Slider sfx,
+            Slider game, Slider animals, Slider monsters, Slider environment, Slider players,
+            Dropdown inputDevice, Dropdown outputDevice,
+            Slider micVolume, Toggle micEnabled, Toggle micMonitor)
+        {
+            _master = master; _music = music; _sfx = sfx;
+            _game = game; _animals = animals; _monsters = monsters;
+            _environment = environment; _players = players;
+            _inputDevice = inputDevice; _outputDevice = outputDevice;
+            _micVolume = micVolume; _micEnabled = micEnabled; _micMonitor = micMonitor;
+        }
+
+        private static string DefaultDeviceLabel(string name, string id)
+        {
+            return string.IsNullOrWhiteSpace(id) ? "SYSTEM DEFAULT" : name;
+        }
+
+        private void PopulateAudioValues()
+        {
+            _master.SetValueWithoutNotify(Mathf.Clamp01(_settings.MasterVolume));
+            _music.SetValueWithoutNotify(Mathf.Clamp01(_settings.MusicVolume));
+            _sfx.SetValueWithoutNotify(Mathf.Clamp01(_settings.SfxVolume));
+            _game.SetValueWithoutNotify(Mathf.Clamp01(_settings.GameVolume));
+            _animals.SetValueWithoutNotify(Mathf.Clamp01(_settings.AnimalsVolume));
+            _monsters.SetValueWithoutNotify(Mathf.Clamp01(_settings.MonstersVolume));
+            _environment.SetValueWithoutNotify(Mathf.Clamp01(_settings.EnvironmentVolume));
+            _players.SetValueWithoutNotify(Mathf.Clamp01(_settings.PlayersVolume));
+            _micVolume.SetValueWithoutNotify(Mathf.Clamp01(_settings.MicVolume));
+            _micEnabled.SetIsOnWithoutNotify(_settings.MicEnabled);
+            _micMonitor.SetIsOnWithoutNotify(_settings.MicMonitor);
+
+            // Enumerate audio devices (Unity: Microphone for input; output
+            // devices are not enumerable in the player, so offer SYSTEM DEFAULT
+            // plus a manual "default" entry — the engine uses the OS default).
+            _inputDeviceIds.Clear();
+            _outputDeviceIds.Clear();
+            var inputOptions = new List<string> { "SYSTEM DEFAULT" };
+            var outputOptions = new List<string> { "SYSTEM DEFAULT" };
+            _inputDeviceIds.Add("");
+            _outputDeviceIds.Add("");
+            try
+            {
+                foreach (var name in Microphone.devices)
+                {
+                    inputOptions.Add(name);
+                    _inputDeviceIds.Add(name);
+                }
+            }
+            catch { /* no mic subsystem — keep SYSTEM DEFAULT only */ }
+
+            _inputDevice.ClearOptions();
+            _inputDevice.AddOptions(inputOptions);
+            _inputDevice.SetValueWithoutNotify(Mathf.Max(0, _inputDeviceIds.IndexOf(_settings.AudioInputDeviceId)));
+            _outputDevice.ClearOptions();
+            _outputDevice.AddOptions(outputOptions);
+            _outputDevice.SetValueWithoutNotify(Mathf.Max(0, _outputDeviceIds.IndexOf(_settings.AudioOutputDeviceId)));
+
+            foreach (var s in new[] { _master, _music, _sfx, _game, _animals, _monsters, _environment, _players, _micVolume })
+                s.GetComponent<OptionsScreenBuilder.SliderValueText>().Refresh();
         }
 
         // ------------------------------------------------------------------
@@ -450,7 +541,7 @@ namespace LatticeVeil.Game
                 apply.anchorMin = new Vector2(0.5f, 0f);
                 apply.anchorMax = new Vector2(0.5f, 0f);
                 apply.pivot = new Vector2(0.5f, 0f);
-                apply.anchoredPosition = new Vector2(0, 2f); // tight to the frame's bottom edge
+                apply.anchoredPosition = new Vector2(0, -18f); // below the frame's bottom edge, clear of the GUI box
             }
         }
 
@@ -600,16 +691,81 @@ namespace LatticeVeil.Game
             _settings.MasterVolume = Mathf.Clamp01(_master.value);
             _settings.MusicVolume = Mathf.Clamp01(_music.value);
             _settings.SfxVolume = Mathf.Clamp01(_sfx.value);
+            _settings.GameVolume = Mathf.Clamp01(_game.value);
+            _settings.AnimalsVolume = Mathf.Clamp01(_animals.value);
+            _settings.MonstersVolume = Mathf.Clamp01(_monsters.value);
+            _settings.EnvironmentVolume = Mathf.Clamp01(_environment.value);
+            _settings.PlayersVolume = Mathf.Clamp01(_players.value);
+            _settings.AudioInputDeviceId = _inputDevice.value > 0 && _inputDevice.value < _inputDeviceIds.Count
+                ? _inputDeviceIds[_inputDevice.value]
+                : "";
+            _settings.AudioOutputDeviceId = _outputDevice.value > 0 && _outputDevice.value < _outputDeviceIds.Count
+                ? _outputDeviceIds[_outputDevice.value]
+                : "";
+            _settings.MicVolume = Mathf.Clamp01(_micVolume.value);
+            _settings.MicEnabled = _micEnabled.isOn;
+            _settings.MicMonitor = _micMonitor.isOn;
 
             _settings.Save(null); // same options.lvc format, unchanged
             Debug.Log("Options applied and saved to options.lvc.");
 
-            // Close FIRST so the window/mode change happens outside the UI
-            // click handler; SettingsBehavior defers + retries the resize and
-            // temporarily re-enables the window resize style, so the player
-            // never presents into a stale swap chain (white screen).
-            Close();
+            // Stay on the Options screen and confirm with a toast instead of
+            // dropping back to the main menu. Mode/resolution changes run
+            // through the deferred SettingsBehavior path, which is safe to
+            // trigger from the click handler (it never resizes inside it).
             SettingsBehavior.Apply(_settings);
+            TakeSnapshot(); // applied values are now the baseline
+            ShowAppliedToast();
+        }
+
+        // ------------------------------------------------------------------
+        // "Settings applied" toast
+        // ------------------------------------------------------------------
+
+        private Coroutine _toastRoutine;
+
+        private void ShowAppliedToast()
+        {
+            if (_toastRoutine != null)
+                StopCoroutine(_toastRoutine);
+            _toastRoutine = StartCoroutine(ToastRoutine());
+        }
+
+        private System.Collections.IEnumerator ToastRoutine()
+        {
+            var toastGo = new GameObject("AppliedToast", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var toastRect = (RectTransform)toastGo.transform;
+            toastRect.SetParent(_screenRoot.transform, false);
+            toastRect.anchorMin = toastRect.anchorMax = toastRect.pivot = new Vector2(0.5f, 0f);
+            toastRect.sizeDelta = new Vector2(360f, 56f);
+            toastRect.anchoredPosition = new Vector2(0f, 40f);
+            toastGo.GetComponent<Image>().color = new Color(0.10f, 0.13f, 0.11f, 0.95f);
+
+            var label = CreateLabel(toastRect, "Settings applied", 20, Color.white);
+            var labelRect = (RectTransform)label.transform;
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            label.alignment = TextAnchor.MiddleCenter;
+            label.raycastTarget = false;
+
+            // Slide up + hold + fade out.
+            var group = toastGo.AddComponent<CanvasGroup>();
+            float t = 0f;
+            while (t < 0.15f) { t += Time.unscaledDeltaTime; group.alpha = t / 0.15f; yield return null; }
+            group.alpha = 1f;
+            yield return new WaitForSecondsRealtime(1.2f);
+            t = 0f;
+            while (t < 0.3f)
+            {
+                t += Time.unscaledDeltaTime;
+                group.alpha = 1f - t / 0.3f;
+                toastRect.anchoredPosition += new Vector2(0f, 40f * Time.unscaledDeltaTime);
+                yield return null;
+            }
+            Destroy(toastGo);
+            _toastRoutine = null;
         }
 
         private void Close()

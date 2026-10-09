@@ -82,20 +82,92 @@ namespace LatticeVeil.Game
             return root;
         }
 
-        /// <summary>Builds the Audio page under the panel.</summary>
+        /// <summary>
+        /// Builds the Audio page: side-by-side columns like the MonoGame
+        /// version, inside a vertically scrollable viewport when the rows run
+        /// past the panel. Left column = device + MIXES (channel volumes);
+        /// right column = MIC section (device, volume, toggles).
+        /// </summary>
         public static RectTransform BuildAudioPage(RectTransform page, OptionsScreenController controller,
-            out Slider master, out Slider music, out Slider sfx)
+            out Slider master, out Slider music, out Slider sfx,
+            out Slider game, out Slider animals, out Slider monsters, out Slider environment, out Slider players,
+            out Dropdown inputDevice, out Dropdown outputDevice,
+            out Slider micVolume, out Toggle micEnabled, out Toggle micMonitor)
         {
             var root = new GameObject("StandardPageAudio", typeof(RectTransform));
             var rect = (RectTransform)root.transform;
             rect.SetParent(page, false);
             Stretch(rect);
-            var rows = CreateRows(rect);
 
-            master = CreateSlider(rows, "MASTER", new Vector2(ColumnXLeft, 127f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            music = CreateSlider(rows, "MUSIC", new Vector2(ColumnXLeft, 51f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
-            sfx = CreateSlider(rows, "SFX", new Vector2(ColumnXLeft, -25f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            // Scrollable inner viewport (RectMask2D clips; the ScrollRect reacts
+            // to the mouse wheel) with a taller content area when needed.
+            var viewportGo = new GameObject("AudioViewport", typeof(RectTransform), typeof(RectMask2D));
+            var viewport = (RectTransform)viewportGo.transform;
+            viewport.SetParent(rect, false);
+            Stretch(viewport);
 
+            var scrollGo = viewportGo.AddComponent<ScrollRect>();
+            scrollGo.horizontal = false;
+            scrollGo.vertical = true;
+            scrollGo.movementType = ScrollRect.MovementType.Clamped;
+            scrollGo.scrollSensitivity = 24f;
+
+            var contentGo = new GameObject("AudioContent", typeof(RectTransform));
+            var content = (RectTransform)contentGo.transform;
+            content.SetParent(viewport, false);
+            content.anchorMin = new Vector2(0f, 1f);
+            content.anchorMax = new Vector2(1f, 1f);
+            content.pivot = new Vector2(0.5f, 1f);
+            content.anchoredPosition = Vector2.zero;
+
+            var rows = CreateRows(content);
+
+            // Rows-local pitch is 66 (label sits 41 above its control), scaled
+            // by ContentScale inside the content — so the unscaled content
+            // needs ~500 units; anything past the panel scrolls.
+            float contentH = 560f;
+            content.sizeDelta = new Vector2(0f, contentH);
+            scrollGo.content = content;
+            scrollGo.viewport = viewport;
+
+            // ---- LEFT column: devices + channel mix ----
+            var label = CreateText(rows, "OUTPUT DEVICE", 15, Accent);
+            SetRect((RectTransform)label.transform, new Vector2(ColumnXLeft, 246f), new Vector2(ColumnWidth, 20f));
+            label.alignment = TextAnchor.LowerLeft;
+            outputDevice = CreateDropdown(rows, "", new Vector2(ColumnXLeft, 218f), ColumnWidth, new[] { "SYSTEM DEFAULT" });
+
+            var mixHeader = CreateText(rows, "CHANNEL MIX", 15, Accent);
+            SetRect((RectTransform)mixHeader.transform, new Vector2(ColumnXLeft, 184f), new Vector2(ColumnWidth, 20f));
+            mixHeader.alignment = TextAnchor.LowerLeft;
+
+            master = CreateSlider(rows, "MASTER", new Vector2(ColumnXLeft, 122f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            music = CreateSlider(rows, "MUSIC", new Vector2(ColumnXLeft, 56f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            game = CreateSlider(rows, "GAME", new Vector2(ColumnXLeft, -10f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            animals = CreateSlider(rows, "ANIMALS", new Vector2(ColumnXLeft, -76f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            monsters = CreateSlider(rows, "MONSTERS", new Vector2(ColumnXLeft, -142f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            environment = CreateSlider(rows, "ENVIRONMENT", new Vector2(ColumnXLeft, -208f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            players = CreateSlider(rows, "PLAYERS", new Vector2(ColumnXLeft, -274f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+
+            // ---- RIGHT column: MIC section ----
+            var micHeader = CreateText(rows, "MICROPHONE", 15, Accent);
+            SetRect((RectTransform)micHeader.transform, new Vector2(ColumnXRight, 246f), new Vector2(ColumnWidth, 20f));
+            micHeader.alignment = TextAnchor.LowerLeft;
+
+            micEnabled = CreateToggle(rows, "ENABLE MICROPHONE", new Vector2(ColumnXRight, 224f), ColumnWidth);
+            inputDevice = CreateDropdown(rows, "INPUT DEVICE", new Vector2(ColumnXRight, 148f), ColumnWidth, new[] { "SYSTEM DEFAULT" });
+            micVolume = CreateSlider(rows, "MIC VOLUME", new Vector2(ColumnXRight, 72f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+            micMonitor = CreateToggle(rows, "MONITOR (HEAR YOURSELF)", new Vector2(ColumnXRight, 0f), ColumnWidth);
+
+            var sfxHeader = CreateText(rows, "INTERFACE SOUNDS", 15, Accent);
+            SetRect((RectTransform)sfxHeader.transform, new Vector2(ColumnXRight, -44f), new Vector2(ColumnWidth, 20f));
+            sfxHeader.alignment = TextAnchor.LowerLeft;
+            sfx = CreateSlider(rows, "UI / SFX", new Vector2(ColumnXRight, -108f), ColumnWidth, v => Mathf.RoundToInt(v * 100f) + "%");
+
+            var hint = CreateText(rows, "Scroll for more \u2022 APPLY saves to options.lvc", 13, LabelColor);
+            SetRect((RectTransform)hint.transform, new Vector2(0f, -262f), new Vector2(820f, 20f));
+
+            controller.BindAudioWidgets(master, music, sfx, game, animals, monsters, environment, players,
+                inputDevice, outputDevice, micVolume, micEnabled, micMonitor);
             return rect;
         }
 

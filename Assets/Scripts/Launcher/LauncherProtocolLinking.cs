@@ -464,7 +464,7 @@ namespace LatticeVeil.Launcher
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LatticeVeil", "bin", "LatticeVeilProtocolBridge.exe"),
                 Path.Combine(AppContext.BaseDirectory, "LatticeVeilProtocolBridge.exe"),
                 Path.Combine(AppContext.BaseDirectory, "..", "LatticeVeilProtocolBridge.exe"),
-                @"C:\Users\Redacted\Documents\LatticeVeilUnity\builds\LatticeVeilProtocolBridge.exe",
+                @"C:\Users\Redacted\Documents\LatticeVeilUnity\builds\Tools\LatticeVeilProtocolBridge.exe",
                 @"C:\Users\Redacted\Documents\LatticeVeil_project\DEV\LatticeVeilProtocolBridge.exe",
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "LatticeVeil", "LatticeVeilProtocolBridge.exe")
             };

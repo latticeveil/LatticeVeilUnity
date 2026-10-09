@@ -11,7 +11,7 @@ public static class CommandLineBuilder
         var scenes = new[] { "Assets/Scenes/Launcher.unity" };
         var report = BuildPipeline.BuildPlayer(
             scenes,
-            "builds/LatticeVeil.exe",
+            "builds/Launcher/LatticeVeil.exe",
             BuildTarget.StandaloneWindows64,
             BuildOptions.None);
 

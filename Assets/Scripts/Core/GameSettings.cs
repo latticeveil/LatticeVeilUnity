@@ -33,6 +33,20 @@ namespace LatticeVeil.Core
         public float MusicVolume { get; set; } = 1.0f;
         public float SfxVolume { get; set; } = 1.0f;
 
+        // Per-channel audio (game owns these; all clamped 0..1).
+        public float GameVolume { get; set; } = 1.0f;      // blocks/world/gameplay sounds
+        public float AnimalsVolume { get; set; } = 1.0f;
+        public float MonstersVolume { get; set; } = 1.0f;
+        public float EnvironmentVolume { get; set; } = 1.0f; // wind, water, ambience
+        public float PlayersVolume { get; set; } = 1.0f;   // other players' actions
+
+        // Microphone / voice
+        public string AudioInputDeviceId { get; set; } = "";   // "" = system default
+        public string AudioOutputDeviceId { get; set; } = "";  // "" = system default
+        public float MicVolume { get; set; } = 1.0f;
+        public bool MicEnabled { get; set; } = false;
+        public bool MicMonitor { get; set; } = false;          // hear yourself (sidetone)
+
         // [Launcher]
         public bool KeepLauncherOpen { get; set; } = false;
         public bool InstantQuitEnabled { get; set; } = false; // close launcher process entirely when the game starts
@@ -142,6 +156,16 @@ namespace LatticeVeil.Core
                 sb.AppendLine($"MasterVolume={MasterVolume.ToString("0.0#", CultureInfo.InvariantCulture)}");
                 sb.AppendLine($"MusicVolume={MusicVolume.ToString("0.0#", CultureInfo.InvariantCulture)}");
                 sb.AppendLine($"SfxVolume={SfxVolume.ToString("0.0#", CultureInfo.InvariantCulture)}");
+                sb.AppendLine($"GameVolume={GameVolume.ToString("0.0#", CultureInfo.InvariantCulture)}");
+                sb.AppendLine($"AnimalsVolume={AnimalsVolume.ToString("0.0#", CultureInfo.InvariantCulture)}");
+                sb.AppendLine($"MonstersVolume={MonstersVolume.ToString("0.0#", CultureInfo.InvariantCulture)}");
+                sb.AppendLine($"EnvironmentVolume={EnvironmentVolume.ToString("0.0#", CultureInfo.InvariantCulture)}");
+                sb.AppendLine($"PlayersVolume={PlayersVolume.ToString("0.0#", CultureInfo.InvariantCulture)}");
+                sb.AppendLine($"AudioInputDeviceId=\"{AudioInputDeviceId}\"");
+                sb.AppendLine($"AudioOutputDeviceId=\"{AudioOutputDeviceId}\"");
+                sb.AppendLine($"MicVolume={MicVolume.ToString("0.0#", CultureInfo.InvariantCulture)}");
+                sb.AppendLine($"MicEnabled={(MicEnabled ? "true" : "false")}");
+                sb.AppendLine($"MicMonitor={(MicMonitor ? "true" : "false")}");
                 sb.AppendLine();
 
                 // [Launcher]
@@ -263,6 +287,16 @@ namespace LatticeVeil.Core
                         if (string.Equals(key, "MasterVolume", StringComparison.OrdinalIgnoreCase) && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var mv)) MasterVolume = mv;
                         else if (string.Equals(key, "MusicVolume", StringComparison.OrdinalIgnoreCase) && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var muv)) MusicVolume = muv;
                         else if (string.Equals(key, "SfxVolume", StringComparison.OrdinalIgnoreCase) && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var sv)) SfxVolume = sv;
+                        else if (string.Equals(key, "GameVolume", StringComparison.OrdinalIgnoreCase) && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var gv)) GameVolume = gv;
+                        else if (string.Equals(key, "AnimalsVolume", StringComparison.OrdinalIgnoreCase) && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var av)) AnimalsVolume = av;
+                        else if (string.Equals(key, "MonstersVolume", StringComparison.OrdinalIgnoreCase) && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var mv2)) MonstersVolume = mv2;
+                        else if (string.Equals(key, "EnvironmentVolume", StringComparison.OrdinalIgnoreCase) && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var ev)) EnvironmentVolume = ev;
+                        else if (string.Equals(key, "PlayersVolume", StringComparison.OrdinalIgnoreCase) && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var pv)) PlayersVolume = pv;
+                        else if (string.Equals(key, "AudioInputDeviceId", StringComparison.OrdinalIgnoreCase)) AudioInputDeviceId = val;
+                        else if (string.Equals(key, "AudioOutputDeviceId", StringComparison.OrdinalIgnoreCase)) AudioOutputDeviceId = val;
+                        else if (string.Equals(key, "MicVolume", StringComparison.OrdinalIgnoreCase) && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var mcv)) MicVolume = mcv;
+                        else if (string.Equals(key, "MicEnabled", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var me)) MicEnabled = me;
+                        else if (string.Equals(key, "MicMonitor", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var mm)) MicMonitor = mm;
                         break;
 
                     case "launcher":
@@ -337,6 +371,14 @@ namespace LatticeVeil.Core
             s.MasterVolume = Math.Clamp(s.MasterVolume, 0f, 1f);
             s.MusicVolume = Math.Clamp(s.MusicVolume, 0f, 1f);
             s.SfxVolume = Math.Clamp(s.SfxVolume, 0f, 1f);
+            s.GameVolume = Math.Clamp(s.GameVolume, 0f, 1f);
+            s.AnimalsVolume = Math.Clamp(s.AnimalsVolume, 0f, 1f);
+            s.MonstersVolume = Math.Clamp(s.MonstersVolume, 0f, 1f);
+            s.EnvironmentVolume = Math.Clamp(s.EnvironmentVolume, 0f, 1f);
+            s.PlayersVolume = Math.Clamp(s.PlayersVolume, 0f, 1f);
+            s.MicVolume = Math.Clamp(s.MicVolume, 0f, 1f);
+            s.AudioInputDeviceId = (s.AudioInputDeviceId ?? string.Empty).Trim();
+            s.AudioOutputDeviceId = (s.AudioOutputDeviceId ?? string.Empty).Trim();
             s.GuiScale = NormalizeGuiScale(s.GuiScale);
             s.Brightness = Math.Clamp(s.Brightness, 0.5f, 1.5f);
             s.FieldOfView = Math.Clamp(s.FieldOfView, 60, 110);

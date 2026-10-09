@@ -174,10 +174,16 @@ namespace LatticeVeil.Game
         // Live appliers
         // ------------------------------------------------------------------
 
-        /// <summary>GUI scale: multiplies the reference DPI of every menu canvas.</summary>
+        /// <summary>
+        /// GUI scale: scales the WHOLE menu UI (buttons + layout together) by
+        /// adjusting each menu canvas' reference resolution. Because every
+        /// element is anchored inside the canvas (corners to corners, center to
+        /// center), scaling shrinks/grows everything in place — a corner button
+        /// stays in its corner, just smaller. STANDARD=1.0, LARGE=1.25 (max).
+        /// </summary>
         public static void ApplyGuiScale(float guiScale)
         {
-            var scale = Mathf.Clamp(guiScale, 0.5f, 3f);
+            var scale = Mathf.Clamp(guiScale, 0.75f, 1.25f);
             foreach (var scaler in Object.FindObjectsOfType<CanvasScaler>())
             {
                 if (scaler.uiScaleMode != CanvasScaler.ScaleMode.ScaleWithScreenSize)

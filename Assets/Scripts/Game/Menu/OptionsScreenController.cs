@@ -25,9 +25,12 @@ namespace LatticeVeil.Game
         {
             (1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)
         };
+        // GUI scale applies to the WHOLE UI (buttons + layout together) via the
+        // shared CanvasScaler, so corner-pinned buttons scale in place. LARGE is
+        // the largest option and scales only a little so text stays readable.
         private static readonly (float value, string label)[] GuiScales =
         {
-            (1.0f, "STANDARD"), (1.5f, "LARGE"), (2.0f, "LARGER")
+            (1.0f, "STANDARD"), (1.25f, "LARGE")
         };
         private static readonly string[] Qualities = { "LOW", "MEDIUM", "HIGH", "ULTRA" };
 
@@ -343,7 +346,7 @@ namespace LatticeVeil.Game
                 apply.anchorMin = new Vector2(0.5f, 0f);
                 apply.anchorMax = new Vector2(0.5f, 0f);
                 apply.pivot = new Vector2(0.5f, 0f);
-                apply.anchoredPosition = new Vector2(0, Mathf.Max(10f, 14f * layoutScale));
+                apply.anchoredPosition = new Vector2(0, Mathf.Max(4f, 6f * layoutScale)); // a bit lower
             }
         }
 

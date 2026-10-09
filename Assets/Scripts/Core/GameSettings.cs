@@ -314,12 +314,12 @@ namespace LatticeVeil.Core
 
         private static float NormalizeGuiScale(float value)
         {
+            // GUI scale range: STANDARD=1.0, LARGE=1.25 (largest option).
+            // Older files with values >1.25 clamp down; <1.0 legacy values
+            // fold into 1.0.
             if (value < 1.0f)
-            {
-                var legacy = Math.Clamp(value, 0.75f, 1.0f);
-                return 1.0f + ((legacy - 0.75f) / 0.25f);
-            }
-            return Math.Clamp(value, 1.0f, 2.0f);
+                return 1.0f;
+            return Math.Clamp(value, 1.0f, 1.25f);
         }
 
         private static string NormalizeQuality(string value)

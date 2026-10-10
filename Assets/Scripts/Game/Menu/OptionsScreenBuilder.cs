@@ -122,15 +122,17 @@ namespace LatticeVeil.Game
             // content's raycast targets — Sliders/Toggles eat the drag).
             viewportGo.AddComponent<ScrollAnywhereDrag>().Scroll = scrollGo;
 
-            // Visible scrollbar on the right edge.
+            // Visible scrollbar just inside the right frame art (left of the
+            // old right-edge position), clipped to the exact same top/bottom
+            // cut as the viewport (offsets mirror it: +56 / -34).
             var scrollbarGo = new GameObject("Scrollbar", typeof(RectTransform), typeof(Image), typeof(Scrollbar));
             var scrollbarRect = (RectTransform)scrollbarGo.transform;
             scrollbarRect.SetParent(rect, false);
-            scrollbarRect.anchorMin = new Vector2(1f, 0f);
-            scrollbarRect.anchorMax = new Vector2(1f, 1f);
-            scrollbarRect.pivot = new Vector2(1f, 0.5f);
-            scrollbarRect.sizeDelta = new Vector2(14f, 0f);
-            scrollbarRect.anchoredPosition = new Vector2(-8f, 0f);
+            scrollbarRect.anchorMin = new Vector2(0f, 0f);
+            scrollbarRect.anchorMax = new Vector2(0f, 1f);
+            scrollbarRect.pivot = new Vector2(0f, 0.5f);
+            scrollbarRect.offsetMin = new Vector2(424f, 56f);
+            scrollbarRect.offsetMax = new Vector2(438f, -34f);
             scrollbarGo.GetComponent<Image>().color = new Color(1f, 1f, 1f, 0.14f);
             var scrollbar = scrollbarGo.GetComponent<Scrollbar>();
             scrollbar.direction = Scrollbar.Direction.BottomToTop;
@@ -142,6 +144,7 @@ namespace LatticeVeil.Game
             slidingArea.offsetMin = new Vector2(3f, 4f);
             slidingArea.offsetMax = new Vector2(-3f, -4f);
 
+
             var handleGo = new GameObject("Handle", typeof(RectTransform), typeof(Image));
             var handleRect = (RectTransform)handleGo.transform;
             handleRect.SetParent(slidingArea, false);
@@ -151,7 +154,10 @@ namespace LatticeVeil.Game
             scrollbar.handleRect = handleRect;
             scrollbar.targetGraphic = handleGo.GetComponent<Image>();
             scrollGo.verticalScrollbar = scrollbar;
-            scrollGo.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
+            // Permanent: AutoHideAndExpandViewport re-lays-out the scrollbar
+            // every frame (right-anchored per its own convention), which
+            // overrides the explicit clip/position below.
+            scrollGo.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.Permanent;
             scrollGo.verticalScrollbarSpacing = 4f;
 
             var contentGo = new GameObject("AudioContent", typeof(RectTransform));
@@ -221,7 +227,7 @@ namespace LatticeVeil.Game
             // starts regardless of the ENABLE toggle so the bar is viewable as
             // a live preview (MonoGame DrawMicMeter visual, gradient fill).
             var meterHeader = CreateText(rows, "MIC LEVEL", 15, Accent);
-            SetRect((RectTransform)meterHeader.transform, new Vector2(ColumnXRight, -104f), new Vector2(ColumnWidth, 20f));
+            SetRect((RectTransform)meterHeader.transform, new Vector2(ColumnXRight, -84f), new Vector2(ColumnWidth, 20f));
             meterHeader.alignment = TextAnchor.LowerLeft;
             meterFill = CreateMeter(rows, new Vector2(ColumnXRight, -168f), ColumnWidth);
             meterPercent = meterFill.GetComponent<MicMeterBar>().PercentText;

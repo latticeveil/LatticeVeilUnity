@@ -197,6 +197,15 @@ namespace LatticeVeil.Core
                 {
                     sb.AppendLine($"{kv.Key}=\"{kv.Value}\"");
                 }
+                sb.AppendLine();
+
+                // [Packs]
+                sb.AppendLine("[Packs]");
+                sb.AppendLine("# Mods & repacks enabled through Packs & Addons (IDs from each addon's manifest).");
+                foreach (var id in EnabledPacks)
+                    sb.AppendLine($"EnabledPack=\"{id}\"");
+                foreach (var id in EnabledMods)
+                    sb.AppendLine($"EnabledMod=\"{id}\"");
 
                 File.WriteAllText(settingsPath, sb.ToString(), Encoding.UTF8);
             }
@@ -315,6 +324,13 @@ namespace LatticeVeil.Core
 
                     case "keybinds":
                         if (!string.IsNullOrEmpty(key)) Keybinds[key] = val;
+                        break;
+
+                    case "packs":
+                        if (string.Equals(key, "EnabledPack", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(val))
+                            EnabledPacks.Add(val.ToLowerInvariant());
+                        else if (string.Equals(key, "EnabledMod", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(val))
+                            EnabledMods.Add(val.ToLowerInvariant());
                         break;
 
                     default:

@@ -329,7 +329,9 @@ namespace LatticeVeil.Game
             PopulateAudioValues();
 
             BuildNotePage(_tabPages[Tab.Controls], "CONTROLS", "Keybind remapping arrives with the controls update.\nCurrent binds live in options.lvc.");
-            BuildNotePage(_tabPages[Tab.Packs], "PACKS & ADDONS", "Packs & mods management arrives with the packs update.\nDrop content packs into Documents/LatticeVeil/Packs.");
+            // PACKS & ADDONS: real addon management (MonoGame parity).
+            AddonsScreenBuilder.BindSettings(_settings, () => { _settings.Save(null); });
+            AddonsScreenBuilder.Build(_tabPages[Tab.Packs], this);
         }
 
         private void BuildNotePage(RectTransform page, string title, string text)
@@ -429,6 +431,9 @@ namespace LatticeVeil.Game
             MicMonitorHost.Poll();
             if (_micMeter != null)
                 _micMeter.SetLevel(MicMonitorHost.Level);
+
+            // Drain main-thread callbacks (addon import dialog results).
+            UnityMainThread.RunPending();
         }
 
         private void PopulateAudioValues()

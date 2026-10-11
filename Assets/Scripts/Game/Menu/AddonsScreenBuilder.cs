@@ -38,29 +38,24 @@ namespace LatticeVeil.Game
         // Addons header row: border boxes mirror OptionsScreenBuilder.PanelWidth.
         private const float LeftEdge = -424f;   // content left inside frame art
         private const float RightEdge = 424f;   // content right inside frame art
-        private const float HeaderY = 200f;     // sub-tab / action row center
-        private const float BannerY = 176f;     // explanatory banner center
-        private const float HeaderH = 34f;
-        private const float ActionH = 32f;
+        private const float HeaderY = 208f;     // sub-tab / action row center
+        private const float HeaderH = 26f;
+        private const float ActionH = 24f;
 
-        // MonoGame DrawAddonHeaderAndSubTabs palette.
-        private static readonly Color TabActiveBg = new Color(40f / 255f, 56f / 255f, 86f, 235f / 255f);
-        private static readonly Color TabInactiveBg = new Color(16f / 255f, 20f / 255f, 28f, 220f / 255f);
-        private static readonly Color TabActiveBorder = new Color(226f / 255f, 240f / 255f, 1f);
-        private static readonly Color TabInactiveBorder = new Color(120f / 255f, 132f / 255f, 150f / 255f);
+        // Plain grey palette (MonoGame layout, muted colors).
+        private static readonly Color TabActiveBg = new Color(52f / 255f, 58f / 255f, 68f / 255f, 235f / 255f);
+        private static readonly Color TabInactiveBg = new Color(24f / 255f, 28f / 255f, 34f / 255f, 220f / 255f);
+        private static readonly Color TabActiveBorder = new Color(170f / 255f, 178f / 255f, 190f / 255f, 1f);
+        private static readonly Color TabInactiveBorder = new Color(96f / 255f, 104f / 255f, 116f / 255f, 1f);
         private static readonly Color TabActiveText = Color.white;
-        private static readonly Color TabInactiveText = new Color(180f / 255f, 190f / 255f, 205f / 255f);
+        private static readonly Color TabInactiveText = new Color(165f / 255f, 172f / 255f, 182f / 255f);
 
         private static readonly Color Accent = new Color(0.55f, 0.8f, 1f, 1f);
         private static readonly Color TextColor = Color.white;
         private static readonly Color SubText = new Color(0.63f, 0.67f, 0.73f, 1f);
-        private static readonly Color EnabledBorder = new Color(80f / 255f, 190f / 255f, 100f / 255f, 1f);
-        private static readonly Color BannerMods = new Color(40f / 255f, 50f / 255f, 65f / 255f, 0.8f);
-        private static readonly Color BannerPacks = new Color(50f / 255f, 40f / 255f, 35f / 255f, 0.8f);
-        private static readonly Color ImportBg = new Color(28f / 255f, 48f / 255f, 32f / 255f);
-        private static readonly Color ImportBorder = new Color(100f / 255f, 200f / 255f, 130f / 255f);
-        private static readonly Color ImportText = new Color(180f / 255f, 255f / 255f, 190f / 255f);
-        private static readonly Color ActionBg = new Color(24f / 255f, 28f / 255f, 36f);
+        private static readonly Color EnabledBorder = new Color(96f / 255f, 132f / 255f, 104f / 255f, 1f);
+        private static readonly Color EnabledText = new Color(150f / 255f, 205f / 255f, 160f / 255f);
+        private static readonly Color ActionBg = new Color(24f / 255f, 28f / 255f, 36f / 255f);
         private static readonly Color ActionBorder = new Color(140f / 255f, 150f / 255f, 165f / 255f);
 
         /// <summary>true = MODS sub-tab, false = REPACKS.</summary>
@@ -68,8 +63,6 @@ namespace LatticeVeil.Game
 
         private static RectTransform _listRoot;
         private static RectTransform _viewport;
-        private static Text _bannerText;
-        private static Image _bannerBackground;
         private static Button _openFolderBtn;
         private static Text _openFolderLabel;
         private static Button _importBtn;
@@ -106,23 +99,19 @@ namespace LatticeVeil.Game
             ApplySubTabVisual();
 
             // Top-right action row (right-aligned to the right content edge).
-            _openFolderBtn = CreateActionButton(rect, "OPEN MODS", new Vector2(RightEdge - 70f, HeaderY), new Vector2(140f, ActionH), ActionBg, ActionBorder, TextColor, DoOpenFolder);
+            _openFolderBtn = CreateActionButton(rect, "OPEN MODS", new Vector2(RightEdge - 62f, HeaderY), new Vector2(124f, ActionH), ActionBg, ActionBorder, SubText, DoOpenFolder);
             _openFolderLabel = _openFolderBtn.GetComponentInChildren<Text>();
-            CreateActionButton(rect, "REFRESH", new Vector2(RightEdge - 70f - 70f - 6f - 50f, HeaderY), new Vector2(100f, ActionH), ActionBg, ActionBorder, TextColor, DoRefresh);
-            var ig = CreateActionButton(rect, "IMPORT", new Vector2(RightEdge - 70f - 70f - 6f - 50f - 50f - 6f - 55f, HeaderY), new Vector2(110f, ActionH), ImportBg, ImportBorder, ImportText, DoImport);
+            CreateActionButton(rect, "REFRESH", new Vector2(RightEdge - 174f, HeaderY), new Vector2(88f, ActionH), ActionBg, ActionBorder, SubText, DoRefresh);
+            var ig = CreateActionButton(rect, "IMPORT", new Vector2(RightEdge - 274f, HeaderY), new Vector2(76f, ActionH), ActionBg, ActionBorder, SubText, DoImport);
             _importBtn = ig;
             _importLabel = ig.GetComponentInChildren<Text>();
             // TEMPLATE: Mods sub-tab only (copies the built-in template mod).
-            _templateBtn = CreateActionButton(rect, "TEMPLATE", new Vector2(RightEdge - 70f - 70f - 6f - 50f - 50f - 6f - 55f - 55f - 6f - 60f, HeaderY), new Vector2(120f, ActionH), ActionBg, ActionBorder, TextColor, DoTemplate).gameObject;
+            _templateBtn = CreateActionButton(rect, "TEMPLATE", new Vector2(RightEdge - 374f, HeaderY), new Vector2(88f, ActionH), ActionBg, ActionBorder, SubText, DoTemplate).gameObject;
             _templateBtn.name = "Btn_TEMPLATE";
 
-            // ---- Explanatory banner (ALL CAPS like MonoGame's font) ----
-            _bannerBackground = CreateBanner(rect, new Vector2(0f, BannerY));
-            _bannerText = _bannerBackground.GetComponentInChildren<Text>();
-
-            // ---- Status text (install progress / errors), thin line below ----
-            _statusText = CreateLabel(rect, "", 12, new Color(0.75f, 0.95f, 0.75f, 1f));
-            SetRect((RectTransform)_statusText.transform, new Vector2(0f, BannerY - 22f), new Vector2(ColumnWidth, 16f));
+                        // ---- Status text (install progress / errors), thin line below header ----
+            _statusText = CreateLabel(rect, "", 11, new Color(0.62f, 0.72f, 0.66f, 1f));
+            SetRect((RectTransform)_statusText.transform, new Vector2(0f, HeaderY - 20f), new Vector2(ColumnWidth, 14f));
             _statusText.alignment = TextAnchor.MiddleCenter;
 
             // ---- Scrollable addon list ----
@@ -132,10 +121,10 @@ namespace LatticeVeil.Game
             _viewport.anchorMin = new Vector2(0f, 0f);
             _viewport.anchorMax = new Vector2(1f, 1f);
             _viewport.pivot = new Vector2(0.5f, 0.5f);
-            // Left/right insets just inside the frame; top clears the banner,
+            // Left/right insets just inside the frame; top clears the header,
             // bottom cut mirrors the Audio page (above the frame's lower art).
             _viewport.offsetMin = new Vector2(56f, 44f);
-            _viewport.offsetMax = new Vector2(-56f, -130f);
+            _viewport.offsetMax = new Vector2(-56f, -104f);
 
             var scrollGo = viewportGo.AddComponent<ScrollRect>();
             scrollGo.horizontal = false;
@@ -152,7 +141,7 @@ namespace LatticeVeil.Game
             scrollbarRect.anchorMax = new Vector2(1f, 1f);
             scrollbarRect.pivot = new Vector2(1f, 0.5f);
             scrollbarRect.offsetMin = new Vector2(-56f, 44f);
-            scrollbarRect.offsetMax = new Vector2(-42f, -130f);
+            scrollbarRect.offsetMax = new Vector2(-42f, -104f);
             scrollbarGo.GetComponent<Image>().color = new Color(1f, 1f, 1f, 0.14f);
             var scrollbar = scrollbarGo.GetComponent<Scrollbar>();
             scrollbar.direction = Scrollbar.Direction.BottomToTop;
@@ -375,8 +364,7 @@ namespace LatticeVeil.Game
                 y += 64f;
 
                 var bg = rowGo.GetComponent<Image>();
-                bg.color = entry.Enabled ? new Color(28f / 255f, 38f / 255f, 30f / 255f, 0.95f)
-                                          : new Color(20f / 255f, 22f / 255f, 26f / 255f, 0.95f);
+                bg.color = new Color(20f / 255f, 22f / 255f, 26f / 255f, 0.95f);
                 var outline = rowGo.AddComponent<Outline>();
                 outline.effectColor = entry.Enabled ? EnabledBorder : new Color(70f / 255f, 75f / 255f, 85f / 255f, 1f);
                 outline.effectDistance = new Vector2(1.5f, -1.5f);
@@ -420,7 +408,7 @@ namespace LatticeVeil.Game
                 // Enable/disable right-side button
                 var toggle = CreateActionButton(rowRect, entry.Enabled ? "ENABLED" : "DISABLED",
                     new Vector2(288f, 0f), new Vector2(150f, 30f), ActionBg, ActionBorder,
-                    entry.Enabled ? TextColor : SubText, () => ToggleAddon(entry));
+                    entry.Enabled ? EnabledText : SubText, () => ToggleAddon(entry));
             }
         }
 
@@ -464,7 +452,7 @@ namespace LatticeVeil.Game
             var line = go.AddComponent<Outline>();
             line.effectDistance = new Vector2(1.5f, -1.5f);
 
-            var t = CreateLabel(rect, label, 15, TextColor);
+            var t = CreateLabel(rect, label, 14, TextColor);
             var tRect = (RectTransform)t.transform;
             Stretch(tRect);
             t.alignment = TextAnchor.MiddleCenter;
@@ -502,12 +490,6 @@ namespace LatticeVeil.Game
 
         private static void OnSubTabChanged()
         {
-            if (_bannerText != null)
-                _bannerText.text = _isMods
-                    ? "MODS ADD NEW FEATURES AND MODIFY CORE GAMEPLAY ASPECTS"
-                    : "REPACKS CHANGE OR REPLACE CURRENT LOADED TEXTURES";
-            if (_bannerBackground != null)
-                _bannerBackground.color = _isMods ? BannerMods : BannerPacks;
             if (_openFolderLabel != null)
                 _openFolderLabel.text = _isMods ? "OPEN MODS" : "OPEN REPACKS";
             RefreshAndRebuild();
@@ -655,28 +637,6 @@ namespace LatticeVeil.Game
         // uGUI helpers
         // ------------------------------------------------------------------
 
-        /// <summary>Explanatory banner under the header row (MonoGame parity).</summary>
-        private static Image CreateBanner(RectTransform parent, Vector2 center)
-        {
-            var go = new GameObject("AddonsBanner", typeof(RectTransform), typeof(Image));
-            var rect = (RectTransform)go.transform;
-            rect.SetParent(parent, false);
-            SetRect(rect, center, new Vector2(RightEdge - LeftEdge, 28f));
-            var img = go.GetComponent<Image>();
-            img.color = BannerMods;
-            img.raycastTarget = false;
-            var outline = go.AddComponent<Outline>();
-            outline.effectColor = new Color(100f / 255f, 120f / 255f, 140f / 255f, 1f);
-            outline.effectDistance = new Vector2(1.5f, -1.5f);
-
-            var t = CreateLabel(go.transform as RectTransform, "MODS ADD NEW FEATURES AND MODIFY CORE GAMEPLAY ASPECTS", 14,
-                new Color(200f / 255f, 210f / 255f, 220f / 255f, 1f));
-            Stretch((RectTransform)t.transform);
-            t.alignment = TextAnchor.MiddleCenter;
-            t.horizontalOverflow = HorizontalWrapMode.Overflow;
-            return img;
-        }
-
         /// <summary>MonoGame drag & drop info box: upload-arrow icon tile,
         /// DRAG & DROP text, and an IMPORT button inside the box. Built once,
         /// toggled by RefreshAndRebuild.</summary>
@@ -728,8 +688,7 @@ namespace LatticeVeil.Game
             // IMPORT button inside the box
             var import = CreateActionButton(box, "IMPORT",
                 new Vector2(0f, 14f), new Vector2(160f, 24f),
-                new Color(40f / 255f, 60f / 255f, 50f / 255f),
-                new Color(100f / 255f, 150f / 255f, 120f / 255f), ImportText, DoImport);
+                ActionBg, ActionBorder, SubText, DoImport);
             var iLabel = import.GetComponentInChildren<Text>();
             iLabel.fontSize = 12;
         }

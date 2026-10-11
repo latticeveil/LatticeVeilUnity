@@ -38,9 +38,9 @@ namespace LatticeVeil.Game
         // Addons header row: border boxes mirror OptionsScreenBuilder.PanelWidth.
         private const float LeftEdge = -424f;   // content left inside frame art
         private const float RightEdge = 424f;   // content right inside frame art
-        private const float HeaderY = 208f;     // sub-tab / action row center
-        private const float HeaderH = 26f;
-        private const float ActionH = 24f;
+        private const float HeaderY = 178f;     // sub-tab / action row center (inside the panel art, below the frame rail)
+        private const float HeaderH = 22f;
+        private const float ActionH = 20f;
 
         // Plain grey palette (MonoGame layout, muted colors).
         private static readonly Color TabActiveBg = new Color(52f / 255f, 58f / 255f, 68f / 255f, 235f / 255f);
@@ -111,7 +111,7 @@ namespace LatticeVeil.Game
 
                         // ---- Status text (install progress / errors), thin line below header ----
             _statusText = CreateLabel(rect, "", 11, new Color(0.62f, 0.72f, 0.66f, 1f));
-            SetRect((RectTransform)_statusText.transform, new Vector2(0f, HeaderY - 20f), new Vector2(ColumnWidth, 14f));
+            SetRect((RectTransform)_statusText.transform, new Vector2(0f, HeaderY - 20f), new Vector2(ColumnWidth, 12f));
             _statusText.alignment = TextAnchor.MiddleCenter;
 
             // ---- Scrollable addon list ----
@@ -124,7 +124,7 @@ namespace LatticeVeil.Game
             // Left/right insets just inside the frame; top clears the header,
             // bottom cut mirrors the Audio page (above the frame's lower art).
             _viewport.offsetMin = new Vector2(56f, 44f);
-            _viewport.offsetMax = new Vector2(-56f, -104f);
+            _viewport.offsetMax = new Vector2(-56f, -126f);
 
             var scrollGo = viewportGo.AddComponent<ScrollRect>();
             scrollGo.horizontal = false;
@@ -141,7 +141,7 @@ namespace LatticeVeil.Game
             scrollbarRect.anchorMax = new Vector2(1f, 1f);
             scrollbarRect.pivot = new Vector2(1f, 0.5f);
             scrollbarRect.offsetMin = new Vector2(-56f, 44f);
-            scrollbarRect.offsetMax = new Vector2(-42f, -104f);
+            scrollbarRect.offsetMax = new Vector2(-42f, -126f);
             scrollbarGo.GetComponent<Image>().color = new Color(1f, 1f, 1f, 0.14f);
             var scrollbar = scrollbarGo.GetComponent<Scrollbar>();
             scrollbar.direction = Scrollbar.Direction.BottomToTop;

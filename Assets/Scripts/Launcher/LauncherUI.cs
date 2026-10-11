@@ -3292,7 +3292,7 @@ namespace LatticeVeil.Launcher
         /// </summary>
         private void PromptRegisterCustomBuild()
         {
-            var picked = SkinManager.PromptSelectExeFile("Select LatticeVeil Game Build", "Game executables|*.exe");
+            var picked = SkinManager.PromptSelectExeFile("Select LatticeVeil Game Build", "Game executables (*.exe)\0*.exe\0All Files (*.*)\0*.*\0");
             if (string.IsNullOrWhiteSpace(picked) || !File.Exists(picked))
                 return;
 

@@ -90,6 +90,38 @@ namespace LatticeVeil.Game
             _deleteBtn = CreateActionButton(frame, "DELETE", new Vector2(RightEdge - 70f - 140f - 8f, HeaderY), new Vector2(120f, 28f), DoDelete);
             SetDeleteEnabled(false);
 
+            // BACK button at the bottom-left, matching the Options screen's
+            // BACK (texture style with fallback text).
+            var backGo = new GameObject("Btn_BACK", typeof(RectTransform), typeof(Image), typeof(Button));
+            var backRect = (RectTransform)backGo.transform;
+            backRect.SetParent(root, false);
+            backRect.anchorMin = new Vector2(0f, 0f);
+            backRect.anchorMax = new Vector2(0f, 0f);
+            backRect.pivot = new Vector2(0f, 0f);
+            backRect.sizeDelta = new Vector2(150f, 48f);
+            backRect.anchoredPosition = new Vector2(14f, 14f);
+            var backTex = GameAssetLoader.LoadTexture("textures/menu/buttons/Back.png");
+            if (backTex != null)
+            {
+                var bImg = backGo.GetComponent<Image>();
+                bImg.sprite = Sprite.Create(backTex, new Rect(0, 0, backTex.width, backTex.height),
+                    new Vector2(0.5f, 0.5f), 100f);
+                bImg.preserveAspect = true;
+                // Slightly wider for the texture's aspect.
+                backRect.sizeDelta = new Vector2(170f, 48f);
+            }
+            else
+            {
+                backGo.GetComponent<Image>().color = ActionBg;
+                var bOutline = backGo.AddComponent<Outline>();
+                bOutline.effectColor = ActionBorder;
+                bOutline.effectDistance = new Vector2(1.5f, -1.5f);
+                var bLabel = CreateLabel(backRect, "BACK", 15, TextColor);
+                Stretch(bLabel.transform as RectTransform);
+                bLabel.alignment = TextAnchor.MiddleCenter;
+            }
+            backGo.GetComponent<Button>().onClick.AddListener(DoBack);
+
             _statusText = CreateLabel(frame, "", 11, SubText);
             SetRect((RectTransform)_statusText.transform, new Vector2(0f, HeaderY - 20f), new Vector2(RightEdge - LeftEdge, 14f));
             _statusText.alignment = TextAnchor.MiddleCenter;
@@ -123,6 +155,7 @@ namespace LatticeVeil.Game
             scrollGo.viewport = _viewport;
 
             controller.Init(root, _viewport, ReloadGrid);
+            controller.Closed = onClosed;
             ReloadGrid();
         }
 
@@ -250,11 +283,46 @@ namespace LatticeVeil.Game
                 lRect.anchorMin = new Vector2(0.5f, 1f);
                 lRect.anchorMax = new Vector2(0.5f, 1f);
                 lRect.pivot = new Vector2(0f, 1f);
-                lRect.sizeDelta = new Vector2(TileW - 8f, LabelH);
-                lRect.anchoredPosition = new Vector2(-(TileW - 8f) / 2f, -TileH);
-                label.alignment = TextAnchor.MiddleCenter;
+                lRect.sizeDelta = new Vector2(TileW - 8f - 26f, LabelH);
+                lRect.anchoredPosition = new Vector2(-(TileW - 8f) / 2f + 26f, -TileH);
+                label.alignment = TextAnchor.MiddleLeft;
                 label.fontSize = 10;
                 label.horizontalOverflow = HorizontalWrapMode.Wrap;
+
+                // Checkbox in the thumbnail's top-left corner: toggles selection
+                // without opening the preview (multi-select friendliness).
+                var checkGo = new GameObject("Check", typeof(RectTransform), typeof(Image), typeof(Button), typeof(Outline));
+                var checkRect = (RectTransform)checkGo.transform;
+                checkRect.SetParent(tileRect, false);
+                checkRect.anchorMin = new Vector2(0f, 1f);
+                checkRect.anchorMax = new Vector2(0f, 1f);
+                checkRect.pivot = new Vector2(0f, 1f);
+                checkRect.sizeDelta = new Vector2(22f, 22f);
+                checkRect.anchoredPosition = new Vector2(6f, -6f);
+                var checkImg = checkGo.GetComponent<Image>();
+                checkImg.color = new Color(16f / 255f, 18f / 255f, 22f / 255f, 230f / 255f);
+                checkGo.GetComponent<Outline>().effectColor = new Color(140f / 255f, 150f / 255f, 165f / 255f, 1f);
+                checkGo.GetComponent<Outline>().effectDistance = new Vector2(1f, -1f);
+                var checkBtn = checkGo.GetComponent<Button>();
+                checkBtn.transition = Selectable.Transition.None;
+                var checkMarkGo = new GameObject("Mark", typeof(RectTransform), typeof(Text));
+                var markRect = (RectTransform)checkMarkGo.transform;
+                markRect.SetParent(checkRect, false);
+                Stretch(markRect);
+                var markText = checkMarkGo.GetComponent<Text>();
+                markText.font = Font();
+                markText.fontSize = 15;
+                markText.text = "";   // hidden until checked
+                markText.color = Accent;
+                markText.alignment = TextAnchor.MiddleCenter;
+                markText.raycastTarget = false;
+                var checkIdx = i;
+                var checkItem = item;
+                checkBtn.onClick.AddListener(() =>
+                {
+                    _controller.ToggleChecked(checkIdx, checkItem, checkMarkGo);
+                });
+                _controller.RegisterCheckbox(checkIdx, checkMarkGo);
 
                 // Selection border overlay (hidden until selected).
                 var selGo = new GameObject("Selected", typeof(RectTransform), typeof(Outline));
@@ -279,6 +347,12 @@ namespace LatticeVeil.Game
         // ------------------------------------------------------------------
         // Actions
         // ------------------------------------------------------------------
+
+        private static void DoBack()
+        {
+            if (_controller != null)
+                _controller.CloseScreenSafe();
+        }
 
         private static void DoOpenFolder()
         {
@@ -321,9 +395,30 @@ namespace LatticeVeil.Game
 
             private Action _rebuild;
 
+            /// <summary>Invoked when the screen closes (BACK or Esc) so the
+            /// main menu re-enables its SCREENSHOTS button / Escape handling.</summary>
+            public Action Closed;
+
             public void RegisterTile(int index, ShotItem item, GameObject selectionBorder)
             {
                 _tiles[index] = selectionBorder;
+            }
+
+            private readonly Dictionary<int, GameObject> _checkboxes = new Dictionary<int, GameObject>();
+
+            public void RegisterCheckbox(int index, GameObject checkMark)
+            {
+                _checkboxes[index] = checkMark;
+            }
+
+            /// <summary>Checkbox click: toggles this shot's selection only
+            /// (never opens the preview, never clears other checks).</summary>
+            public void ToggleChecked(int index, ShotItem item, GameObject checkMark)
+            {
+                if (!Selection.Add(index))
+                    Selection.Remove(index);
+                _lastClicked = index;
+                RefreshTileVisuals();
             }
 
             public void OnTileClicked(int index, ShotItem item)
@@ -382,12 +477,18 @@ namespace LatticeVeil.Game
             {
                 foreach (var pair in _tiles)
                     pair.Value.SetActive(Selection.Contains(pair.Key));
+                foreach (var pair in _checkboxes)
+                {
+                    var t = pair.Value.GetComponent<Text>();
+                    if (t != null)
+                        t.text = Selection.Contains(pair.Key) ? "X" : "";
+                }
                 SetDeleteEnabled(Selection.Count > 0 && _deleteBtn != null);
                 if (_statusTextRef != null)
                 {
                     _statusTextRef.text = Selection.Count > 0
                         ? $"{Selection.Count} SELECTED · ESC CLEAR / CLOSE"
-                        : "CLICK TO PREVIEW · CTRL/SHIFT FOR MULTI-SELECT · CTRL+A ALL";
+                        : "CLICK TO PREVIEW · CHECKBOX OR CTRL/SHIFT FOR MULTI-SELECT · CTRL+A ALL";
                 }
             }
 
@@ -505,7 +606,15 @@ namespace LatticeVeil.Game
 
             private void CloseScreen()
             {
+                Closed?.Invoke();
                 Destroy(gameObject);
+            }
+
+            /// <summary>BACK button path (public for the static builder).</summary>
+            public void CloseScreenSafe()
+            {
+                ClosePreview();
+                CloseScreen();
             }
 
             private void OnDestroy()

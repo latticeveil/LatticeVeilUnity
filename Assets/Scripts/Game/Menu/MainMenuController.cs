@@ -208,8 +208,9 @@ namespace LatticeVeil.Game
             if (windowChanged || canvasChanged)
                 ApplyLayout();
 
-            // Options owns Escape while open (it closes the screen, not the game).
-            if (Input.GetKeyDown(KeyCode.Escape) && !_optionsOpen)
+            // Options / Screenshots own Escape while open (they close the
+            // screen, not the game).
+            if (Input.GetKeyDown(KeyCode.Escape) && !_optionsOpen && !_screenshotsOpen)
                 RequestQuit();
 
             // F2 = screenshot (MonoGame parity: Screenshot bind from options.lvc).
@@ -587,9 +588,15 @@ namespace LatticeVeil.Game
             Debug.Log("Main menu: Profile (screen not implemented yet).");
         }
 
+        private bool _screenshotsOpen;
+
         private void OnScreenshots()
         {
-            ScreenshotsScreenBuilder.Open(_canvas, CloseOwnScreenshots);
+            if (_screenshotsOpen)
+                return;
+            _screenshotsOpen = true;
+            ScreenshotService.SetScreenContext("screenshots");
+            ScreenshotsScreenBuilder.Open(_canvas, () => _screenshotsOpen = false);
         }
 
         private void CloseOwnScreenshots()

@@ -328,7 +328,9 @@ namespace LatticeVeil.Game
 
             PopulateAudioValues();
 
-            BuildNotePage(_tabPages[Tab.Controls], "CONTROLS", "Keybind remapping arrives with the controls update.\nCurrent binds live in options.lvc.");
+            // CONTROLS: sub-tab bind editor (MonoGame parity).
+            ControlsScreenBuilder.BindSettings(_settings, () => { _settings.Save(null); });
+            ControlsScreenBuilder.Build(_tabPages[Tab.Controls], this);
             // PACKS & ADDONS: real addon management (MonoGame parity).
             AddonsScreenBuilder.BindSettings(_settings, () => { _settings.Save(null); });
             AddonsScreenBuilder.Build(_tabPages[Tab.Packs], this);

@@ -128,11 +128,11 @@ namespace LatticeVeil.Game
             var scrollbarGo = new GameObject("Scrollbar", typeof(RectTransform), typeof(Image), typeof(Scrollbar));
             var scrollbarRect = (RectTransform)scrollbarGo.transform;
             scrollbarRect.SetParent(rect, false);
-            scrollbarRect.anchorMin = new Vector2(0f, 0f);
-            scrollbarRect.anchorMax = new Vector2(0f, 1f);
-            scrollbarRect.pivot = new Vector2(0f, 0.5f);
-            scrollbarRect.offsetMin = new Vector2(424f, 56f);
-            scrollbarRect.offsetMax = new Vector2(438f, -34f);
+            scrollbarRect.anchorMin = new Vector2(1f, 0f);
+            scrollbarRect.anchorMax = new Vector2(1f, 1f);
+            scrollbarRect.pivot = new Vector2(1f, 0.5f);
+            scrollbarRect.offsetMin = new Vector2(-76f, 56f);
+            scrollbarRect.offsetMax = new Vector2(-62f, -34f);
             scrollbarGo.GetComponent<Image>().color = new Color(1f, 1f, 1f, 0.14f);
             var scrollbar = scrollbarGo.GetComponent<Scrollbar>();
             scrollbar.direction = Scrollbar.Direction.BottomToTop;

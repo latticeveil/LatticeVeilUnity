@@ -98,6 +98,7 @@ namespace LatticeVeil.Launcher
         private bool _showVersionManagerModal = false;
         private Rect _versionManagerRect = new Rect(170, 90, 1080, 620);
         private bool _draggingVersionManager = false;
+        private string _versionManagerTab = "RELEASES";
         private Vector2 _versionManagerListScroll = Vector2.zero;
         private Vector2 _versionManagerNotesScroll = Vector2.zero;
         private GameVersionInfo _versionManagerSelected = null;
@@ -3049,8 +3050,82 @@ namespace LatticeVeil.Launcher
 
             var wasEnabled = GUI.enabled;
 
+            // Tab strip: RELEASES (GitHub) vs CUSTOM (locally registered exes).
+            if (_versionManagerTab == null) _versionManagerTab = "RELEASES";
+            var tabW = 110f;
+            var releasesStyle = _versionManagerTab == "RELEASES" ? _dropdownActiveItemStyle : _dropdownItemStyle;
+            var customStyle = _versionManagerTab == "CUSTOM" ? _dropdownActiveItemStyle : _dropdownItemStyle;
+            if (GUI.Button(new Rect(modalRect.x + 16, modalRect.y + 48, tabW, 28), "RELEASES", releasesStyle))
+                _versionManagerTab = "RELEASES";
+            if (GUI.Button(new Rect(modalRect.x + 16 + tabW + 4, modalRect.y + 48, tabW, 28), $"CUSTOM ({CustomBuildExes.Count(p => File.Exists(p))})", customStyle))
+                _versionManagerTab = "CUSTOM";
+
+            var listTop = modalRect.y + 82;
+
+            if (_versionManagerTab == "CUSTOM")
+            {
+                // CUSTOM tab: registered exes with replace/remove controls.
+                var customListRect = new Rect(modalRect.x + 16, listTop, 470, modalRect.height - (listTop - modalRect.y) - 68);
+                GUI.Box(customListRect, "", _friendsPanelStyle);
+                var customRowH = 46f;
+                var customs = CustomBuildExes.Where(File.Exists).ToList();
+                var customContent = new Rect(0, 0, customListRect.width - 20, 8 + customs.Count * customRowH + customRowH);
+                _versionManagerListScroll = GUI.BeginScrollView(customListRect, _versionManagerListScroll, customContent, false, true);
+
+                for (int i = 0; i < customs.Count; i++)
+                {
+                    var custom = customs[i];
+                    var r = new Rect(4, 4 + i * customRowH, customContent.width, customRowH - 6);
+                    GUI.Box(r, "", _dropdownActiveItemStyle);
+                    var selected = string.Equals(_selectedCustomBuildPath, custom, StringComparison.OrdinalIgnoreCase);
+                    EnsureVersionRowStyles();
+                    GUI.Label(new Rect(r.x + 10, r.y + 4, r.width - 170, 18), Path.GetFileNameWithoutExtension(custom), _rowTitleStyle);
+                    GUI.Label(new Rect(r.x + 10, r.y + 22, r.width - 170, 14), selected ? "SELECTED" : custom, _rowMetaStyle);
+                    if (GUI.Button(new Rect(r.x + r.width - 152, r.y + 9, 90, 26), selected ? "USING" : "USE", _buttonStyle))
+                    {
+                        _selectedIsLatest = false;
+                        _selectedVersion = null;
+                        _selectedCustomBuildPath = custom;
+                        _versionStatusMessage = $"Custom build selected: {Path.GetFileName(custom)}";
+                    }
+                    if (GUI.Button(new Rect(r.x + r.width - 56, r.y + 9, 48, 26), "−", _buttonStyle))
+                    {
+                        RemoveCustomBuild(custom);
+                    }
+                }
+
+                // + add row.
+                var addRect = new Rect(4, 8 + (customs.Count + 1) * customRowH, customContent.width, customRowH - 6);
+                if (GUI.Button(addRect, "+  ADD CUSTOM BUILD...", _buttonStyle))
+                {
+                    PromptRegisterCustomBuild();
+                }
+
+                GUI.EndScrollView();
+
+                // Right pane: quick help.
+                var helpRect = new Rect(modalRect.x + 502, listTop, modalRect.width - 518, modalRect.height - (listTop - modalRect.y) - 58);
+                GUI.Box(helpRect, "", _panelBoxStyle);
+                GUI.Label(new Rect(helpRect.x + 12, helpRect.y + 8, helpRect.width - 24, 24), "CUSTOM BUILDS", _sectionHeaderStyle);
+                GUI.Label(new Rect(helpRect.x + 12, helpRect.y + 36, helpRect.width - 24, helpRect.height - 46),
+                    "Any local game .exe you register here launches exactly like an installed version: same Veilnet account handoff (LV_VEILNET_ACCESS_TOKEN), same embed host, same keep-open behavior.\n\n" +
+                    "Skipping official hash checks is intentional for dev builds — Online mode stays available when you are logged in.\n\n" +
+                    "USE selects it for the LAUNCH button; − removes it from the list.\n\n" +
+                    "Build a fresh game exe with Unity's LatticeVeil/Build Game menu and register the result here.", _logStyle);
+
+                var footerYCustom = modalRect.y + modalRect.height - 58;
+                GUI.Label(new Rect(modalRect.x + 18, footerYCustom + 10, modalRect.width - 200, 26), _versionStatusMessage, _statusTextStyle);
+
+                var doneRectCustom = new Rect(modalRect.x + modalRect.width - 150, footerYCustom + 6, 132, 36);
+                if (GUI.Button(doneRectCustom, "CUSTOM BUILD...", _buttonStyle))
+                {
+                    PromptRegisterCustomBuild();
+                }
+            }
+            else
+            {
             // Left: version list (all releases with a zip asset)
-            var listRect = new Rect(modalRect.x + 16, modalRect.y + 54, 470, modalRect.height - 122);
+            var listRect = new Rect(modalRect.x + 16, listTop, 470, modalRect.height - (listTop - modalRect.y) - 68);
             GUI.Box(listRect, "", _friendsPanelStyle);
             var rowHeight = 68f;
             var listContent = new Rect(0, 0, listRect.width - 20, 8 + _gameVersions.Count * rowHeight);
@@ -3094,33 +3169,7 @@ namespace LatticeVeil.Launcher
             {
                 _ = RefreshGameVersionsAsync();
             }
-
-            // Dev-only: register a CUSTOM BUILD (arbitrary local game exe that
-            // behaves like an installed version — same launch path, auth
-            // handoff, and embed host — but skips official hash checks).
-            var customRect = new Rect(modalRect.x + modalRect.width - 292, footerY + 6, 132, 36);
-            if (GUI.Button(customRect, "CUSTOM BUILD...", _buttonStyle))
-            {
-                PromptRegisterCustomBuild();
-            }
-
-            // Remove buttons for registered custom builds (top-right of list).
-            var customs = CustomBuildExes;
-            if (customs.Count > 0)
-            {
-                var chipY = modalRect.y + 54;
-                foreach (var custom in customs)
-                {
-                    if (!File.Exists(custom)) continue;
-                    var chipRect = new Rect(modalRect.x + modalRect.width - 300, chipY, 280, 26);
-                    GUI.Label(chipRect, "CUSTOM: " + Path.GetFileName(custom), _rowMetaStyle);
-                    if (GUI.Button(new Rect(chipRect.x, chipY, 20, 26), "X", _modalCloseBtnStyle))
-                    {
-                        RemoveCustomBuild(custom);
-                    }
-                    chipY += 30;
-                }
-            }
+            } // RELEASES tab
         }
 
         private GUIStyle _rowTitleStyle;
@@ -5779,20 +5828,11 @@ namespace LatticeVeil.Launcher
 
                 // Build launch arguments
                 var isOffline = launchMode.Equals("Offline", StringComparison.OrdinalIgnoreCase);
-                var args = isOffline ? "--offline" : "--online";
-
-                // Add renderer argument
-                if (!string.IsNullOrWhiteSpace(_settings.RendererBackend))
-                {
-                    args += $" --renderer={_settings.RendererBackend.ToLowerInvariant()}";
-                }
-
-                // Add render distance argument
-                args += $" --render-distance={_settings.LauncherRenderDistance}";
-
-                // Resolve the game executable: the selected custom build (dev
-                // pickers) when present, then the selected downloadable version
-                // when installed, otherwise the launcher-local fallback.
+                // Resolve the game executable FIRST: which args we build
+                // depends on whether the target is a Unity player (which
+                // parses args itself and reacts badly to app-level args) or
+                // the legacy MonoGame exe (which expects --offline/--online,
+                // --renderer=..., --render-distance=...).
                 string exePath = null;
                 if (IsCustomBuildSelected)
                 {
@@ -5824,6 +5864,31 @@ namespace LatticeVeil.Launcher
                     _log.Error($"Game executable not found: {exePath}");
                     _isLaunching = false;
                     return;
+                }
+
+                var isUnityGameExe = EmbeddedGameHost.IsUnityPlayerExe(exePath);
+
+                // Build per-target args. The UNITY player parses the command
+                // line itself: unknown '--xxx' app args (a MonoGame leftover
+                // here) and the removed '--renderer=opengl' value confused
+                // the embedded child (log stops right before GfxDevice
+                // init); Unity 6's documented OpenGL switch is -force-glcore.
+                // The legacy MonoGame exe keeps expecting the original args.
+                var args = isOffline ? "--offline" : "--online";
+                if (isUnityGameExe)
+                {
+                    // App-level intent to the game code comes via env vars
+                    // (LV_LAUNCH_MODE etc.), so the argv stays Unity-clean.
+                    if (string.Equals(_settings.RendererBackend, "OpenGL", StringComparison.OrdinalIgnoreCase))
+                        args += " -force-glcore";
+                    else if (string.Equals(_settings.RendererBackend, "Vulkan", StringComparison.OrdinalIgnoreCase))
+                        args += " -force-vulkan";
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(_settings.RendererBackend))
+                        args += $" --renderer={_settings.RendererBackend.ToLowerInvariant()}";
+                    args += $" --render-distance={_settings.LauncherRenderDistance}";
                 }
 
                 // Embedded play: run the game window INSIDE the launcher window

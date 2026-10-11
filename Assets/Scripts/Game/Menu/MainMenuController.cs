@@ -583,9 +583,17 @@ namespace LatticeVeil.Game
             Debug.Log("Main menu: Multiplayer (screen not implemented yet).");
         }
 
+        private bool _profileOpen;
+
         private void OnProfile()
         {
-            Debug.Log("Main menu: Profile (screen not implemented yet).");
+            if (_profileOpen)
+                return;
+            _profileOpen = true;
+            // Ensure notification toasts have a coroutine runner.
+            NotificationFeed.SetRunner(this);
+            NotificationFeed.EnsureHost();
+            ProfileScreenBuilder.Open(_canvas, () => _profileOpen = false);
         }
 
         private bool _screenshotsOpen;

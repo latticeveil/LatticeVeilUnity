@@ -82,12 +82,12 @@ namespace LatticeVeil.Game
             _controller = controller;
 
             // ---- Header: title left, action buttons right (inside the frame) ----
-            var title = CreateLabel(frame, "SCREENSHOTS", 20, TextColor);
-            SetRect((RectTransform)title.transform, new Vector2(LeftEdge + 150f, HeaderY), new Vector2(300f, 28f));
+            var title = CreateLabel(frame, "SCREENSHOTS", 18, TextColor);
+            SetRect((RectTransform)title.transform, new Vector2(LeftEdge + 140f, HeaderY), new Vector2(300f, 26f));
             title.alignment = TextAnchor.MiddleLeft;
 
-            var folderBtn = CreateActionButton(frame, "OPEN FOLDER", new Vector2(RightEdge - 70f, HeaderY), new Vector2(140f, 28f), DoOpenFolder);
-            _deleteBtn = CreateActionButton(frame, "DELETE", new Vector2(RightEdge - 70f - 140f - 8f, HeaderY), new Vector2(120f, 28f), DoDelete);
+            var folderBtn = CreateActionButton(frame, "OPEN FOLDER", new Vector2(RightEdge - 62f, HeaderY), new Vector2(124f, 24f), DoOpenFolder);
+            _deleteBtn = CreateActionButton(frame, "DELETE", new Vector2(RightEdge - 62f - 124f - 8f, HeaderY), new Vector2(104f, 24f), DoDelete);
             SetDeleteEnabled(false);
 
             // BACK button at the bottom-left, matching the Options screen's
@@ -98,8 +98,8 @@ namespace LatticeVeil.Game
             backRect.anchorMin = new Vector2(0f, 0f);
             backRect.anchorMax = new Vector2(0f, 0f);
             backRect.pivot = new Vector2(0f, 0f);
-            backRect.sizeDelta = new Vector2(150f, 48f);
-            backRect.anchoredPosition = new Vector2(14f, 14f);
+            backRect.sizeDelta = new Vector2(140f, 40f);
+            backRect.anchoredPosition = new Vector2(10f, 10f);
             var backTex = GameAssetLoader.LoadTexture("textures/menu/buttons/Back.png");
             if (backTex != null)
             {
@@ -108,7 +108,7 @@ namespace LatticeVeil.Game
                     new Vector2(0.5f, 0.5f), 100f);
                 bImg.preserveAspect = true;
                 // Slightly wider for the texture's aspect.
-                backRect.sizeDelta = new Vector2(170f, 48f);
+                backRect.sizeDelta = new Vector2(156f, 40f);
             }
             else
             {

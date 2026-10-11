@@ -58,6 +58,14 @@ namespace LatticeVeil.Core
         public int LauncherRenderDistance { get; set; } = 16;
         public bool AdvancedMode { get; set; } = false;
         public string OfficialBuildHashFilePath { get; set; } = "";
+
+        /// <summary>
+        /// Development-only: game exes registered by the user through the
+        /// launcher's CUSTOM BUILDS picker (Version Manager). Persisted in the
+        /// [Launcher] section; each entry launches through the normal launch
+        /// path so the account handoff (LV_VEILNET_ACCESS_TOKEN) applies.
+        /// </summary>
+        public List<string> CustomBuildExes { get; set; } = new();
         public string IgnoredGameReleaseTitle { get; set; } = "";
         public bool AutoUpdateChecksEnabled { get; set; } = true;
         public bool AutoInstallUpdatesEnabled { get; set; } = false;
@@ -186,6 +194,11 @@ namespace LatticeVeil.Core
                 sb.AppendLine($"AutoUpdateChecksEnabled={(AutoUpdateChecksEnabled ? "true" : "false")}");
                 sb.AppendLine($"AutoInstallUpdatesEnabled={(AutoInstallUpdatesEnabled ? "true" : "false")}");
                 sb.AppendLine($"AutoTextureDownloadsEnabled={(AutoTextureDownloadsEnabled ? "true" : "false")}");
+                if (CustomBuildExes != null)
+                {
+                    foreach (var exe in CustomBuildExes)
+                        sb.AppendLine($"CustomBuildExe=\"{exe}\"");
+                }
                 sb.AppendLine();
 
                 // [Keybinds]
@@ -243,6 +256,7 @@ namespace LatticeVeil.Core
                 fresh.AutoUpdateChecksEnabled = AutoUpdateChecksEnabled;
                 fresh.AutoInstallUpdatesEnabled = AutoInstallUpdatesEnabled;
                 fresh.AutoTextureDownloadsEnabled = AutoTextureDownloadsEnabled;
+                fresh.CustomBuildExes = CustomBuildExes ?? new List<string>();
 
                 fresh.Save(log);
             }
@@ -320,6 +334,8 @@ namespace LatticeVeil.Core
                         else if (string.Equals(key, "AutoUpdateChecksEnabled", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var auc)) AutoUpdateChecksEnabled = auc;
                         else if (string.Equals(key, "AutoInstallUpdatesEnabled", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var aii)) AutoInstallUpdatesEnabled = aii;
                         else if (string.Equals(key, "AutoTextureDownloadsEnabled", StringComparison.OrdinalIgnoreCase) && bool.TryParse(val, out var atd)) AutoTextureDownloadsEnabled = atd;
+                        else if (string.Equals(key, "CustomBuildExe", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(val))
+                            CustomBuildExes.Add(val);
                         break;
 
                     case "keybinds":
@@ -405,6 +421,7 @@ namespace LatticeVeil.Core
 
             s.EnabledPacks ??= new List<string>();
             s.EnabledMods ??= new List<string>();
+            s.CustomBuildExes ??= new List<string>();
         }
 
         private static float NormalizeGuiScale(float value)

@@ -1913,7 +1913,8 @@ namespace LatticeVeil.Launcher
             // The full library (all releases, notes, install/uninstall) lives in
             // the Version Manager, reachable via the VERSION SELECTOR button above.
             var vItemHeight = 30;
-            var vPopupHeight = (1 + installedVersions.Count + 1) * vItemHeight + 6;
+            var customCount = CustomBuildExes.Count(p => File.Exists(p));
+            var vPopupHeight = (1 + installedVersions.Count + (customCount > 0 ? customCount + 1 : 1) + 1) * vItemHeight + 6;
             var versionPopupRect = new Rect(versionRect.x, versionRect.y - vPopupHeight, versionRect.width, vPopupHeight);
 
             if (Event.current.type == EventType.MouseDown && _versionDropdownOpen)
@@ -1926,6 +1927,8 @@ namespace LatticeVeil.Launcher
 
             string versionButtonText;
             if (_versionsLoading) versionButtonText = "Versions...";
+            else if (IsCustomBuildSelected)
+                versionButtonText = "CUSTOM: " + Path.GetFileNameWithoutExtension(_selectedCustomBuildPath);
             else if (_selectedIsLatest || _selectedVersion == null)
                 versionButtonText = latestVersion != null ? $"LATEST ({latestVersion.Tag})" : "LATEST";
             else versionButtonText = _selectedVersion.ListLabel;
@@ -1972,6 +1975,37 @@ namespace LatticeVeil.Launcher
                         _selectedVersion = v;
                         _versionDropdownOpen = false;
                         _log?.Info($"Selected game version: {v.Tag} (installed)");
+                    }
+                    vItemY += vItemHeight;
+                }
+
+                // CUSTOM BUILDS (dev-only): registered local game exes.
+                var customAll = CustomBuildExes;
+                var customExisting = customAll.Where(File.Exists).ToList();
+                if (customExisting.Count > 0)
+                {
+                    foreach (var custom in customExisting)
+                    {
+                        var customSelected = !_selectedIsLatest &&
+                            string.Equals(_selectedCustomBuildPath, custom, StringComparison.OrdinalIgnoreCase);
+                        var cText = customSelected ? "> CUSTOM: " + Path.GetFileNameWithoutExtension(custom) : "   CUSTOM: " + Path.GetFileNameWithoutExtension(custom);
+                        if (GUI.Button(new Rect(versionPopupRect.x + 2, vItemY, versionPopupRect.width - 4, vItemHeight), cText, customSelected ? _dropdownActiveItemStyle : _dropdownItemStyle))
+                        {
+                            _selectedIsLatest = false;
+                            _selectedVersion = null;
+                            _selectedCustomBuildPath = custom;
+                            _versionDropdownOpen = false;
+                            _log?.Info($"Selected custom build: {custom}");
+                        }
+                        vItemY += vItemHeight;
+                    }
+                }
+                else
+                {
+                    if (GUI.Button(new Rect(versionPopupRect.x + 2, vItemY, versionPopupRect.width - 4, vItemHeight), "   + REGISTER CUSTOM BUILD...", _dropdownItemStyle))
+                    {
+                        _versionDropdownOpen = false;
+                        PromptRegisterCustomBuild();
                     }
                     vItemY += vItemHeight;
                 }
@@ -3050,6 +3084,33 @@ namespace LatticeVeil.Launcher
             {
                 _ = RefreshGameVersionsAsync();
             }
+
+            // Dev-only: register a CUSTOM BUILD (arbitrary local game exe that
+            // behaves like an installed version — same launch path, auth
+            // handoff, and embed host — but skips official hash checks).
+            var customRect = new Rect(modalRect.x + modalRect.width - 292, footerY + 6, 132, 36);
+            if (GUI.Button(customRect, "CUSTOM BUILD...", _buttonStyle))
+            {
+                PromptRegisterCustomBuild();
+            }
+
+            // Remove buttons for registered custom builds (top-right of list).
+            var customs = CustomBuildExes;
+            if (customs.Count > 0)
+            {
+                var chipY = modalRect.y + 54;
+                foreach (var custom in customs)
+                {
+                    if (!File.Exists(custom)) continue;
+                    var chipRect = new Rect(modalRect.x + modalRect.width - 300, chipY, 280, 26);
+                    GUI.Label(chipRect, "CUSTOM: " + Path.GetFileName(custom), _rowMetaStyle);
+                    if (GUI.Button(new Rect(chipRect.x, chipY, 20, 26), "X", _modalCloseBtnStyle))
+                    {
+                        RemoveCustomBuild(custom);
+                    }
+                    chipY += 30;
+                }
+            }
         }
 
         private GUIStyle _rowTitleStyle;
@@ -3207,6 +3268,55 @@ namespace LatticeVeil.Launcher
 
         /// <summary>Pseudo-tag for the temp local dev build row in the version list.</summary>
         private const string DevLocalTag = "[DEV] LOCAL BUILD";
+
+        /// <summary>Pseudo-tag prefix for user-registered custom game builds.</summary>
+        private const string CustomBuildTagPrefix = "[CUSTOM] ";
+
+        /// <summary>Custom exes registered by the user (dev-only picker).</summary>
+        private List<string> CustomBuildExes =>
+            _settings?.CustomBuildExes ?? new List<string>();
+
+        private string _selectedCustomBuildPath;
+
+        private static string CustomBuildTagFor(string exePath) =>
+            CustomBuildTagPrefix + Path.GetFileNameWithoutExtension(exePath ?? "");
+
+        private bool IsCustomBuildSelected =>
+            !string.IsNullOrWhiteSpace(_selectedCustomBuildPath);
+
+        /// <summary>
+        /// Dev-only: opens a file dialog to register an arbitrary game exe as a
+        /// CUSTOM BUILD. Registered exes launch through the exact same path as
+        /// installed versions (env handoff, embed host, keep-open), so account
+        /// auth and profile can be tested locally without a GitHub release.
+        /// </summary>
+        private void PromptRegisterCustomBuild()
+        {
+            var picked = SkinManager.PromptSelectExeFile("Select LatticeVeil Game Build", "Game executables|*.exe");
+            if (string.IsNullOrWhiteSpace(picked) || !File.Exists(picked))
+                return;
+
+            picked = Path.GetFullPath(picked);
+            var list = CustomBuildExes;
+            if (!list.Contains(picked, StringComparer.OrdinalIgnoreCase))
+                list.Add(picked);
+            _selectedCustomBuildPath = picked;
+            _selectedIsLatest = false;
+            _selectedVersion = null;
+            _settings.SaveLauncherScoped(_log);
+            _versionStatusMessage = $"Custom build registered: {Path.GetFileName(picked)}";
+            _log.Info($"Custom build registered: {picked}");
+        }
+
+        private void RemoveCustomBuild(string exePath)
+        {
+            var list = CustomBuildExes;
+            list.RemoveAll(p => string.Equals(p, exePath, StringComparison.OrdinalIgnoreCase));
+            if (string.Equals(_selectedCustomBuildPath, exePath, StringComparison.OrdinalIgnoreCase))
+                _selectedCustomBuildPath = null;
+            _settings.SaveLauncherScoped(_log);
+            _log.Info($"Custom build removed: {exePath}");
+        }
 
         /// <summary>Path of the local dev game build, or null when not present.</summary>
         internal static string ResolveDevLocalGameExe()
@@ -4998,6 +5108,23 @@ namespace LatticeVeil.Launcher
         {
             try
             {
+                // Dev-only custom builds skip official-hash verification: they
+                // are locally registered exes and will never match a release
+                // hash. Account handoff (Veilnet login) still applies.
+                if (IsCustomBuildSelected && File.Exists(_selectedCustomBuildPath))
+                {
+                    _hashVerificationComplete = true;
+                    _hashVerified = true;
+                    _hashStatusMessage = $"Custom build (hash check skipped): {Path.GetFileName(_selectedCustomBuildPath)}";
+                    _log.Warn($"CUSTOM BUILD selected — skipping official hash check ({_selectedCustomBuildPath}).");
+                    if (_veilnetLoggedIn)
+                    {
+                        launchMode = "Online";
+                        _log.Info("Custom build: launch mode set to Online (Veilnet session present).");
+                    }
+                    return;
+                }
+
                 var channel = Paths.IsDevBuild ? "dev" : "release";
                 var exePath = GetGameExecutablePath();
                 _log.Info($"Verifying official build hash for channel '{channel}'...");
@@ -5631,10 +5758,25 @@ namespace LatticeVeil.Launcher
                 // Add render distance argument
                 args += $" --render-distance={_settings.LauncherRenderDistance}";
 
-                // Resolve the game executable: the selected downloadable version when
-                // installed, otherwise the launcher-local fallback.
+                // Resolve the game executable: the selected custom build (dev
+                // pickers) when present, then the selected downloadable version
+                // when installed, otherwise the launcher-local fallback.
                 string exePath = null;
-                if (_selectedVersion != null)
+                if (IsCustomBuildSelected)
+                {
+                    exePath = _selectedCustomBuildPath;
+                    if (!File.Exists(exePath))
+                    {
+                        _log.Warn($"Selected custom build no longer exists ({exePath}); falling back to bundled exe.");
+                        exePath = null;
+                        _selectedCustomBuildPath = null;
+                    }
+                    else
+                    {
+                        _log.Info($"Launching registered CUSTOM BUILD: {exePath}");
+                    }
+                }
+                if (_selectedVersion != null && string.IsNullOrWhiteSpace(exePath))
                 {
                     exePath = Core.Paths.TryResolveInstalledVersionExe(_selectedVersion.Tag);
                     if (string.IsNullOrWhiteSpace(exePath))

@@ -48,17 +48,32 @@ namespace LatticeVeil.Launcher
 
         public static string PromptSelectSkinFile()
         {
+            return PromptSelectExeOrSkinFile(
+                "Select LatticeVeil Player Skin (64x64 PNG)",
+                "Skin Files (*.png)\0*.png\0All Files (*.*)\0*.*\0",
+                Environment.GetFolderPath(Environment.SpecialFolder.MyPictures));
+        }
+
+        /// <summary>Dev-only: pick an arbitrary game build .exe to register
+        /// as a CUSTOM BUILD in the launcher.</summary>
+        public static string PromptSelectExeFile(string title, string filter)
+        {
+            return PromptSelectExeOrSkinFile(title, filter, Paths.InstallRootDir);
+        }
+
+        private static string PromptSelectExeOrSkinFile(string title, string filter, string initialDir)
+        {
             try
             {
                 var ofn = new OpenFileName();
                 ofn.structSize = Marshal.SizeOf(ofn);
-                ofn.filter = "Skin Files (*.png)\0*.png\0All Files (*.*)\0*.*\0";
-                ofn.file = new string(new char[512]);
+                ofn.filter = filter;
+                ofn.file = new string(new char[1024]);
                 ofn.maxFile = ofn.file.Length;
                 ofn.fileTitle = new string(new char[512]);
                 ofn.maxFileTitle = ofn.fileTitle.Length;
-                ofn.initialDir = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-                ofn.title = "Select LatticeVeil Player Skin (64x64 PNG)";
+                ofn.initialDir = initialDir;
+                ofn.title = title;
                 ofn.flags = 0x00080000 | 0x00001000 | 0x00000800 | 0x00000008; // OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR
 
                 if (GetOpenFileName(ref ofn))

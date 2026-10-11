@@ -492,6 +492,12 @@ namespace LatticeVeil.Game
         {
             if (_openFolderLabel != null)
                 _openFolderLabel.text = _isMods ? "OPEN MODS" : "OPEN REPACKS";
+            if (_viewport != null)
+            {
+                var scroll = _viewport.GetComponent<ScrollRect>();
+                if (scroll != null)
+                    OptionsScreenBuilder.ResetScroll(scroll);
+            }
             RefreshAndRebuild();
         }
 

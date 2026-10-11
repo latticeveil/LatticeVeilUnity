@@ -625,6 +625,25 @@ namespace LatticeVeil.Game
             public void OnScroll(UnityEngine.EventSystems.PointerEventData e) => Scroll?.OnScroll(e);
         }
 
+        /// <summary>
+        /// Fully resets a ScrollRect so a re-shown page starts at the top with
+        /// no leftover momentum. Disabling + re-enabling clears uGUI's
+        /// internally-cached drag/scroll state; a plain velocity reset alone
+        /// leaves a stale content position when the page was hidden mid-drag.
+        /// </summary>
+        public static void ResetScroll(ScrollRect scroll)
+        {
+            if (scroll == null) return;
+            scroll.StopMovement();
+            scroll.velocity = Vector2.zero;
+            scroll.enabled = false;
+            scroll.enabled = true;
+            Canvas.ForceUpdateCanvases();
+            scroll.verticalNormalizedPosition = 1f;
+            scroll.horizontalNormalizedPosition = 1f;
+            Canvas.ForceUpdateCanvases();
+        }
+
         /// <summary>Keeps a slider's right-side value label in sync.</summary>
         public sealed class SliderValueText : MonoBehaviour
         {

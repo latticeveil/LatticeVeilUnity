@@ -211,6 +211,19 @@ namespace LatticeVeil.Game
             // Options owns Escape while open (it closes the screen, not the game).
             if (Input.GetKeyDown(KeyCode.Escape) && !_optionsOpen)
                 RequestQuit();
+
+            // F2 = screenshot (MonoGame parity: Screenshot bind from options.lvc).
+            if (Input.GetKeyDown(KeyCode.F2))
+                TakeScreenshotNow();
+        }
+
+        /// <summary>Captures everything currently on the game window and
+        /// saves it under the screen-context name (mainmenu, options-…, …).</summary>
+        private void TakeScreenshotNow()
+        {
+            ScreenshotService.SetScreenContext(_optionsOpen ? OptionsScreenController.CurrentContextName
+                                                            : "mainmenu");
+            ScreenshotService.Capture(this);
         }
 
         private float _lastCanvasW;
@@ -576,7 +589,12 @@ namespace LatticeVeil.Game
 
         private void OnScreenshots()
         {
-            Debug.Log("Main menu: Screenshots (screen not implemented yet).");
+            ScreenshotsScreenBuilder.Open(_canvas, CloseOwnScreenshots);
+        }
+
+        private void CloseOwnScreenshots()
+        {
+            // Callback path: screens close themselves; nothing extra here.
         }
 
         private void OnQuit()

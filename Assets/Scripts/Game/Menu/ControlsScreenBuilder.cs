@@ -207,6 +207,9 @@ namespace LatticeVeil.Game
             {
                 _subTabIndex = index;
                 ApplySubTabVisual();
+                var scroll = _viewport.GetComponent<ScrollRect>();
+                if (scroll != null)
+                    OptionsScreenBuilder.ResetScroll(scroll);
                 RebuildList();
             });
 

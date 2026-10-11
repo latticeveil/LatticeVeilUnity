@@ -33,6 +33,11 @@ namespace LatticeVeil.Game
         };
         private static readonly string[] Qualities = { "LOW", "MEDIUM", "HIGH", "ULTRA" };
 
+        /// <summary>Screen-context name for screenshot filenames while this
+        /// screen is open (options-video, options-audio, ...).</summary>
+        public static string CurrentContextName =>
+            _current != null ? "options-" + _current._tab.ToString().ToLowerInvariant() : "options";
+
         private Canvas _canvas;
         private RectTransform _screenRoot;
         private RectTransform _panelRoot;
@@ -93,12 +98,15 @@ namespace LatticeVeil.Game
         private Action _onClosed;
         private bool _closed;
 
+        private static OptionsScreenController _current;
+
         public static OptionsScreenController Open(Canvas canvas, Action onClosed)
         {
             var go = new GameObject("OptionsScreen", typeof(OptionsScreenController));
             go.transform.SetParent(canvas.transform, false);
             var controller = go.GetComponent<OptionsScreenController>();
             controller._onClosed = onClosed;
+            _current = controller;
             controller.Build();
             return controller;
         }
@@ -706,7 +714,21 @@ namespace LatticeVeil.Game
             foreach (var pair in _tabButtons)
                 UpdateTabVisual(pair.Key);
             foreach (var pair in _tabPages)
-                pair.Value.gameObject.SetActive(pair.Key == tab);
+            {
+                bool show = pair.Key == tab;
+                pair.Value.gameObject.SetActive(show);
+                if (show)
+                    ResetPageScroll(pair.Value);
+            }
+        }
+
+        /// <summary>Scrollable pages must restart at the top when re-shown;
+        /// otherwise the previous tab's leftover offset applies to a
+        /// different content height and rows look cut off or frozen.</summary>
+        private void ResetPageScroll(RectTransform page)
+        {
+            foreach (var scroll in page.GetComponentsInChildren<ScrollRect>(true))
+                OptionsScreenBuilder.ResetScroll(scroll);
         }
 
         // ------------------------------------------------------------------
@@ -816,6 +838,9 @@ namespace LatticeVeil.Game
             if (_closed)
                 return;
             _closed = true;
+
+            if (_current == this)
+                _current = null;
 
             Debug.Log("Options screen closed.");
             MicMonitorHost.Shutdown(); // stop capture + sidetone when leaving options

@@ -5812,6 +5812,23 @@ namespace LatticeVeil.Launcher
                     args += $" -parentHWND {launcherHwnd.ToInt64()}";
                     _log.Info("Embed mode: the game window will be hosted inside the launcher window.");
                 }
+
+                // Give the child its own Unity log file. The launcher and the
+                // game are both Unity players with the same product name, so
+                // by default they contend for ONE %USERPROFILE%\AppData\...
+                // Player.log — the second player to open it dies (error
+                // chime + immediate exit) and the launcher wedges. A per-exe
+                // log under RuntimeStateDir/Logs removes that collision and
+                // doubles as crash diagnostics for CUSTOM BUILDS.
+                if (EmbeddedGameHost.IsUnityPlayerExe(exePath))
+                {
+                    var childLogDir = Path.Combine(Core.Paths.RuntimeStateDir, "Logs");
+                    Directory.CreateDirectory(childLogDir);
+                    var childLog = Path.Combine(childLogDir,
+                        $"game_{Path.GetFileNameWithoutExtension(exePath)}.log");
+                    args += $" -logFile \"{childLog}\"";
+                    _log.Info($"Child Unity log: {childLog}");
+                }
                 else if (_settings.EmbedGameInLauncher)
                 {
                     _log.Info("Embed mode unavailable for this game exe; launching in its own window.");

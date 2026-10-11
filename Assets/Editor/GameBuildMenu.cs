@@ -37,6 +37,29 @@ namespace LatticeVeil.EditorTools
             var exePath = OutputExePath;
             Directory.CreateDirectory(Path.GetDirectoryName(exePath));
 
+            // Distinct player identity: the LAUNCHER keeps productName
+            // "LatticeVeil Launcher"; the GAME builds as "LatticeVeil Game"
+            // so the two Unity players never share a LocalLow folder or
+            // Player.log (dual-product log contention killed embedded
+            // launches). The launcher's own serialized settings restore
+            // right after the build, before anything else touches them.
+            var originalProduct = PlayerSettings.productName;
+            var originalCompany = PlayerSettings.companyName;
+            PlayerSettings.productName = "LatticeVeil Game";
+            PlayerSettings.companyName = "LV";
+            try
+            {
+                BuildGamePlayer(exePath, run);
+            }
+            finally
+            {
+                PlayerSettings.productName = originalProduct;
+                PlayerSettings.companyName = originalCompany;
+            }
+        }
+
+        private static void BuildGamePlayer(string exePath, bool run)
+        {
             var report = BuildPipeline.BuildPlayer(
                 new[] { GameScenePath },
                 exePath,

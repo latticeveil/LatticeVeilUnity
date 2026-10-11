@@ -56,6 +56,8 @@ namespace LatticeVeil.Game
         private Texture2D _backgroundTexture;
         private static Material _glowMaterial;
 
+        private const float _bootEscGrace = 0.5f;
+
         private void Awake()
         {
             GameLog.Initialize();
@@ -209,8 +211,13 @@ namespace LatticeVeil.Game
                 ApplyLayout();
 
             // Options / Screenshots own Escape while open (they close the
-            // screen, not the game).
-            if (Input.GetKeyDown(KeyCode.Escape) && !_optionsOpen && !_screenshotsOpen)
+            // screen, not the game). Also swallow ESC pressed during the
+            // boot window: when embedded, a keyup/keydown from the launcher
+            // that spawned us can arrive before the player window settles
+            // and instantly request a quit (exit.request + Application.Quit),
+            // which the launcher then mirrors — dead session.
+            if (Input.GetKeyDown(KeyCode.Escape) && !_optionsOpen && !_screenshotsOpen
+                && Time.unscaledTime > _bootEscGrace)
                 RequestQuit();
 
             // F2 = screenshot (MonoGame parity: Screenshot bind from options.lvc).
@@ -622,7 +629,7 @@ namespace LatticeVeil.Game
         {
             try
             {
-                var path = Path.Combine(Paths.RootDir, "exit.request");
+                var path = Paths.GetExitRequestPath();
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 File.WriteAllText(path, DateTime.UtcNow.ToString("O"));
             }

@@ -270,7 +270,6 @@ namespace LatticeVeil.Core
 
         public static string GetWorldMetaPath(string worldPath) =>
             Path.Combine(worldPath, WorldMetaFileName);
-
         public static string GetLegacyWorldMetaPath(string worldPath) =>
             Path.Combine(worldPath, LegacyWorldMetaFileName);
 
@@ -283,6 +282,11 @@ namespace LatticeVeil.Core
             var legacy = GetLegacyWorldMetaPath(worldPath);
             return File.Exists(legacy) ? legacy : preferred;
         }
+
+        /// <summary>Filed by the game's main menu Quit; the launcher consumes
+        /// it as an ACK (MonoGame-parity shutdown handshake).</summary>
+        public static string GetExitRequestPath() =>
+            Path.Combine(RootDir, "exit.request");
 
         public static void EnsureAssetDirectoriesExist()
         {

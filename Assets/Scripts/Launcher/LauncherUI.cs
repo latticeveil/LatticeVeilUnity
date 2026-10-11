@@ -386,15 +386,25 @@ namespace LatticeVeil.Launcher
                 }
             }
 
+            // Game requested a clean shutdown via exit.request (MonoGame
+            // parity — the game writes the file, we consume it and react).
+            if (_gameProcess != null && !_gameProcess.HasExited)
+                CheckGameExitRequest();
+
             // Check if game process is still running
             if (_gameProcess != null && _gameProcess.HasExited)
             {
                 _log.Info("Game process exited.");
+                _log.Info($"Game exit code: {_gameProcess.ExitCode}");
                 EmbeddedGameHost.End(_log);
                 _gameProcess = null;
                 _isLaunching = false;
 
                 // Return the user to the launcher once the game closes again.
+                // The launcher NEVER mirrors the game's quit by quitting
+                // itself: losing the whole session because the game exited
+                // (crash, embedded exit.request, user Esc) is what produced
+                // the "error chime then frozen window" experience.
                 if (_parkedLauncherForGame)
                 {
                     _parkedLauncherForGame = false;
@@ -3398,6 +3408,28 @@ namespace LatticeVeil.Launcher
             finally
             {
                 _selectedVersion = restoreVersion;
+            }
+        }
+
+        /// <summary>
+        /// Consumes a game-written exit.request (Documents/LatticeVeil/…).
+        /// Deleting it is our ACK; the game exits on its own. We then keep
+        /// the launcher session alive and simply return to the main
+        /// launcher UI — the game's lifecycle is its own.
+        /// </summary>
+        private void CheckGameExitRequest()
+        {
+            try
+            {
+                var path = Core.Paths.GetExitRequestPath();
+                if (!File.Exists(path)) return;
+
+                File.Delete(path);
+                _log.Info("Game requested exit via exit.request — consumed (launcher stays open).");
+            }
+            catch (Exception ex)
+            {
+                _log.Warn($"exit.request consume failed: {ex.Message}");
             }
         }
 

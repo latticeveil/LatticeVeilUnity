@@ -259,7 +259,7 @@ namespace LatticeVeil.Game
         public static void ApplyGuiScale(float guiScale)
         {
             var scale = Mathf.Clamp(guiScale, 0.9f, 1.25f);
-            foreach (var scaler in Object.FindObjectsOfType<CanvasScaler>())
+            foreach (var scaler in Object.FindObjectsByType<CanvasScaler>(FindObjectsSortMode.None))
             {
                 if (scaler.uiScaleMode != CanvasScaler.ScaleMode.ScaleWithScreenSize)
                     continue;
@@ -296,7 +296,7 @@ namespace LatticeVeil.Game
         public static void ApplyCameraFov(int fov)
         {
             var value = Mathf.Clamp(fov, 60, 110);
-            foreach (var cam in Object.FindObjectsOfType<Camera>())
+            foreach (var cam in Object.FindObjectsByType<Camera>(FindObjectsSortMode.None))
                 cam.fieldOfView = value;
         }
 
@@ -396,7 +396,7 @@ namespace LatticeVeil.Game
         {
             if (_host != null)
                 return;
-            foreach (var mb in Object.FindObjectsOfType<MonoBehaviour>())
+            foreach (var mb in Object.FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None))
             {
                 if (mb.GetType().Name == "MainMenuController")
                 {

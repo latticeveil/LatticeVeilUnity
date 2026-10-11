@@ -656,6 +656,9 @@ namespace LatticeVeil.Game
                     {
                         var img = GetComponent<Image>();
                         img.preserveAspect = true;
+                        // uGUI multiplies the sprite by the Image color; the
+                        // dark placeholder tint would darken the real shot.
+                        img.color = Color.white;
                         img.sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
                             new Vector2(0.5f, 0.5f), 100f);
                     }
